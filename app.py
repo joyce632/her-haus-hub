@@ -181,10 +181,32 @@ def _add_column(conn, table, col, decl):
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
 
 
+def _open_db_for_startup():
+    """Open the database in classic rollback-journal mode.
+
+    WAL mode needs a shared-memory side file (-shm) that some cloud disks handle badly
+    ("disk I/O error"). The -shm file is only an index SQLite rebuilds from the -wal file,
+    so if it is the problem we can remove it safely before anything else connects.
+    """
+    shm = DB_PATH + "-shm"
+    for attempt in (1, 2):
+        conn = sqlite3.connect(DB_PATH, timeout=30)
+        try:
+            mode = conn.execute("PRAGMA journal_mode=DELETE").fetchone()[0]
+            conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
+            return conn, mode
+        except sqlite3.OperationalError as e:
+            conn.close()
+            if attempt == 1 and os.path.exists(shm):
+                print(f"  Database open failed ({e}); removing stale {shm} and retrying", flush=True)
+                os.remove(shm)
+                continue
+            raise
+
+
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn, mode = _open_db_for_startup()
     conn.executescript(SCHEMA)
-    conn.execute("PRAGMA journal_mode=WAL")
     _add_column(conn, "users", "avatar_file_id", "INTEGER")
     _add_column(conn, "tasks", "completed_at", "TEXT")
     _add_column(conn, "tasks", "recurring_rule_id", "INTEGER")
@@ -218,6 +240,8 @@ def init_db():
                     "You will be asked to change it on first login. Delete this file afterwards.\n")
         print(f"\n  Created first executive account: {email}\n  Temporary password saved to {DATA_DIR}/FIRST_LOGIN.txt\n")
     conn.commit()
+    integrity = conn.execute("PRAGMA quick_check").fetchone()[0]
+    print(f"  Database ready: {DB_PATH} · journal={mode} · check={integrity}", flush=True)
     conn.close()
 
 
