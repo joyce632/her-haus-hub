@@ -2165,6 +2165,21 @@ def too_large(_e):
     return jsonify(error="File is too large (25 MB max)"), 413
 
 
+@app.errorhandler(500)
+def server_error(e):
+    """Give API callers a readable message. Executives also see the underlying error to speed up support."""
+    if not request.path.startswith("/api/"):
+        return Response("Something went wrong. Please try again.", status=500)
+    err = getattr(e, "original_exception", None) or e
+    msg = "Something went wrong on the server. Please try again — if it keeps happening, tell an executive."
+    try:
+        if is_exec():
+            msg = f"Server error: {type(err).__name__}: {str(err)[:200]}"
+    except Exception:
+        pass
+    return jsonify(error=msg), 500
+
+
 init_db()
 if os.environ.get("DISABLE_SCHEDULER") != "1":
     threading.Thread(target=_scheduler_loop, daemon=True, name="automations").start()
