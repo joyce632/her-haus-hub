@@ -5,6 +5,9 @@ Run locally:  python app.py      Production:  gunicorn -w 1 --threads 8 app:app
 """
 import calendar
 import csv
+import faulthandler
+import sys
+import time as _clock
 import io
 import json
 import os
@@ -188,16 +191,26 @@ class _SharedDB:
             self._conn = conn
         return self._conn
 
+    busy_since = None   # when the database call currently running started (watched by _db_watchdog)
+
     def execute(self, sql, args=()):
         with self._lock:
-            cur = self._connection().execute(sql, args)
-            if cur.description is not None:   # a SELECT: read it fully now so it never holds a lock afterwards
-                cur.fetchall()
-            return cur
+            self.busy_since = _clock.monotonic()
+            try:
+                cur = self._connection().execute(sql, args)
+                if cur.description is not None:   # a SELECT: read it fully now so it never holds a lock afterwards
+                    cur.fetchall()
+                return cur
+            finally:
+                self.busy_since = None
 
     def query(self, sql, args=()):
         with self._lock:
-            return [dict(r) for r in self._connection().execute(sql, args).fetchall()]
+            self.busy_since = _clock.monotonic()
+            try:
+                return [dict(r) for r in self._connection().execute(sql, args).fetchall()]
+            finally:
+                self.busy_since = None
 
     def commit(self):
         pass  # autocommit: every statement is already saved
@@ -2313,8 +2326,27 @@ def server_error(e):
 
 
 init_db()
+DB_STALL_SECONDS = int(os.environ.get("DB_STALL_SECONDS") or 25)
+
+
+def _db_watchdog():
+    """Self-healing: if one database call hangs (Render's disk has stalled before), every request queues behind
+    it and the site stops answering. Log where it's stuck, then exit this worker; gunicorn starts a fresh one
+    within a second or two, so the site recovers on its own instead of staying down."""
+    while True:
+        _clock.sleep(5)
+        since = _shared_db.busy_since
+        if since and _clock.monotonic() - since > DB_STALL_SECONDS:
+            print(f"[watchdog] a database call has been stuck for over {DB_STALL_SECONDS}s — restarting the app "
+                  f"worker (pid {os.getpid()}). Where each thread was:", flush=True)
+            faulthandler.dump_traceback(file=sys.stdout, all_threads=True)
+            sys.stdout.flush()
+            os._exit(1)   # exit code 1 = gunicorn respawns the worker (code 3 would stop the whole server)
+
+
 if os.environ.get("DISABLE_SCHEDULER") != "1":
     threading.Thread(target=_scheduler_loop, daemon=True, name="automations").start()
+    threading.Thread(target=_db_watchdog, daemon=True, name="db-watchdog").start()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5050)), debug=False, threaded=True)
