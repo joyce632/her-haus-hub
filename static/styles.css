@@ -927,3 +927,17 @@ body::before {
 .rescue-card b { display: block; font-size: 13.5px; }
 .rescue-card small { display: block; font-size: 12px; color: var(--muted); }
 .rescue-card .spinner { color: var(--royal); flex-shrink: 0; }
+
+/* ---------- assignee on every task card ---------- */
+.tassignee { display: flex; align-items: center; gap: 7px; margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--line); font-size: 12px; font-weight: 600; color: var(--navy); min-width: 0; }
+.tassignee span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tassignee em { font-style: normal; font-weight: 500; color: var(--muted); }
+.tassignee.none { color: var(--muted); font-weight: 500; }
+.avatar.xs { width: 22px; height: 22px; font-size: 9px; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(12, 46, 96, .12); }
+.avatar.ghost { background: rgba(12, 46, 96, .06); color: var(--muted); border: 1px dashed rgba(12, 46, 96, .25); box-shadow: none; }
+.avatar.ghost svg { width: 14px; height: 14px; }
+.avatar.xs.ghost svg { width: 12px; height: 12px; }
+.assignee-pick { display: flex; align-items: center; gap: 8px; }
+.assignee-pick > span:first-child { flex-shrink: 0; line-height: 0; }
+.assignee-pick .avatar { width: 34px; height: 34px; }
+.assignee-pick select { flex: 1; min-width: 0; }

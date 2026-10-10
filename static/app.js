@@ -838,7 +838,7 @@ async function pageBoard(page, [cid], alive) {
   const fill = (d) => {
     $$('.col', page).forEach((col) => {
       const body = $('.col-body', col);
-      body.innerHTML = d.tasks.filter((t) => t.status === col.dataset.status).map(taskCardHTML).join('');
+      body.innerHTML = d.tasks.filter((t) => t.status === col.dataset.status).map((t) => taskCardHTML(t)).join('');
     });
     const more = $('.col[data-status="Done"] .done-more', page);
     more.innerHTML = `${d.auto_archive_days ? `<span>Auto-archives ${d.auto_archive_days} day${d.auto_archive_days === 1 ? '' : 's'} after done</span>` : ''}
@@ -929,8 +929,11 @@ function taskCardInner(t, showClient) {
         ${t.comment_count ? `<span title="Comments">${I.chat.replace('width="18" height="18"', 'width="13" height="13"')} ${t.comment_count}</span>` : ''}
         ${t.file_count ? `<span title="Files">${I.clip.replace('width="18" height="18"', 'width="13" height="13"')} ${t.file_count}</span>` : ''}
         ${t.link_count ? `<span title="Links">${I.link.replace('width="18" height="18"', 'width="13" height="13"')} ${t.link_count}</span>` : ''}
-        ${t.assignee_name && !showClient ? av(t.assignee_name, t.assignee_avatar, 'sm') : ''}
       </div>
+    </div>
+    <div class="tassignee ${t.assignee_name ? '' : 'none'}" title="${t.assignee_name ? `Assigned to ${esc(t.assignee_name)}` : 'Nobody is assigned yet'}">
+      ${t.assignee_name ? `${av(t.assignee_name, t.assignee_avatar, 'xs')}<span>${esc(t.assignee_name.split(' ')[0])}${t.assignee_id === S.me?.id ? ' <em>(you)</em>' : ''}</span>`
+        : `<span class="avatar xs ghost">${I.user.replace('width="18" height="18"', 'width="12" height="12"')}</span><span>Unassigned</span>`}
     </div></div>`;
 }
 
@@ -1123,7 +1126,7 @@ async function openTask(id, onChange) {
       <aside class="task-side">
         <label class="field">Status<select class="input" id="t-status">${S.statuses.map((s) => `<option ${s === t.status ? 'selected' : ''}>${s}</option>`).join('')}</select></label>
         <label class="field">Priority level<select class="input" id="t-priority">${S.priorities.map((p) => `<option ${p === t.priority ? 'selected' : ''}>${p}</option>`).join('')}</select></label>
-        <label class="field">Assignee<select class="input" id="t-assignee">${assigneeOptions().map(([v, l]) => `<option value="${v}" ${String(v) === String(t.assignee_id || '') ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
+        <label class="field">Assignee<span class="assignee-pick"><span id="t-assignee-av">${t.assignee_name ? av(t.assignee_name, t.assignee_avatar) : `<span class="avatar ghost">${I.user}</span>`}</span><select class="input" id="t-assignee">${assigneeOptions().map(([v, l]) => `<option value="${v}" ${String(v) === String(t.assignee_id || '') ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></span></label>
         <label class="field"><span class="field-label">Deadline<span class="hint">· time optional</span></span>${deadlineInputs(t.deadline, t.deadline_time, 't-')}</label>
         <div class="tb-box">
           <div class="field-label" style="font-weight:600;font-size:11.5px;color:var(--navy)">${I.clock.replace('width="18" height="18"', 'width="13" height="13"')} Time block<span class="hint">· optional</span></div>
@@ -1197,6 +1200,10 @@ async function openTask(id, onChange) {
     } catch (err) { toast(err.message, 'err'); }
   };
   setupComments(el, id);
+  $('#t-assignee', el).addEventListener('change', (e) => {
+    const u = S.users.find((x) => String(x.id) === e.target.value);
+    $('#t-assignee-av', el).innerHTML = u ? av(u.name, u.avatar_file_id) : `<span class="avatar ghost">${I.user}</span>`;
+  });
   if ($('#tb-clear', el)) $('#tb-clear', el).onclick = () => { $('#tb-date', el).value = ''; $('#tb-start', el).value = ''; $('#tb-end', el).value = ''; toast('Time block will be cleared when you save'); };
   if ($('#tb-date', el)) $('#tb-date', el).addEventListener('change', () => {  // sensible default: a 1-hour block from the next half hour
     if (!$('#tb-start', el).value && $('#tb-date', el).value) {
