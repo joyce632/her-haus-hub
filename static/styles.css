@@ -919,3 +919,11 @@ body::before {
 .tl-timer.ended, .tb-live .ended { color: #FFD1D3; }
 .tblock { white-space: nowrap; max-width: 100%; }
 .tl-block.live { min-width: 132px; z-index: 2; }
+
+/* ---------- slow-load rescue ---------- */
+#load-rescue { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 200; animation: pop .25s var(--ease); }
+.rescue-card { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 16px; max-width: calc(100vw - 32px);
+  background: rgba(255, 255, 255, .95); border: 1px solid rgba(12, 46, 96, .1); box-shadow: var(--shadow-lg); color: var(--navy); }
+.rescue-card b { display: block; font-size: 13.5px; }
+.rescue-card small { display: block; font-size: 12px; color: var(--muted); }
+.rescue-card .spinner { color: var(--royal); flex-shrink: 0; }

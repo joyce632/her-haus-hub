@@ -2273,7 +2273,11 @@ def _index_html():
 
 @app.get("/")
 def index():
-    return _index_html()
+    resp = _index_html()
+    if request.args.get("fresh"):
+        # Reached via the app's automatic fresh reload: drop any stale copies of the Hub this browser kept.
+        resp.headers["Clear-Site-Data"] = '"cache"'
+    return resp
 
 
 @app.errorhandler(404)

@@ -13,14 +13,22 @@ const S = {
 
 const APP_VERSION = document.querySelector('meta[name="app-version"]')?.content || '';
 // If this tab is running older code than the server (e.g. a cached page after an update), refresh once.
+// Load the newest Hub from a brand-new address no cache (browser, antivirus, office network) has ever stored.
+// The server answers that address with an instruction to clear the browser's stored copies — an automatic hard refresh.
+function freshReload(tag = Date.now().toString(36)) {
+  location.replace(`/?fresh=${encodeURIComponent(tag)}${location.hash || ''}`);
+}
 function checkVersion(r) {
   const server = r.headers.get('X-App-Version');
   if (!server || !APP_VERSION || server === APP_VERSION) return;
+  const alreadyTried = new URLSearchParams(location.search).get('fresh') === server;
   let last = ''; try { last = sessionStorage.getItem('hh_reloaded_for') || ''; } catch (_) { /* storage blocked */ }
-  if (last === server) return;  // already refreshed for this version — never loop
+  if (alreadyTried || last === server) return;  // at most one automatic refresh per version — never a loop
   try { sessionStorage.setItem('hh_reloaded_for', server); } catch (_) { /* storage blocked */ }
-  location.reload();
+  freshReload(server);
 }
+// Tidy the address bar after a fresh reload (keep the page the person was on).
+if (new URLSearchParams(location.search).has('fresh')) history.replaceState(null, '', `/${location.hash || ''}`);
 async function api(method, url, data) {
   const opt = { method, headers: { 'X-HH': '1' }, credentials: 'same-origin', cache: 'no-store' };
   if (data instanceof FormData) opt.body = data;
@@ -370,12 +378,33 @@ async function refreshStatus() {
 setInterval(refreshStatus, 60000);
 
 // ============================================================ auth / boot
+// If the Hub hasn't appeared after 8 seconds, offer a fresh reload instead of leaving a blank or stuck screen.
+let loadWatchdog = null;
+function watchLoading(stage) {
+  clearTimeout(loadWatchdog);
+  loadWatchdog = setTimeout(() => {
+    const ready = document.querySelector('#login-form') || (document.querySelector('.shell') && !$('#page .empty')?.innerText.startsWith('Loading'));
+    if (ready) return;
+    reportError(new Error(`Hub still loading after 8s (${stage})`), 'watchdog');
+    if (document.getElementById('load-rescue')) return;
+    const box = document.createElement('div');
+    box.id = 'load-rescue';
+    box.innerHTML = `<div class="rescue-card"><span class="spinner"></span><div><b>Taking longer than usual</b><small>Your connection or a stored copy of the Hub may be out of date.</small></div>
+      <button class="btn sm" type="button">Reload</button></div>`;
+    $('button', box).onclick = () => freshReload();
+    document.body.appendChild(box);
+  }, 8000);
+}
+function loadingDone() { clearTimeout(loadWatchdog); document.getElementById('load-rescue')?.remove(); }
+
 async function boot() {
+  watchLoading('opening');
   try {
     const r = await api('GET', '/api/me');
     await setMe(r);
   } catch (_) { S.me = null; }
-  route();
+  await route();
+  loadingDone();
 }
 
 async function setMe(r) {
@@ -414,13 +443,15 @@ function renderLogin() {
     const f = e.target; const b = $('button', f); b.disabled = true;
     try {
       await api('POST', '/api/login', { email: f.email.value, password: f.password.value });
+      watchLoading('signing in');
       await setMe(await api('GET', '/api/me'));
       const next = new URLSearchParams(location.search).get('next') || '';
       if (/^\/api\/files\/\d+(\?[\w=&]*)?$/.test(next)) {  // file link from Google Chat: go back to the download
         history.replaceState(null, '', '/#/');
         location.href = next;
       }
-      route();  // keep the address they came in on, e.g. a task link from Google Chat
+      await route();  // keep the address they came in on, e.g. a task link from Google Chat
+      loadingDone();
     } catch (err) { toast(err.message, 'err'); } finally { b.disabled = false; }
   };
 }
