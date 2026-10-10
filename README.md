@@ -33,7 +33,7 @@ What Render handles for you:
 - **Updates:** push to GitHub and Render redeploys. The database upgrades itself on startup.
 - **Settings:** `SECRET_KEY` is generated for you, and cookies are set to HTTPS-only.
 
-Always run a **single worker** (`-w 1`), as `render.yaml` already does. The app keeps one database connection that holds the SQLite lock for its whole life, which is what makes it reliable on cloud disks. A second worker would wait on that lock.
+Run a **single worker** (`-w 1`), as `render.yaml` already does. The app keeps one shared database connection and takes SQLite's lock only for the instant each statement runs. Anything else that briefly opens the database waits its turn instead of failing.
 
 **Other hosts:** any server that can run Python and has a persistent disk works, such as Railway (with a volume), Fly.io (with a volume), or a $6/month DigitalOcean droplet. Use the same start command:
 `gunicorn -w 1 --threads 8 -b 0.0.0.0:$PORT app:app`, with `DATA_DIR` pointing at the persistent disk.

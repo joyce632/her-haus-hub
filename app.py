@@ -155,10 +155,10 @@ CREATE TABLE IF NOT EXISTS recurring_rules(
 
 
 # ---------------------------------------------------------------- db helpers
-# The app runs as a single process (gunicorn -w 1), so it keeps ONE SQLite connection that holds the
-# database lock for its whole life ("exclusive" locking mode) and lets request threads take turns on it.
-# Some cloud disks handle SQLite's per-request file locking badly (stuck locks, "disk I/O error");
-# holding the lock once avoids that entirely. Each statement commits on its own (autocommit).
+# The app keeps ONE SQLite connection and lets request threads take turns on it (no per-request connections,
+# so the app never competes with itself for the file lock). The lock is taken only for the instant each
+# statement runs, so anything else that briefly opens the database simply waits its turn (busy_timeout)
+# instead of failing with "database is locked". Each statement commits on its own (autocommit).
 class _SharedDB:
     def __init__(self):
         self._lock = threading.RLock()
@@ -170,14 +170,17 @@ class _SharedDB:
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys=ON")
             conn.execute("PRAGMA journal_mode=TRUNCATE")
-            conn.execute("PRAGMA locking_mode=EXCLUSIVE")
+            conn.execute("PRAGMA locking_mode=NORMAL")
             conn.execute("PRAGMA busy_timeout=30000")
             self._conn = conn
         return self._conn
 
     def execute(self, sql, args=()):
         with self._lock:
-            return self._connection().execute(sql, args)
+            cur = self._connection().execute(sql, args)
+            if cur.description is not None:   # a SELECT: read it fully now so it never holds a lock afterwards
+                cur.fetchall()
+            return cur
 
     def query(self, sql, args=()):
         with self._lock:
@@ -276,7 +279,7 @@ def init_db():
         print(f"\n  Created first executive account: {email}\n  Temporary password saved to {DATA_DIR}/FIRST_LOGIN.txt\n")
     conn.commit()
     integrity = conn.execute("PRAGMA quick_check").fetchone()[0]
-    print(f"  Database ready: {DB_PATH} · journal={mode} · check={integrity}", flush=True)
+    print(f"  Database ready: {DB_PATH} · journal={mode} · check={integrity} · pid={os.getpid()}", flush=True)
     conn.close()
 
 
