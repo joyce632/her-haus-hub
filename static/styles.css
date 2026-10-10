@@ -806,7 +806,11 @@ body::before {
 .deadline-pair { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 8px; }
 .deadline-pair input[type=time]:disabled { opacity: .45; cursor: not-allowed; }
 .task-side .deadline-pair { grid-template-columns: 1fr; }
-.field-label { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+.field-label { display: flex; align-items: baseline; flex-wrap: wrap; column-gap: 6px; row-gap: 2px; }
+.field-label .hint { font-weight: 400; }
+/* side-by-side fields line up on their inputs even when one label is longer */
+.form-grid { align-items: end; }
+.form-grid > .full, .form-grid > .check { align-self: stretch; }
 
 /* ---------- attach from Resources ---------- */
 .picker-bar { margin-bottom: 12px; }

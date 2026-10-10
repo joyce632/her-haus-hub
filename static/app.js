@@ -166,12 +166,13 @@ function fieldHTML(f) {
   const v = f.value ?? '';
   const cls = f.full ? 'field full' : 'field';
   const hint = f.hint ? `<span class="hint">${f.hint}</span>` : '';
+  const head = `<span class="field-label">${esc(f.label || '')}${hint}</span>`;
   const req = f.required ? 'required' : '';
   switch (f.type) {
     case 'textarea':
-      return `<label class="${cls}">${esc(f.label)}${hint}<textarea class="input" name="${f.name}" rows="${f.rows || 4}" placeholder="${esc(f.placeholder || '')}" ${req}>${esc(v)}</textarea></label>`;
+      return `<label class="${cls}">${head}<textarea class="input" name="${f.name}" rows="${f.rows || 4}" placeholder="${esc(f.placeholder || '')}" ${req}>${esc(v)}</textarea></label>`;
     case 'select':
-      return `<label class="${cls}">${esc(f.label)}${hint}<select class="input" name="${f.name}">${f.options.map((o) => {
+      return `<label class="${cls}">${head}<select class="input" name="${f.name}">${f.options.map((o) => {
         const [val, lab] = Array.isArray(o) ? o : [o, o];
         return `<option value="${esc(val)}" ${String(val) === String(v) ? 'selected' : ''}>${esc(lab)}</option>`;
       }).join('')}</select></label>`;
@@ -186,9 +187,9 @@ function fieldHTML(f) {
     case 'deadline':
       return `<label class="${cls}"><span class="field-label">${esc(f.label)}<span class="hint">· time optional</span></span>${deadlineInputs(v, f.time)}</label>`;
     case 'datetime':
-      return `<label class="${cls}">${esc(f.label)}${hint}<input class="input" type="datetime-local" name="${f.name}" value="${esc(v)}" ${req}></label>`;
+      return `<label class="${cls}">${head}<input class="input" type="datetime-local" name="${f.name}" value="${esc(v)}" ${req}></label>`;
     default:
-      return `<label class="${cls}">${esc(f.label)}${hint}<input class="input" type="${f.type || 'text'}" name="${f.name}" value="${f.type === 'file' ? '' : esc(v)}" placeholder="${esc(f.placeholder || '')}" ${f.step ? `step="${f.step}"` : ''} ${f.accept ? `accept="${f.accept}"` : ''} ${req}></label>`;
+      return `<label class="${cls}">${head}<input class="input" type="${f.type || 'text'}" name="${f.name}" value="${f.type === 'file' ? '' : esc(v)}" placeholder="${esc(f.placeholder || '')}" ${f.step ? `step="${f.step}"` : ''} ${f.accept ? `accept="${f.accept}"` : ''} ${req}></label>`;
   }
 }
 
@@ -1281,7 +1282,7 @@ function ruleForm(client, r, onSaved) {
       <label class="field">Deadline<select class="input" name="due_in_days">
         ${[['', 'No deadline'], ['0', 'Same day'], ['1', '1 day later'], ['2', '2 days later'], ['3', '3 days later'], ['5', '5 days later'], ['7', '1 week later'], ['14', '2 weeks later'], ['30', '30 days later']]
           .map(([v, l]) => `<option value="${v}" ${String(r.due_in_days ?? '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-      <label class="field" data-due-time>Due by <span class="hint">optional time on the deadline day</span><input class="input" type="time" name="due_time" value="${esc(r.due_time || '')}"></label>
+      <label class="field" data-due-time><span class="field-label">Due by<span class="hint">· optional</span></span><input class="input" type="time" name="due_time" value="${esc(r.due_time || '')}"></label>
       <label class="check full"><input type="checkbox" name="skip_if_open" ${r.skip_if_open ? 'checked' : ''}> Skip a run if the previous task from this automation isn't done yet</label>
       <label class="check full"><input type="checkbox" name="active" ${r.active ? 'checked' : ''}> Automation is active</label>
     </form>`,
@@ -1323,7 +1324,7 @@ async function pageEod(page, _a, alive) {
         <form class="stack" id="eod-form">
           <div class="form-grid">
             <label class="field">Date<input class="input" type="date" name="eod_date" value="${todayStr()}"></label>
-            <label class="field">Client <span class="hint">optional</span><select class="input" name="client_id"><option value="">All / multiple clients</option>${S.clients.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
+            <label class="field"><span class="field-label">Client<span class="hint">· optional</span></span><select class="input" name="client_id"><option value="">All / multiple clients</option>${S.clients.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
           </div>
           <label class="field">What did you accomplish today? *<textarea class="input" name="accomplishments" rows="6" placeholder="• Called 45 leads, 6 conversations&#10;• Sent 3 offers&#10;• Updated CRM for Oak St property"></textarea></label>
           <label class="field">Blockers / issues<textarea class="input" name="blockers" rows="3" placeholder="Anything slowing you down?"></textarea></label>
@@ -1332,7 +1333,7 @@ async function pageEod(page, _a, alive) {
           <div><button class="btn red lg" type="submit">${I.send} Submit &amp; send to Google Chat</button></div>
         </form>
       </div>
-      <div class="card"><div class="card-head"><h2>My past reports</h2><span class="muted small">${eods.length}</span></div>
+      <div class="card" style="align-self:start"><div class="card-head"><h2>My past reports</h2><span class="muted small">${eods.length}</span></div>
         <div id="eod-list">${eods.length ? eods.map(eodItemHTML).join('') : '<div class="empty"><b>No reports yet</b>Your submitted EODs will appear here.</div>'}</div></div>
     </div>`;
   $('#eod-form').onsubmit = async (e) => {
