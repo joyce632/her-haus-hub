@@ -16,7 +16,7 @@ import ssl
 import threading
 import urllib.request
 import uuid
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from datetime import date, datetime, time, timedelta, timezone
 from functools import wraps
 from zoneinfo import ZoneInfo
@@ -155,6 +155,19 @@ CREATE TABLE IF NOT EXISTS recurring_rules(
 
 
 # ---------------------------------------------------------------- db helpers
+def _sqlite_open(**kw):
+    """Open the database WITHOUT operating-system file locks (SQLite's "unix-none" VFS).
+
+    Render's persistent disk has left stale file locks behind after restarts, making SQLite report
+    "database is locked" even when nothing else is using it. File locks are unnecessary here: Render lets
+    only one server attach the disk, the app runs one process (gunicorn -w 1), and every database call
+    goes through the single shared connection below, serialized by a thread lock. The rollback journal
+    still protects against crashes. Set SQLITE_FILE_LOCKS=1 to go back to normal OS locking.
+    """
+    if os.environ.get("SQLITE_FILE_LOCKS") == "1":
+        return sqlite3.connect(DB_PATH, **kw)
+    return sqlite3.connect(f"file:{quote(DB_PATH)}?vfs=unix-none", uri=True, **kw)
+
 # The app keeps ONE SQLite connection and lets request threads take turns on it (no per-request connections,
 # so the app never competes with itself for the file lock). The lock is taken only for the instant each
 # statement runs, so anything else that briefly opens the database simply waits its turn (busy_timeout)
@@ -166,11 +179,10 @@ class _SharedDB:
 
     def _connection(self):
         if self._conn is None:
-            conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False, isolation_level=None)
+            conn = _sqlite_open(timeout=30, check_same_thread=False, isolation_level=None)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys=ON")
             conn.execute("PRAGMA journal_mode=TRUNCATE")
-            conn.execute("PRAGMA locking_mode=NORMAL")
             conn.execute("PRAGMA busy_timeout=30000")
             self._conn = conn
         return self._conn
@@ -220,7 +232,7 @@ def _open_db_for_startup():
     """
     shm = DB_PATH + "-shm"
     for attempt in (1, 2):
-        conn = sqlite3.connect(DB_PATH, timeout=30)
+        conn = _sqlite_open(timeout=30)
         try:
             mode = conn.execute("PRAGMA journal_mode=DELETE").fetchone()[0]
             conn.execute("SELECT count(*) FROM sqlite_master").fetchone()

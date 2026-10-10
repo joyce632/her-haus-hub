@@ -33,7 +33,7 @@ What Render handles for you:
 - **Updates:** push to GitHub and Render redeploys. The database upgrades itself on startup.
 - **Settings:** `SECRET_KEY` is generated for you, and cookies are set to HTTPS-only.
 
-Run a **single worker** (`-w 1`), as `render.yaml` already does. The app keeps one shared database connection and takes SQLite's lock only for the instant each statement runs. Anything else that briefly opens the database waits its turn instead of failing.
+Run a **single worker** (`-w 1`), as `render.yaml` already does. The app keeps one shared database connection and takes SQLite's lock only for the instant each statement runs. The database is opened without operating-system file locks (SQLite's `unix-none` mode). Render's disk had been leaving stale locks behind, which caused "database is locked". Locks aren't needed because Render attaches the disk to one server only, and all access goes through the app's single connection. The crash-recovery journal is still on. Set `SQLITE_FILE_LOCKS=1` to use normal locking, for example on a regular server where other tools also open the database. **Don't** open the live database with other tools (such as the `sqlite3` command) while the app is running.
 
 **Other hosts:** any server that can run Python and has a persistent disk works, such as Railway (with a volume), Fly.io (with a volume), or a $6/month DigitalOcean droplet. Use the same start command:
 `gunicorn -w 1 --threads 8 -b 0.0.0.0:$PORT app:app`, with `DATA_DIR` pointing at the persistent disk.
