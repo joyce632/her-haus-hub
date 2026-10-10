@@ -6,8 +6,7 @@ services:
     plan: 0.5c-512mb         # smallest paid size (0.5 CPU, 512 MB); needed for the persistent disk below
     region: singapore        # closest to the Philippines; change if you prefer
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn -w 1 --threads 8 --timeout 60 -b 0.0.0.0:$PORT app:app
-    healthCheckPath: /healthz
+    startCommand: gunicorn -w 1 --threads 8 --timeout 60 --access-logfile - --log-level info -b 0.0.0.0:$PORT app:app
     disk:
       name: herhaus-data
       mountPath: /var/data   # database + all uploads live here and survive redeploys
@@ -15,6 +14,8 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
+      - key: PYTHONUNBUFFERED
+        value: "1"
       - key: DATA_DIR
         value: /var/data
       - key: SECRET_KEY
