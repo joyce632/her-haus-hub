@@ -82,6 +82,55 @@ document.addEventListener('input', (e) => {
   timeBox.disabled = !e.target.value; if (!e.target.value) timeBox.value = '';
 });
 const fmtSize = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
+// Time blocks: an optional work session the assignee plans for a task (company timezone).
+const minutesOf = (hm) => { const [h, m] = hm.split(':').map(Number); return h * 60 + m; };
+const dayWord = (d) => {
+  if (d === todayStr()) return 'Today';
+  const t = new Date(todayStr() + 'T12:00:00Z'); t.setUTCDate(t.getUTCDate() + 1);
+  return d === t.toISOString().slice(0, 10) ? 'Tomorrow' : fmtDateShort(d);
+};
+const blockRange = (t) => `${fmtClock12(t.block_start).replace(':00', '')}–${fmtClock12(t.block_end).replace(':00', '')}`;
+const isBlockNow = (t) => t.block_date === todayStr() && t.block_start <= nowHHMM() && nowHHMM() < t.block_end;
+const shiftDay = (d, n) => { const t = new Date(d + 'T12:00:00Z'); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };
+
+// Horizontal day timeline. rows: [{key, label, items}] — overlapping blocks in a row stack into sub-lanes.
+function timelineHTML(rows, day, { showPeople = false, emptyText = '' } = {}) {
+  const all = rows.flatMap((r) => r.items);
+  if (!all.length) return `<div class="empty tl-empty">${emptyText}</div>`;
+  // Fit the planned blocks (rounded to the hour), at least 6 hours wide so short days don't look cramped.
+  let from = Math.floor(Math.min(...all.map((t) => minutesOf(t.block_start))) / 60) * 60;
+  let to = Math.ceil(Math.max(...all.map((t) => minutesOf(t.block_end))) / 60) * 60;
+  if (to - from < 6 * 60) { const pad = 6 * 60 - (to - from); from = Math.max(0, from - Math.floor(pad / 120) * 60); to = Math.min(24 * 60, from + 6 * 60); }
+  const isToday = day === todayStr(), now = minutesOf(nowHHMM());
+  const span = to - from, pct = (m) => ((m - from) / span) * 100;
+  const step = span > 12 * 60 ? 120 : 60;
+  const ticks = []; for (let m = from; m <= to; m += step) ticks.push(m);
+  const nowLine = isToday && now >= from && now <= to ? `<div class="tl-now" style="left:${pct(now)}%"></div>` : '';
+  const lanesFor = (items) => {
+    const lanes = [];
+    [...items].sort((a, b) => a.block_start.localeCompare(b.block_start)).forEach((t) => {
+      let i = lanes.findIndex((end) => end <= t.block_start); if (i < 0) { i = lanes.length; lanes.push(''); }
+      lanes[i] = t.block_end; t._lane = i;
+    });
+    return Math.max(1, lanes.length);
+  };
+  const rowHTML = (r) => {
+    const n = lanesFor(r.items);
+    return `<div class="tl-row">${showPeople ? `<div class="tl-who">${r.label}</div>` : ''}
+      <div class="tl-track" style="height:${n * 46 + 8}px">${ticks.map((m) => `<i class="tl-grid" style="left:${pct(m)}%"></i>`).join('')}
+        ${r.items.map((t) => {
+          const done = t.status === 'Done', live = isBlockNow(t) && !done;
+          return `<button type="button" class="tl-block ${done ? 'done' : ''} ${live ? 'live' : ''}" data-task="${t.id}"
+            style="left:${pct(minutesOf(t.block_start))}%;width:${pct(minutesOf(t.block_end)) - pct(minutesOf(t.block_start))}%;top:${t._lane * 46 + 4}px;--c:${esc(t.client_color || '#0C2E60')}"
+            title="${esc(`${t.title} · ${t.client_name} · ${blockRange(t)}${showPeople && t.assignee_name ? ` · ${t.assignee_name}` : ''}`)}">
+            <b>${done ? '✓ ' : ''}${esc(t.title)}</b><small>${blockRange(t)} · ${esc(t.client_name)}</small></button>`;
+        }).join('')}${nowLine}</div></div>`;
+  };
+  return `<div class="tl ${showPeople ? 'with-people' : ''}">
+    <div class="tl-axis">${showPeople ? '<div class="tl-who"></div>' : ''}<div class="tl-ticks">${ticks.map((m) => `<span style="left:${pct(m)}%">${fmtClock12(`${String(Math.floor(m / 60) % 24).padStart(2, '0')}:00`).replace(':00', '')}</span>`).join('')}</div></div>
+    ${rows.map(rowHTML).join('')}</div>`;
+}
+
 const isExec = () => S.me && S.me.role === 'executive';
 const execView = () => isExec() && S.view === 'exec';
 const userName = (id) => (S.users.find((u) => u.id === id) || {}).name || '';
@@ -572,19 +621,47 @@ async function pageDashboard(page, _a, alive) {
     <div class="grid g3">
       <div class="card clock-card span2" id="clock-card">${clockCardHTML()}</div>
       <div class="card" id="earn-card">${earnCardHTML()}</div>
+      <div class="card span3" id="my-plan"></div>
       <div class="card span3" id="my-board"><div class="empty">Loading your tasks…</div></div>
     </div>`;
   bindClockButtons();
-  await myTasksBoard($('#my-board'), alive);
+  const plan = planCard($('#my-plan'), S.me.id, alive);
+  await myTasksBoard($('#my-board'), alive, plan.reload);
+  await plan.ready;
+}
+
+// "Today's plan": the person's time-blocked tasks on a timeline, with day navigation.
+function planCard(box, userId, alive) {
+  let day = todayStr();
+  const reload = async () => {
+    const r = await api('GET', `/api/schedule?date=${day}&user_id=${userId}`);
+    if (alive && !alive()) return;
+    const items = r.items;
+    const open = items.filter((t) => t.status !== 'Done');
+    const now = open.find(isBlockNow), next = open.find((t) => day === todayStr() && t.block_start > nowHHMM());
+    const mins = items.reduce((a, t) => a + minutesOf(t.block_end) - minutesOf(t.block_start), 0);
+    box.innerHTML = `<div class="card-head plan-head">
+        <div><h2>${I.clock} ${day === todayStr() ? 'Today’s plan' : `Plan · ${dayWord(day)}`}</h2>
+          <p class="small muted" style="margin-top:3px">${items.length ? `${items.length} time block${items.length === 1 ? '' : 's'} · ${hrs(mins * 60)} planned`
+            + (now ? ` · <b class="now-text">Now: ${esc(now.title)}</b>` : next ? ` · Next: <b>${esc(next.title)}</b> at ${fmtClock12(next.block_start)}` : '') : 'Nothing planned yet'}</p></div>
+        <div class="seg day-nav"><button data-d="-1" aria-label="Previous day">‹</button><button data-d="0" class="${day === todayStr() ? 'on' : ''}">Today</button><button data-d="1" aria-label="Next day">›</button></div>
+      </div>
+      ${timelineHTML([{ key: userId, items }], day, { emptyText: `<b>No time blocks ${day === todayStr() ? 'today' : 'this day'}</b>Open any of your tasks and set a <b>Time block</b> to plan when you’ll work on it.` })}`;
+    $$('.day-nav button', box).forEach((b) => b.onclick = () => { day = b.dataset.d === '0' ? todayStr() : shiftDay(day, Number(b.dataset.d)); reload(); });
+    $$('[data-task]', box).forEach((b) => b.onclick = () => openTask(Number(b.dataset.task), () => { reload(); }));
+  };
+  return { reload, ready: reload() };
 }
 
 // Personal kanban: every task assigned to me, across all clients.
-async function myTasksBoard(box, alive) {
+async function myTasksBoard(box, alive, onChange) {
   let clientFilter = sessionStorage.getItem('hh_my_client') || '';
+  let show = sessionStorage.getItem('hh_my_show') || '';
   box.innerHTML = `
     <div class="card-head my-board-head">
       <div><h2>My tasks</h2><p class="small muted" id="my-sub" style="margin-top:3px"></p></div>
       <div class="row" style="flex-wrap:nowrap">
+        <select class="input" id="my-show" aria-label="Show"><option value="">All tasks</option><option value="today">Time-blocked today</option><option value="planned">Has a time block</option><option value="unplanned">Not planned yet</option></select>
         <select class="input" id="my-client"><option value="">All clients</option>${S.clients.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
         <button class="btn red" id="my-new">${I.plus} New task</button>
       </div>
@@ -592,10 +669,12 @@ async function myTasksBoard(box, alive) {
     <div class="board my-board">${S.statuses.map((st) => `<div class="col" data-status="${esc(st)}">
       <div class="col-head"><span class="t"><i style="background:${STATUS_META[st].c}"></i>${esc(st)}</span><span class="count">0</span></div>
       <div class="col-body"></div></div>`).join('')}</div>`;
-  $('#my-client', box).value = clientFilter;
+  $('#my-client', box).value = clientFilter; $('#my-show', box).value = show;
   let tasks = [];
+  const showOk = (t) => !show || (show === 'today' ? t.block_date === todayStr() : show === 'planned' ? !!t.block_date : !t.block_date && t.status !== 'Done');
   const fill = () => {
-    const list = tasks.filter((t) => !clientFilter || String(t.client_id) === clientFilter);
+    const list = tasks.filter((t) => (!clientFilter || String(t.client_id) === clientFilter) && showOk(t));
+    if (show === 'today' || show === 'planned') list.sort((a, b) => `${a.block_date}${a.block_start}`.localeCompare(`${b.block_date}${b.block_start}`));
     $$('.col', box).forEach((col) => {
       const mine = list.filter((t) => t.status === col.dataset.status);
       $('.col-body', col).innerHTML = mine.map((t) => taskCardHTML(t, true)).join('');
@@ -607,8 +686,9 @@ async function myTasksBoard(box, alive) {
     $('#my-sub', box).innerHTML = `${open.length} open across ${new Set(open.map((t) => t.client_id)).size} client${new Set(open.map((t) => t.client_id)).size === 1 ? '' : 's'}`
       + (overdue ? ` · <span style="color:var(--red);font-weight:600">${overdue} overdue</span>` : '') + (today ? ` · ${today} due today` : '');
   };
-  const load = async () => { tasks = await api('GET', '/api/tasks/mine?include_done=1'); if (alive && !alive()) return; fill(); };
+  const load = async () => { tasks = await api('GET', '/api/tasks/mine?include_done=1'); if (alive && !alive()) return; fill(); if (onChange) onChange(); };
   $('#my-client', box).onchange = (e) => { clientFilter = e.target.value; sessionStorage.setItem('hh_my_client', clientFilter); fill(); };
+  $('#my-show', box).onchange = (e) => { show = e.target.value; sessionStorage.setItem('hh_my_show', show); fill(); };
   $('#my-new', box).onclick = () => newTaskModal(clientFilter ? Number(clientFilter) : null, 'Not Started', load, { assignToMe: true });
 
   const board = $('.my-board', box);
@@ -747,6 +827,7 @@ function taskCardHTML(t, showClient = false) {
     ${showClient ? `<div class="tclient"><span class="client-dot" style="background:${esc(t.client_color)}"></span>${esc(t.client_name)}</div>` : ''}
     <div class="tt">${t.recurring_rule_id ? `<span class="rec-ic" title="Created by an automation">${I.repeat}</span>` : ''}${esc(t.title)}</div>
     ${t.description ? `<div class="td">${esc(t.description)}</div>` : ''}
+    ${t.block_date && t.status !== 'Done' ? `<div class="tblock ${isBlockNow(t) ? 'live' : ''}">${I.clock}${isBlockNow(t) ? 'Now · ' : `${dayWord(t.block_date)} · `}${blockRange(t)}</div>` : ''}
     <div class="meta">
       <div class="row" style="gap:6px">${prioBadge(t.priority)}${t.deadline ? `<span class="due ${over ? 'over' : ''}">${dueShort(t)}</span>` : ''}</div>
       <div class="icons">
@@ -949,6 +1030,15 @@ async function openTask(id, onChange) {
         <label class="field">Priority level<select class="input" id="t-priority">${S.priorities.map((p) => `<option ${p === t.priority ? 'selected' : ''}>${p}</option>`).join('')}</select></label>
         <label class="field">Assignee<select class="input" id="t-assignee">${assigneeOptions().map(([v, l]) => `<option value="${v}" ${String(v) === String(t.assignee_id || '') ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
         <label class="field"><span class="field-label">Deadline<span class="hint">· time optional</span></span>${deadlineInputs(t.deadline, t.deadline_time, 't-')}</label>
+        <div class="tb-box">
+          <div class="field-label" style="font-weight:600;font-size:11.5px;color:var(--navy)">${I.clock.replace('width="18" height="18"', 'width="13" height="13"')} Time block<span class="hint">· optional</span></div>
+          ${t.assignee_id && (t.assignee_id === S.me.id || isExec()) ? `
+            <input class="input" type="date" id="tb-date" value="${esc(t.block_date || '')}">
+            <div class="tb-times"><span>From</span><input class="input" type="time" id="tb-start" value="${esc(t.block_start || '')}"><span>To</span><input class="input" type="time" id="tb-end" value="${esc(t.block_end || '')}"></div>
+            <p class="small muted">${t.assignee_id === S.me.id ? 'Plan when you’ll work on this. It shows on your dashboard.' : `Planned by ${esc(t.assignee_name)}.`}</p>
+            ${t.block_date ? '<button type="button" class="linkbtn dark" id="tb-clear" style="align-self:flex-start">Clear time block</button>' : ''}`
+          : `<p class="small muted">${t.block_date ? `${dayWord(t.block_date)} · ${blockRange(t)}` : t.assignee_id ? `Only ${esc(t.assignee_name)} can plan this task’s time block.` : 'Assign this task first — the assignee can then plan a time block.'}</p>`}
+        </div>
         <div><div class="small muted">Date created</div><b>${fmtDateTs(t.created_at)}</b></div>
         ${t.automation ? `<div><div class="small muted">Created by automation</div><b class="row" style="gap:6px;flex-wrap:nowrap">${I.repeat}${esc(t.automation.title)}</b></div>` : ''}
         <div><div class="small muted">Last updated</div><b>${fmtDateTs(t.updated_at)}</b></div>
@@ -1005,11 +1095,20 @@ async function openTask(id, onChange) {
       await api('PUT', `/api/tasks/${id}`, {
         title: $('#t-title', el).value, description: $('#t-desc', el).value,
         status: $('#t-status', el).value, priority: $('#t-priority', el).value, assignee_id: $('#t-assignee', el).value, deadline: $('#t-deadline', el).value, deadline_time: $('#t-deadline-time', el).value,
+        ...($('#tb-date', el) ? { block_date: $('#tb-date', el).value, block_start: $('#tb-start', el).value, block_end: $('#tb-end', el).value } : {}),
       });
       toast('Task saved', 'ok'); close(); onChange && onChange();
     } catch (err) { toast(err.message, 'err'); }
   };
   setupComments(el, id);
+  if ($('#tb-clear', el)) $('#tb-clear', el).onclick = () => { $('#tb-date', el).value = ''; $('#tb-start', el).value = ''; $('#tb-end', el).value = ''; toast('Time block will be cleared when you save'); };
+  if ($('#tb-date', el)) $('#tb-date', el).addEventListener('change', () => {  // sensible default: a 1-hour block from the next half hour
+    if (!$('#tb-start', el).value && $('#tb-date', el).value) {
+      const m = Math.ceil((minutesOf(nowHHMM()) + 1) / 30) * 30, s0 = Math.min(m, 22 * 60), e0 = s0 + 60;
+      const hm = (x) => `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`;
+      $('#tb-start', el).value = hm(s0); $('#tb-end', el).value = hm(e0);
+    }
+  });
   api('POST', '/api/notifications/read', { task_id: id }).then(pollNotifications).catch(() => {});
   if ($('#t-archive', el)) $('#t-archive', el).onclick = async () => {
     await api('POST', `/api/tasks/${id}/archive`, {}); toast('Task archived', 'ok'); close(); onChange && onChange();
@@ -1878,6 +1977,28 @@ async function pageArchive(page, _a, alive) {
   show(tab);
 }
 
+// Executive view of everyone's time blocks for a day — who is working on what, right now.
+async function teamPlanCard(box, team, alive) {
+  let day = todayStr();
+  const draw = async () => {
+    const r = await api('GET', `/api/schedule?date=${day}&user_id=all`);
+    if (!alive()) return;
+    const byPerson = team.map((m) => ({ key: m.id, label: `${av(m.name, m.avatar_file_id, 'sm')}<span>${esc(m.name.split(' ')[0])}</span>`, items: r.items.filter((t) => t.assignee_id === m.id) }))
+      .filter((row) => row.items.length);
+    const live = r.items.filter((t) => isBlockNow(t) && t.status !== 'Done');
+    box.innerHTML = `<div class="card-head plan-head">
+        <div><h2>${I.clock} ${day === todayStr() ? 'Team plan today' : `Team plan · ${dayWord(day)}`}</h2>
+          <p class="small muted" style="margin-top:3px">${r.items.length ? `${r.items.length} time block${r.items.length === 1 ? '' : 's'} across ${byPerson.length} ${byPerson.length === 1 ? 'person' : 'people'}`
+            + (live.length ? ` · <b class="now-text">${live.length} in progress now</b>` : '') : 'No one has planned time blocks for this day yet'}</p></div>
+        <div class="seg day-nav"><button data-d="-1" aria-label="Previous day">‹</button><button data-d="0" class="${day === todayStr() ? 'on' : ''}">Today</button><button data-d="1" aria-label="Next day">›</button></div>
+      </div>
+      ${timelineHTML(byPerson, day, { showPeople: true, emptyText: '<b>No time blocks planned</b>Team members set time blocks on their tasks; they show up here so you can see who’s working on what.' })}`;
+    $$('.day-nav button', box).forEach((b) => b.onclick = () => { day = b.dataset.d === '0' ? todayStr() : shiftDay(day, Number(b.dataset.d)); draw(); });
+    $$('[data-task]', box).forEach((b) => b.onclick = () => openTask(Number(b.dataset.task), draw));
+  };
+  draw();
+}
+
 // ============================================================ executive: overview
 async function pageOverview(page, _a, alive) {
   setTitle('Executive Overview', new Date().toLocaleDateString('en-US', { timeZone: TZ(), weekday: 'long', month: 'long', day: 'numeric' }));
@@ -1894,6 +2015,7 @@ async function pageOverview(page, _a, alive) {
       <div class="card stat"><div class="label">Open tasks</div><div class="value">${open}</div><div class="foot">${o.task_counts.Blocked} blocked · ${o.task_counts['For Revision']} for revision</div></div>
       <div class="card stat"><div class="label">Overdue tasks</div><div class="value" style="color:${o.overdue ? 'var(--red)' : 'var(--navy)'}">${o.overdue}</div><div class="foot">Past deadline, not done</div></div>
     </div>
+    <div class="card" id="team-plan" style="margin-bottom:20px"></div>
     <div class="grid g3">
       <div class="card span2"><div class="card-head"><h2>Team right now</h2><a class="btn sm ghost" href="#/team">Manage team</a></div>
         <div class="table-wrap"><table class="tbl"><thead><tr><th>Team member</th><th>Status</th><th>Since</th><th>Today</th><th>Earned this cutoff</th></tr></thead><tbody>
@@ -1914,6 +2036,7 @@ async function pageOverview(page, _a, alive) {
     </div>`;
   $$('[data-user]', page).forEach((r) => r.onclick = () => { location.hash = `#/profile/${r.dataset.user}`; });
   const timer = setInterval(() => { if (!alive() || !location.hash.startsWith('#/overview')) return clearInterval(timer); if (!$('#modal-root .modal-bg')) route(); }, 60000);
+  teamPlanCard($('#team-plan'), o.team, alive);
 }
 
 // ============================================================ executive: team

@@ -33,7 +33,7 @@ What Render handles for you:
 - **Updates:** push to GitHub and Render redeploys. The database upgrades itself on startup.
 - **Settings:** `SECRET_KEY` is generated for you, and cookies are set to HTTPS-only.
 
-Run a single worker (`-w 1`), as `render.yaml` already does. Everything still runs correctly with more, but the login-attempt limiter only works properly with one.
+Always run a **single worker** (`-w 1`), as `render.yaml` already does. The app keeps one database connection that holds the SQLite lock for its whole life, which is what makes it reliable on cloud disks. A second worker would wait on that lock.
 
 **Other hosts:** any server that can run Python and has a persistent disk works, such as Railway (with a volume), Fly.io (with a volume), or a $6/month DigitalOcean droplet. Use the same start command:
 `gunicorn -w 1 --threads 8 -b 0.0.0.0:$PORT app:app`, with `DATA_DIR` pointing at the persistent disk.
@@ -72,6 +72,15 @@ The bell in the top bar and the **Notifications** page show three kinds of alert
 - when a task is **assigned** to you, including by an automation
 
 The bell updates every 30 seconds. Opening a task marks its notifications as read. Task Notes were replaced by comments; any existing notes were moved into each task's first comment.
+
+## Time blocks
+
+The person assigned to a task can plan when they'll work on it by setting a **time block** (date, from, to) in the task window. Only the assignee or an executive can set or change it, and reassigning the task clears it.
+
+- **Dashboard:** **Today's plan** shows the person's blocks on a timeline, with a "now" line, the current block highlighted, and buttons to step through days.
+- **Executive Overview:** **Team plan today** shows everyone's blocks in one lane per person.
+- **Cards:** each card shows its block, or "Now · 10–11:30 AM" while it's in progress.
+- **My tasks board:** filter by **Time-blocked today**, **Has a time block**, or **Not planned yet**.
 
 ## Archive
 

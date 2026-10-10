@@ -155,30 +155,52 @@ CREATE TABLE IF NOT EXISTS recurring_rules(
 
 
 # ---------------------------------------------------------------- db helpers
+# The app runs as a single process (gunicorn -w 1), so it keeps ONE SQLite connection that holds the
+# database lock for its whole life ("exclusive" locking mode) and lets request threads take turns on it.
+# Some cloud disks handle SQLite's per-request file locking badly (stuck locks, "disk I/O error");
+# holding the lock once avoids that entirely. Each statement commits on its own (autocommit).
+class _SharedDB:
+    def __init__(self):
+        self._lock = threading.RLock()
+        self._conn = None
+
+    def _connection(self):
+        if self._conn is None:
+            conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False, isolation_level=None)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute("PRAGMA journal_mode=TRUNCATE")
+            conn.execute("PRAGMA locking_mode=EXCLUSIVE")
+            conn.execute("PRAGMA busy_timeout=30000")
+            self._conn = conn
+        return self._conn
+
+    def execute(self, sql, args=()):
+        with self._lock:
+            return self._connection().execute(sql, args)
+
+    def query(self, sql, args=()):
+        with self._lock:
+            return [dict(r) for r in self._connection().execute(sql, args).fetchall()]
+
+    def commit(self):
+        pass  # autocommit: every statement is already saved
+
+
+_shared_db = _SharedDB()
+
+
 def db():
-    if "db" not in g:
-        g.db = sqlite3.connect(DB_PATH, timeout=15)
-        g.db.row_factory = sqlite3.Row
-        g.db.execute("PRAGMA foreign_keys=ON")
-    return g.db
-
-
-@app.teardown_appcontext
-def _close_db(_exc):
-    conn = g.pop("db", None)
-    if conn is not None:
-        conn.close()
+    return _shared_db
 
 
 def q(sql, args=(), one=False):
-    rows = [dict(r) for r in db().execute(sql, args).fetchall()]
+    rows = _shared_db.query(sql, args)
     return (rows[0] if rows else None) if one else rows
 
 
 def ex(sql, args=()):
-    cur = db().execute(sql, args)
-    db().commit()
-    return cur.lastrowid
+    return _shared_db.execute(sql, args).lastrowid
 
 
 def _add_column(conn, table, col, decl):
@@ -226,6 +248,8 @@ def init_db():
     _add_column(conn, "tasks", "restored_at", "TEXT")
     _add_column(conn, "tasks", "deadline_time", "TEXT")       # optional "HH:MM", company timezone
     _add_column(conn, "recurring_rules", "due_time", "TEXT")
+    for col in ("block_date", "block_start", "block_end"):   # optional time block set by the assignee
+        _add_column(conn, "tasks", col, "TEXT")
     # Task notes were replaced by comments: move any existing notes into a comment so nothing is lost.
     fallback = (conn.execute("SELECT id FROM users WHERE role='executive' ORDER BY id LIMIT 1").fetchone() or [None])[0]
     for tid, notes, created_by, created_at in conn.execute(
@@ -1167,9 +1191,22 @@ def announce_task(tid):
 @app.put("/api/tasks/<int:tid>")
 @login_required
 def update_task(tid):
-    f = _task_fields(body())
+    d = body()
+    f = _task_fields(d)
     if "title" in f and not f["title"]:
         return bad("Task title is required")
+    current = q("SELECT assignee_id FROM tasks WHERE id=?", (tid,), one=True)
+    if not current:
+        abort(404)
+    if any(k in d for k in ("block_date", "block_start", "block_end")):
+        if not (is_exec() or current["assignee_id"] == current_user()["id"]):
+            return bad("Only the person assigned to this task can set its time block", 403)
+        block = _block_fields(d)
+        if isinstance(block, str):
+            return bad(block)
+        f.update(block)
+    if "assignee_id" in f and f["assignee_id"] != current["assignee_id"]:
+        f.update(block_date=None, block_start=None, block_end=None)  # a time block belongs to its assignee
     if "status" in f:
         prev = q("SELECT status, completed_at FROM tasks WHERE id=?", (tid,), one=True) or {}
         if f["status"] != "Done":
@@ -1186,6 +1223,42 @@ def update_task(tid):
     if "status" in f and f["status"] != prev.get("status"):
         task_chat_event("status", tid, actor=current_user()["name"], old_status=prev.get("status"))
     return jsonify(_task_full(tid))
+
+
+def _block_fields(d):
+    """Validates a time block. Empty date clears it. Returns fields, or an error message."""
+    day = (d.get("block_date") or "").strip()
+    if not day:
+        return {"block_date": None, "block_start": None, "block_end": None}
+    try:
+        date.fromisoformat(day)
+    except ValueError:
+        return "Pick a valid date for the time block"
+    start, end = _clean_hhmm(d.get("block_start")), _clean_hhmm(d.get("block_end"))
+    if not start or not end:
+        return "Set a start and end time for the time block"
+    if end <= start:
+        return "The time block must end after it starts"
+    return {"block_date": day, "block_start": start, "block_end": end}
+
+
+@app.get("/api/schedule")
+@login_required
+def schedule():
+    """Time-blocked tasks for one day. Employees see their own; executives can see anyone's or the whole team."""
+    day = request.args.get("date") or local_today().isoformat()
+    who = request.args.get("user_id") or str(current_user()["id"])
+    where, args = ["t.block_date=?", "t.archived_at IS NULL", "c.archived=0"], [day]
+    if who == "all":
+        if not is_exec():
+            abort(403)
+    else:
+        if int(who) != current_user()["id"] and not is_exec():
+            abort(403)
+        where.append("t.assignee_id=?")
+        args.append(int(who))
+    rows = q(TASK_SELECT + "WHERE " + " AND ".join(where) + " ORDER BY t.block_start, t.block_end", args)
+    return jsonify(date=day, items=rows)
 
 
 @app.post("/api/tasks/reorder")
