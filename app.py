@@ -217,6 +217,8 @@ def init_db():
     _add_column(conn, "tasks", "archived_at", "TEXT")
     _add_column(conn, "tasks", "archived_by", "INTEGER")
     _add_column(conn, "tasks", "restored_at", "TEXT")
+    _add_column(conn, "tasks", "deadline_time", "TEXT")       # optional "HH:MM", company timezone
+    _add_column(conn, "recurring_rules", "due_time", "TEXT")
     # Task notes were replaced by comments: move any existing notes into a comment so nothing is lost.
     fallback = (conn.execute("SELECT id FROM users WHERE role='executive' ORDER BY id LIMIT 1").fetchone() or [None])[0]
     for tid, notes, created_by, created_at in conn.execute(
@@ -777,8 +779,10 @@ def exec_overview():
                "WHERE c.archived=0 AND t.archived_at IS NULL GROUP BY t.status"):
         counts[r["status"]] = r["n"]
     overdue = q("SELECT COUNT(*) n FROM tasks t JOIN clients c ON c.id=t.client_id WHERE c.archived=0 "
-                "AND t.archived_at IS NULL AND t.status!='Done' AND t.deadline IS NOT NULL AND t.deadline!='' AND t.deadline<?",
-                (local_today().isoformat(),), one=True)["n"]
+                "AND t.archived_at IS NULL AND t.status!='Done' AND t.deadline IS NOT NULL AND t.deadline!='' "
+                "AND (t.deadline<? OR (t.deadline=? AND t.deadline_time IS NOT NULL AND t.deadline_time<?))",
+                (local_today().isoformat(), local_today().isoformat(), now_utc().astimezone(tz()).strftime("%H:%M")),
+                one=True)["n"]
     eods = q("SELECT e.*, u.name user_name, u.avatar_file_id user_avatar FROM eods e JOIN users u ON u.id=e.user_id ORDER BY e.id DESC LIMIT 6")
     incidents = q("SELECT i.*, u.name user_name, u.avatar_file_id user_avatar FROM incidents i JOIN users u ON u.id=i.user_id "
                   "ORDER BY i.id DESC LIMIT 5")
@@ -863,8 +867,36 @@ def my_tasks():
     done = "" if request.args.get("include_done") == "1" else "AND t.status!='Done' "
     return jsonify(q(TASK_SELECT + "WHERE t.assignee_id=? " + done + "AND c.archived=0 AND t.archived_at IS NULL "
                      "ORDER BY CASE WHEN t.deadline IS NULL OR t.deadline='' THEN 1 ELSE 0 END, t.deadline, "
+                     "COALESCE(t.deadline_time, '99:99'), "
                      "CASE t.priority WHEN 'Urgent' THEN 0 WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 ELSE 3 END",
                      (current_user()["id"],)))
+
+
+HHMM_RE = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
+
+
+def _clean_hhmm(v):
+    v = (v or "").strip()[:5]
+    return v if HHMM_RE.fullmatch(v) else None
+
+
+def fmt_hhmm(hhmm):
+    h, m = (int(x) for x in hhmm.split(":"))
+    return f"{h % 12 or 12}:{m:02d} {'AM' if h < 12 else 'PM'}"
+
+
+def deadline_moment(t):
+    """The deadline as a local datetime: the set time, or the end of that day when no time is set."""
+    d = date.fromisoformat(t["deadline"])
+    hhmm = t.get("deadline_time")
+    clock = time(*(int(x) for x in hhmm.split(":"))) if hhmm else time(23, 59, 59)
+    return datetime.combine(d, clock, tzinfo=tz())
+
+
+def finished_on_time(t):
+    if not t.get("deadline") or not t.get("completed_at"):
+        return None
+    return parse_dt(t["completed_at"]) <= deadline_moment(t)
 
 
 def _local_date(ts):
@@ -928,7 +960,7 @@ def task_stats():
         b["completed"] += 1
         if t["deadline"]:
             b["with_deadline"] += 1
-            t["on_time"] = dd.isoformat() <= t["deadline"]
+            t["on_time"] = finished_on_time(t)
             b["on_time"] += t["on_time"]
         if cd:
             b["days"].append((dd - cd).days)
@@ -958,9 +990,9 @@ def task_stats():
         by_client=breakdown("client_id", "client_name", "client_color"),
         by_priority=[{"name": p_, "completed": sum(1 for t in current_done if t["priority"] == p_)} for p_ in PRIORITIES],
         open_by_status={s_: sum(1 for t in open_tasks if t["status"] == s_) for s_ in STATUSES if s_ != "Done"},
-        overdue=sum(1 for t in open_tasks if t["deadline"] and t["deadline"] < today.isoformat()),
+        overdue=sum(1 for t in open_tasks if t["deadline"] and deadline_moment(t) < now_utc()),
         completed_list=[{k: t.get(k) for k in ("id", "title", "client_name", "client_color", "assignee_name",
-                                               "assignee_avatar", "priority", "deadline", "completed_at", "on_time")}
+                                               "assignee_avatar", "priority", "deadline", "deadline_time", "completed_at", "on_time")}
                         for t in current_done[:100]],
     )
 
@@ -1060,6 +1092,10 @@ def _task_fields(d):
         f["status"] = d["status"]
     if "assignee_id" in d:
         f["assignee_id"] = int(d["assignee_id"]) if d["assignee_id"] not in (None, "", "0", 0) else None
+    if "deadline_time" in d:
+        f["deadline_time"] = _clean_hhmm(d["deadline_time"])
+    if "deadline" in f and not f["deadline"]:
+        f["deadline_time"] = None  # no date, no time
     return f
 
 
@@ -1082,11 +1118,11 @@ def create_task():
     status = f.get("status", "Not Started")
     pos = (q("SELECT MAX(position) m FROM tasks WHERE client_id=? AND status=?", (cid, status), one=True)["m"] or 0) + 1
     now = iso(now_utc())
-    tid = ex("INSERT INTO tasks(client_id,title,description,notes,priority,assignee_id,deadline,status,position,"
-             "created_by,created_at,updated_at,completed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    tid = ex("INSERT INTO tasks(client_id,title,description,notes,priority,assignee_id,deadline,deadline_time,status,"
+             "position,created_by,created_at,updated_at,completed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
              (cid, f["title"], f.get("description", ""), f.get("notes", ""), f.get("priority", "Medium"),
-              f.get("assignee_id"), f.get("deadline") or None, status, pos, current_user()["id"], now, now,
-              now if status == "Done" else None))
+              f.get("assignee_id"), f.get("deadline") or None, f.get("deadline_time") if f.get("deadline") else None,
+              status, pos, current_user()["id"], now, now, now if status == "Done" else None))
     notify(f.get("assignee_id"), "assigned", tid, actor_id=current_user()["id"])
     if d.get("defer_alert") not in (True, "1", 1, "true"):
         task_chat_event("created", tid, actor=current_user()["name"])
@@ -1369,7 +1405,8 @@ def task_chat_event(kind, tid, actor=None, old_status=None, snippet=""):
             if not t["deadline"]:
                 return "No due date"
             d = date.fromisoformat(t["deadline"])
-            return f"{d:%b} {d.day}, {d.year}"
+            at = f" at {fmt_hhmm(t['deadline_time'])}" if t.get("deadline_time") else ""
+            return f"{d:%b} {d.day}, {d.year}{at}"
 
         task_lines = [f"Task: {t['title']}", f"Client: {t['client_name']}"]
         common = [f"Assigned to: {t['assignee_name'] or 'Unassigned'}", f"Due date: {due()}",
@@ -1385,8 +1422,13 @@ def task_chat_event(kind, tid, actor=None, old_status=None, snippet=""):
         elif kind == "done":
             timing = ""
             if t["deadline"] and t["completed_at"]:
-                late = (parse_dt(t["completed_at"]).astimezone(tz()).date() - date.fromisoformat(t["deadline"])).days
-                timing = "On time" if late <= 0 else f"{late} day{'s' if late != 1 else ''} late"
+                if finished_on_time(t):
+                    timing = "On time"
+                else:
+                    late = parse_dt(t["completed_at"]) - deadline_moment(t)
+                    days, hours = late.days, late.seconds // 3600
+                    timing = (f"{days} day{'s' if days != 1 else ''} late" if days >= 1
+                              else f"{max(hours, 1)} hour{'s' if max(hours, 1) != 1 else ''} late")
             lines = ["✅ *TASK COMPLETED*", ""] + task_lines + [
                 f"Completed by: {actor or t['assignee_name'] or '—'}", f"Due date: {due()}"] + (
                 [f"Timing: {timing}"] if timing else []) + [f"Priority: {t['priority']}"] + _deliverable_lines(t)
@@ -1418,12 +1460,13 @@ def build_digests(today):
             overdue = [t for t in items if t["deadline"] < today.isoformat()]
             due = [t for t in items if t["deadline"] == today.isoformat()]
             lines += ["", f"*{client}*" + (f"  <{base}/#/board/{items[0]['client_id']}|Open board>" if base else "")]
-            for label, group in (("⚠️ Overdue", overdue), ("📅 Due today", due)):
+            for label, group in (("⚠️ Overdue", overdue), ("📅 Due today", sorted(due, key=lambda t: t["deadline_time"] or "99"))):
                 if group:
                     lines.append(f"{label} ({len(group)})")
                     for t in group[:12]:
                         who = t["assignee_name"] or "Unassigned"
-                        when = f" · due {_due_text(t['deadline'])}" if label.startswith("⚠") else ""
+                        when = (f" · due {_due_text(t['deadline'])}" if label.startswith("⚠")
+                                else f" · by {fmt_hhmm(t['deadline_time'])}" if t["deadline_time"] else "")
                         lines.append(f"• {t['title']} — {who}{when}")
                     if len(group) > 12:
                         lines.append(f"• …and {len(group) - 12} more")
@@ -1482,7 +1525,7 @@ def test_client_webhook(cid):
 # ---------------------------------------------------------------- recurring task automations
 FREQUENCIES = ("daily", "weekdays", "weekly", "monthly")
 RULE_FIELDS = ("title", "description", "notes", "priority", "assignee_id", "start_status", "frequency", "weekdays",
-               "day_of_month", "run_time", "due_in_days", "skip_if_open", "active")
+               "day_of_month", "run_time", "due_in_days", "due_time", "skip_if_open", "active")
 
 
 def _rule_matches(rule, d):
@@ -1512,15 +1555,16 @@ def next_run_after(rule, after_utc):
 
 def create_task_from_rule(rule):
     now = now_utc()
-    deadline = None
+    deadline = deadline_time = None
     if rule["due_in_days"] is not None and rule["due_in_days"] != "":
         deadline = (local_today() + timedelta(days=int(rule["due_in_days"]))).isoformat()
+        deadline_time = _clean_hhmm(rule.get("due_time"))
     status = rule["start_status"] if rule["start_status"] in STATUSES else "Not Started"
     pos = (q("SELECT MAX(position) m FROM tasks WHERE client_id=? AND status=?", (rule["client_id"], status), one=True)["m"] or 0) + 1
-    tid = ex("INSERT INTO tasks(client_id,title,description,notes,priority,assignee_id,deadline,status,position,created_by,"
-             "created_at,updated_at,completed_at,recurring_rule_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    tid = ex("INSERT INTO tasks(client_id,title,description,notes,priority,assignee_id,deadline,deadline_time,status,"
+             "position,created_by,created_at,updated_at,completed_at,recurring_rule_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
              (rule["client_id"], rule["title"], rule["description"], "", rule["priority"], rule["assignee_id"],
-              deadline, status, pos, rule["created_by"], iso(now), iso(now), iso(now) if status == "Done" else None, rule["id"]))
+              deadline, deadline_time, status, pos, rule["created_by"], iso(now), iso(now), iso(now) if status == "Done" else None, rule["id"]))
     ex("UPDATE recurring_rules SET last_run_at=?, last_task_id=? WHERE id=?", (iso(now), tid, rule["id"]))
     notify(rule["assignee_id"], "assigned", tid, actor_id=None, snippet="Recurring task")
     task_chat_event("created", tid, actor="Automation")
@@ -1588,6 +1632,8 @@ def _rule_fields(d):
     if "due_in_days" in d:
         v = str(d["due_in_days"]).strip()
         f["due_in_days"] = max(0, min(365, int(v))) if v.lstrip("-").isdigit() else None
+    if "due_time" in d:
+        f["due_time"] = _clean_hhmm(d["due_time"])
     for k in ("skip_if_open", "active"):
         if k in d:
             f[k] = 1 if d[k] in (1, True, "1", "true", "on") else 0

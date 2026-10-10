@@ -801,3 +801,9 @@ body::before {
 .input:focus { border-color: rgba(27, 75, 168, .55); box-shadow: 0 0 0 4px rgba(27, 75, 168, .12); }
 .check input { accent-color: var(--royal); }
 .toast.ok { background: rgba(12, 46, 96, .92); }
+
+/* ---------- deadline: date + optional time ---------- */
+.deadline-pair { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 8px; }
+.deadline-pair input[type=time]:disabled { opacity: .45; cursor: not-allowed; }
+.task-side .deadline-pair { grid-template-columns: 1fr; }
+.field-label { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }

@@ -64,6 +64,23 @@ function fromZonedInput(v) {
   const off = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - guess;
   return new Date(guess - off).toISOString();
 }
+// Deadlines: a date plus an optional "HH:MM" time, both in the company timezone.
+const fmtClock12 = (hm) => { const [h, m] = hm.split(':').map(Number); return `${(h % 12) || 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`; };
+const nowHHMM = () => { const p = tzParts(new Date()); return `${p.hour}:${p.minute}`; };
+const isOverdue = (t) => !!t.deadline && t.status !== 'Done'
+  && (t.deadline < todayStr() || (t.deadline === todayStr() && !!t.deadline_time && t.deadline_time < nowHHMM()));
+const dueShort = (t) => `${t.deadline === todayStr() ? 'Today' : fmtDateShort(t.deadline)}${t.deadline_time ? ` · ${fmtClock12(t.deadline_time)}` : ''}`;
+const dueLong = (t) => `${fmtDate(t.deadline)}${t.deadline_time ? ` at ${fmtClock12(t.deadline_time)}` : ''}`;
+const deadlineInputs = (date, time, idPrefix = '') => `<span class="deadline-pair">
+  <input class="input" type="date" name="deadline" ${idPrefix ? `id="${idPrefix}deadline"` : ''} value="${esc(date || '')}">
+  <input class="input" type="time" name="deadline_time" ${idPrefix ? `id="${idPrefix}deadline-time"` : ''} value="${esc(time || '')}" title="Time (optional)" ${date ? '' : 'disabled'}></span>`;
+// The time box only makes sense once a date is picked.
+document.addEventListener('input', (e) => {
+  if (e.target.name !== 'deadline') return;
+  const pair = e.target.closest('.deadline-pair'); if (!pair) return;
+  const timeBox = pair.querySelector('[name=deadline_time]');
+  timeBox.disabled = !e.target.value; if (!e.target.value) timeBox.value = '';
+});
 const isExec = () => S.me && S.me.role === 'executive';
 const execView = () => isExec() && S.view === 'exec';
 const userName = (id) => (S.users.find((u) => u.id === id) || {}).name || '';
@@ -159,6 +176,8 @@ function fieldHTML(f) {
         <input type="hidden" name="${f.name}" value="${esc(v || CLIENT_COLORS[0])}"></div>`;
     case 'info':
       return `<div class="full">${f.html}</div>`;
+    case 'deadline':
+      return `<label class="${cls}"><span class="field-label">${esc(f.label)}<span class="hint">· time optional</span></span>${deadlineInputs(v, f.time)}</label>`;
     case 'datetime':
       return `<label class="${cls}">${esc(f.label)}${hint}<input class="input" type="datetime-local" name="${f.name}" value="${esc(v)}" ${req}></label>`;
     default:
@@ -193,6 +212,7 @@ function formModal({ title, fields, submit = 'Save', wide = false, onSubmit, ext
         fields.forEach((f) => {
           const x = form.elements[f.name]; if (!x || f.type === 'info') return;
           data[f.name] = f.type === 'checkbox' ? x.checked : f.type === 'datetime' ? fromZonedInput(x.value) : x.value;
+          if (f.type === 'deadline') data.deadline_time = form.elements.deadline_time.value;
         });
       }
       await onSubmit(data, close);
@@ -573,7 +593,7 @@ async function myTasksBoard(box, alive) {
       $('.count', col).textContent = mine.length;
     });
     const open = list.filter((t) => t.status !== 'Done');
-    const overdue = open.filter((t) => t.deadline && t.deadline < todayStr()).length;
+    const overdue = open.filter(isOverdue).length;
     const today = open.filter((t) => t.deadline === todayStr()).length;
     $('#my-sub', box).innerHTML = `${open.length} open across ${new Set(open.map((t) => t.client_id)).size} client${new Set(open.map((t) => t.client_id)).size === 1 ? '' : 's'}`
       + (overdue ? ` · <span style="color:var(--red);font-weight:600">${overdue} overdue</span>` : '') + (today ? ` · ${today} due today` : '');
@@ -711,14 +731,14 @@ async function pageBoard(page, [cid], alive) {
 }
 
 function taskCardHTML(t, showClient = false) {
-  const over = t.deadline && t.status !== 'Done' && t.deadline < todayStr();
+  const over = isOverdue(t);
   return `<div class="tcard p-${esc(t.priority)}" draggable="true" data-id="${t.id}" data-status="${esc(t.status)}" data-priority="${esc(t.priority)}"
       data-assignee="${t.assignee_id || ''}" data-search="${esc(`${t.title} ${t.description} ${t.assignee_name || ''}`.toLowerCase())}">
     ${showClient ? `<div class="tclient"><span class="client-dot" style="background:${esc(t.client_color)}"></span>${esc(t.client_name)}</div>` : ''}
     <div class="tt">${t.recurring_rule_id ? `<span class="rec-ic" title="Created by an automation">${I.repeat}</span>` : ''}${esc(t.title)}</div>
     ${t.description ? `<div class="td">${esc(t.description)}</div>` : ''}
     <div class="meta">
-      <div class="row" style="gap:6px">${prioBadge(t.priority)}${t.deadline ? `<span class="due ${over ? 'over' : ''}">${fmtDateShort(t.deadline)}</span>` : ''}</div>
+      <div class="row" style="gap:6px">${prioBadge(t.priority)}${t.deadline ? `<span class="due ${over ? 'over' : ''}">${dueShort(t)}</span>` : ''}</div>
       <div class="icons">
         ${t.comment_count ? `<span title="Comments">${I.chat.replace('width="18" height="18"', 'width="13" height="13"')} ${t.comment_count}</span>` : ''}
         ${t.file_count ? `<span title="Files">${I.clip.replace('width="18" height="18"', 'width="13" height="13"')} ${t.file_count}</span>` : ''}
@@ -742,7 +762,7 @@ function newTaskModal(clientId, status, onDone, opts = {}) {
       { name: 'status', label: 'Status', type: 'select', options: S.statuses, value: status },
       { name: 'priority', label: 'Priority level', type: 'select', options: S.priorities, value: 'Medium' },
       { name: 'assignee_id', label: 'Assignee', type: 'select', options: assigneeOptions(), value: opts.assignToMe ? S.me.id : '' },
-      { name: 'deadline', label: 'Deadline', type: 'date' },
+      { name: 'deadline', label: 'Deadline', type: 'deadline' },
       { type: 'info', html: `<div class="nt-attach">
           <div class="section-title" style="margin-top:4px"><span>Files</span><label class="btn sm soft" style="cursor:pointer">${I.plus} Add files<input type="file" id="nt-file" hidden multiple></label></div>
           <div class="stack" id="nt-files"><p class="small muted">No files added.</p></div>
@@ -839,7 +859,7 @@ async function openTask(id, onChange) {
         <label class="field">Status<select class="input" id="t-status">${S.statuses.map((s) => `<option ${s === t.status ? 'selected' : ''}>${s}</option>`).join('')}</select></label>
         <label class="field">Priority level<select class="input" id="t-priority">${S.priorities.map((p) => `<option ${p === t.priority ? 'selected' : ''}>${p}</option>`).join('')}</select></label>
         <label class="field">Assignee<select class="input" id="t-assignee">${assigneeOptions().map(([v, l]) => `<option value="${v}" ${String(v) === String(t.assignee_id || '') ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
-        <label class="field">Deadline<input class="input" type="date" id="t-deadline" value="${esc(t.deadline || '')}"></label>
+        <label class="field"><span class="field-label">Deadline<span class="hint">· time optional</span></span>${deadlineInputs(t.deadline, t.deadline_time, 't-')}</label>
         <div><div class="small muted">Date created</div><b>${fmtDateTs(t.created_at)}</b></div>
         ${t.automation ? `<div><div class="small muted">Created by automation</div><b class="row" style="gap:6px;flex-wrap:nowrap">${I.repeat}${esc(t.automation.title)}</b></div>` : ''}
         <div><div class="small muted">Last updated</div><b>${fmtDateTs(t.updated_at)}</b></div>
@@ -882,7 +902,7 @@ async function openTask(id, onChange) {
     try {
       await api('PUT', `/api/tasks/${id}`, {
         title: $('#t-title', el).value, description: $('#t-desc', el).value,
-        status: $('#t-status', el).value, priority: $('#t-priority', el).value, assignee_id: $('#t-assignee', el).value, deadline: $('#t-deadline', el).value,
+        status: $('#t-status', el).value, priority: $('#t-priority', el).value, assignee_id: $('#t-assignee', el).value, deadline: $('#t-deadline', el).value, deadline_time: $('#t-deadline-time', el).value,
       });
       toast('Task saved', 'ok'); close(); onChange && onChange();
     } catch (err) { toast(err.message, 'err'); }
@@ -1102,7 +1122,7 @@ async function automationsModal(client, onChange) {
         <span class="auto-ic">${I.repeat}</span>
         <div style="flex:1;min-width:0">
           <div class="row" style="gap:8px"><b>${esc(r.title)}</b>${prioBadge(r.priority)}${r.active ? '' : '<span class="badge b-gray">Paused</span>'}</div>
-          <div class="small muted" style="margin-top:4px">${esc(ruleSummary(r))}${r.due_in_days !== null ? ` · due ${r.due_in_days === 0 ? 'same day' : `in ${r.due_in_days} day${r.due_in_days === 1 ? '' : 's'}`}` : ''}${r.skip_if_open ? ' · skips if last one is still open' : ''}</div>
+          <div class="small muted" style="margin-top:4px">${esc(ruleSummary(r))}${r.due_in_days !== null ? ` · due ${r.due_in_days === 0 ? 'same day' : `in ${r.due_in_days} day${r.due_in_days === 1 ? '' : 's'}`}${r.due_time ? ` by ${fmtClock12(r.due_time)}` : ''}` : ''}${r.skip_if_open ? ' · skips if last one is still open' : ''}</div>
           <div class="row small" style="gap:12px;margin-top:6px">
             <span class="row" style="gap:6px">${r.assignee_name ? `${av(r.assignee_name, r.assignee_avatar, 'sm')}${esc(r.assignee_name)}` : '<span class="muted">Unassigned</span>'}</span>
             <span class="muted">Next: <b style="color:var(--navy)">${r.active && r.next_run_at ? `${fmtDateTs(r.next_run_at)}, ${fmtTime(r.next_run_at)}` : '—'}</b></span>
@@ -1160,6 +1180,7 @@ function ruleForm(client, r, onSaved) {
       <label class="field">Deadline<select class="input" name="due_in_days">
         ${[['', 'No deadline'], ['0', 'Same day'], ['1', '1 day later'], ['2', '2 days later'], ['3', '3 days later'], ['5', '5 days later'], ['7', '1 week later'], ['14', '2 weeks later'], ['30', '30 days later']]
           .map(([v, l]) => `<option value="${v}" ${String(r.due_in_days ?? '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label class="field" data-due-time>Due by <span class="hint">optional time on the deadline day</span><input class="input" type="time" name="due_time" value="${esc(r.due_time || '')}"></label>
       <label class="check full"><input type="checkbox" name="skip_if_open" ${r.skip_if_open ? 'checked' : ''}> Skip a run if the previous task from this automation isn't done yet</label>
       <label class="check full"><input type="checkbox" name="active" ${r.active ? 'checked' : ''}> Automation is active</label>
     </form>`,
@@ -1168,6 +1189,7 @@ function ruleForm(client, r, onSaved) {
   const f = $('#rule-form', el); const E = f.elements;
   const sync = () => {
     $$('[data-show]', f).forEach((x) => { x.style.display = x.dataset.show === E.frequency.value ? '' : 'none'; });
+    $('[data-due-time]', f).style.display = E.due_in_days.value === '' ? 'none' : '';
     const days = $$('input[name=wd]:checked', f).map((x) => x.value).join(',');
     const ok = E.frequency.value !== 'weekly' || days;
     $('#rule-preview', el).innerHTML = ok ? `${I.repeat.replace('width="18" height="18"', 'width="13" height="13" style="vertical-align:-2px"')} ${esc(ruleSummary({ frequency: E.frequency.value, weekdays: days, day_of_month: Number(E.day_of_month.value) || 1, run_time: E.run_time.value || '08:00' }))}` : '<span style="color:var(--red)">Pick at least one day.</span>';
@@ -1178,7 +1200,7 @@ function ruleForm(client, r, onSaved) {
     const d = {
       title: E.title.value, description: E.description.value, frequency: E.frequency.value, run_time: E.run_time.value || '08:00',
       weekdays: $$('input[name=wd]:checked', f).map((x) => x.value), day_of_month: E.day_of_month.value, assignee_id: E.assignee_id.value,
-      priority: E.priority.value, start_status: E.start_status.value, due_in_days: E.due_in_days.value, skip_if_open: E.skip_if_open.checked, active: E.active.checked,
+      priority: E.priority.value, start_status: E.start_status.value, due_in_days: E.due_in_days.value, due_time: E.due_in_days.value === '' ? '' : E.due_time.value, skip_if_open: E.skip_if_open.checked, active: E.active.checked,
     };
     try {
       if (r.id) await api('PUT', `/api/automations/${r.id}`, d);
@@ -1638,7 +1660,7 @@ async function pageMetrics(page, _a, alive) {
             <td><span class="row" style="gap:6px;flex-wrap:nowrap"><span class="client-dot" style="background:${esc(t.client_color)}"></span>${esc(t.client_name)}</span></td>
             ${ex ? `<td>${t.assignee_name ? `<span class="row" style="gap:8px;flex-wrap:nowrap">${av(t.assignee_name, t.assignee_avatar, 'sm')}${esc(t.assignee_name)}</span>` : '<span class="muted">Unassigned</span>'}</td>` : ''}
             <td>${prioBadge(t.priority)}</td><td>${fmtDateTs(t.completed_at)}</td>
-            <td>${t.deadline ? `${fmtDate(t.deadline)} <span class="badge ${t.on_time ? 'b-green' : 'b-red'}">${t.on_time ? 'On time' : 'Late'}</span>` : '<span class="muted">—</span>'}</td></tr>`).join('')}
+            <td>${t.deadline ? `${dueLong(t)} <span class="badge ${t.on_time ? 'b-green' : 'b-red'}">${t.on_time ? 'On time' : 'Late'}</span>` : '<span class="muted">—</span>'}</td></tr>`).join('')}
         </tbody></table></div>` : `<div class="empty"><b>Nothing completed yet this ${unit}</b>Tasks show up here when they're moved to Done.</div>`}
       </div>`;
 
