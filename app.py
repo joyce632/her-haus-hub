@@ -15,11 +15,12 @@ import ssl
 import threading
 import urllib.request
 import uuid
+from urllib.parse import urlencode
 from datetime import date, datetime, time, timedelta, timezone
 from functools import wraps
 from zoneinfo import ZoneInfo
 
-from flask import Flask, Response, abort, g, has_request_context, jsonify, request, send_file, session
+from flask import Flask, Response, abort, g, has_request_context, jsonify, redirect, request, send_file, session
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
@@ -1328,6 +1329,21 @@ def _due_text(deadline):
     return f"{d:%b} {d.day}"
 
 
+def _deliverable_lines(t):
+    """The task's own links and files, so completed work can be opened straight from Chat."""
+    clean = lambda text: (text or "").replace("|", "/").replace(">", "").replace("<", "")
+    base = _app_base()
+    links = q("SELECT url, label FROM task_links WHERE task_id=? ORDER BY id", (t["id"],))
+    files = q("SELECT id, original_name FROM files WHERE kind='task' AND ref_id=? ORDER BY id", (t["id"],))
+    out = []
+    if links:
+        out += ["", "Links:"] + [f"• <{l['url']}|{clean(l['label'] or l['url'])}>" for l in links]
+    if files:
+        out += ["", "Files:"] + [f"• <{base}/api/files/{f['id']}|{clean(f['original_name'])}>" if base
+                                 else f"• {clean(f['original_name'])}" for f in files]
+    return out
+
+
 def task_chat_event(kind, tid, actor=None, old_status=None, snippet=""):
     """Posts a task update to Google Chat if that alert type is switched on. Never raises."""
     try:
@@ -1373,7 +1389,7 @@ def task_chat_event(kind, tid, actor=None, old_status=None, snippet=""):
                 timing = "On time" if late <= 0 else f"{late} day{'s' if late != 1 else ''} late"
             lines = ["✅ *TASK COMPLETED*", ""] + task_lines + [
                 f"Completed by: {actor or t['assignee_name'] or '—'}", f"Due date: {due()}"] + (
-                [f"Timing: {timing}"] if timing else []) + [f"Priority: {t['priority']}"]
+                [f"Timing: {timing}"] if timing else []) + [f"Priority: {t['priority']}"] + _deliverable_lines(t)
         else:
             lines = ["💬 *NEW COMMENT*", ""] + task_lines + [f"Comment by: {actor}", f"Comment: “{snippet[:300]}”"]
         link = _task_link(t)
@@ -1696,8 +1712,10 @@ def upload_task_file(tid):
 
 
 @app.get("/api/files/<int:fid>")
-@login_required
 def get_file(fid):
+    if not current_user():
+        # Opened from a Google Chat link while signed out: sign in first, then come back to the download.
+        return redirect("/?" + urlencode({"next": request.full_path.rstrip("?")}))
     f = q("SELECT * FROM files WHERE id=?", (fid,), one=True)
     if not f or not _can_access_file(f):
         abort(404)

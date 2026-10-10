@@ -287,6 +287,11 @@ function renderLogin() {
     try {
       await api('POST', '/api/login', { email: f.email.value, password: f.password.value });
       await setMe(await api('GET', '/api/me'));
+      const next = new URLSearchParams(location.search).get('next') || '';
+      if (/^\/api\/files\/\d+(\?[\w=&]*)?$/.test(next)) {  // file link from Google Chat: go back to the download
+        history.replaceState(null, '', '/#/');
+        location.href = next;
+      }
       route();  // keep the address they came in on, e.g. a task link from Google Chat
     } catch (err) { toast(err.message, 'err'); } finally { b.disabled = false; }
   };
