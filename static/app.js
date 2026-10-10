@@ -95,6 +95,10 @@ const STATUS_META = {
 };
 const PRIORITY_BADGE = { Urgent: 'b-red', High: 'b-amber', Medium: 'b-blue', Low: 'b-gray' };
 const PRIORITY_COLOR = { Urgent: '#CB252B', High: '#ea7a2f', Medium: '#3b6fc0', Low: '#a3b1c4' };
+const CLIENT_TYPE_META = { 'VIP Client': 'ct-vip', 'Stable Client': 'ct-stable', 'Low Priority Client': 'ct-low' };
+const CLIENT_HEALTH_META = { Stable: 'b-green', 'At Risk': 'b-red', 'Newly Onboarded': 'b-blue' };
+const clientTypeBadge = (t) => t ? `<span class="badge ${CLIENT_TYPE_META[t] || 'b-gray'}">${t === 'VIP Client' ? I.star.replace('width="18" height="18"', 'width="11" height="11"') : ''}${esc(t)}</span>` : '';
+const clientHealthBadge = (h) => h ? `<span class="badge ${CLIENT_HEALTH_META[h] || 'b-gray'}"><i class="live-dot" style="animation:none"></i>${esc(h)}</span>` : '';
 const statusBadge = (s) => `<span class="badge ${(STATUS_META[s] || {}).b || 'b-gray'}">${esc(s)}</span>`;
 const prioBadge = (p) => `<span class="badge ${PRIORITY_BADGE[p] || 'b-gray'}">${esc(p)}</span>`;
 const shiftBadge = (s) => `<span class="badge ${s === 'On Shift' ? 'b-green' : s === 'On Break' ? 'b-amber' : 'b-gray'}">${esc(s)}</span>`;
@@ -136,6 +140,8 @@ const I = {
   at: svg('<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 006 0v-1a10 10 0 10-3.9 7.9"/>'),
   archive: svg('<rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a1 1 0 001 1h12a1 1 0 001-1V9M10 13h4"/>'),
   restore: svg('<path d="M3 12a9 9 0 109-9 9.7 9.7 0 00-6.7 2.8L3 8"/><path d="M3 3v5h5"/>'),
+  star: svg('<path d="M12 3l2.8 5.7 6.2.9-4.5 4.4 1 6.2L12 17.3 6.5 20.2l1-6.2L3 9.6l6.2-.9z"/>'),
+  grip: svg('<circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/>'),
   send: svg('<path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/>'),
 };
 
@@ -274,6 +280,7 @@ async function boot() {
 
 async function setMe(r) {
   S.me = r.user; S.settings = r.settings; S.statuses = r.statuses; S.priorities = r.priorities;
+  S.clientTypes = r.client_types || []; S.clientStatuses = r.client_statuses || [];
   let saved = null;
   try { saved = localStorage.getItem('hh_view'); } catch (_) { /* storage blocked */ }
   S.view = S.me.role === 'executive' ? (saved || 'exec') : 'employee';
@@ -424,7 +431,7 @@ function renderShell() {
 
 function clientNavHTML() {
   if (!S.clients.length) return `<p class="small muted" style="padding:4px 12px">${isExec() ? 'No clients yet — add one under Clients.' : 'No clients yet.'}</p>`;
-  return S.clients.map((c) => `<a href="#/board/${c.id}" data-nav="board/${c.id}"><span class="dot" style="background:${esc(c.color)}"></span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.name)}</span>${c.open_tasks ? `<span class="small" style="opacity:.7">${c.open_tasks}</span>` : ''}</a>`).join('');
+  return S.clients.map((c) => `<a href="#/board/${c.id}" data-nav="board/${c.id}" title="${esc([c.client_type, c.client_status].filter(Boolean).join(' · '))}"><span class="dot" style="background:${esc(c.color)}"></span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.name)}</span>${c.client_type === 'VIP Client' ? `<span class="nav-vip" aria-label="VIP client">${I.star}</span>` : ''}${c.client_status === 'At Risk' ? '<span class="nav-risk" aria-label="At risk"></span>' : ''}${c.open_tasks ? `<span class="small" style="opacity:.7">${c.open_tasks}</span>` : ''}</a>`).join('');
 }
 function refreshClientNav() { const n = $('#client-nav'); if (n) { n.innerHTML = clientNavHTML(); markActiveNav(); } }
 
@@ -634,7 +641,8 @@ async function pageBoard(page, [cid], alive) {
   const data = await fetchBoard();
   if (!alive()) return;
   const c = data.client;
-  setTitle(c.name, c.archived ? 'Archived client — restore it from the Archive to make changes' : (c.description || 'Client task board'));
+  setTitle(c.name, c.archived ? 'Archived client — restore it from the Archive to make changes'
+    : [c.client_type, c.client_status, c.description].filter(Boolean).join(' · ') || 'Client task board');
   let filters = { q: '', assignee: '', priority: '' };
   try { filters = { ...filters, ...JSON.parse(sessionStorage.getItem('hh_board_filters') || '{}') }; } catch (_) { /* ignore */ }
 
@@ -1968,20 +1976,83 @@ async function pageTimesheets(page, _a, alive) {
 // ============================================================ executive: clients
 async function pageClients(page, _a, alive) {
   setTitle('Clients', 'Each client gets its own kanban board');
-  const rows = await api('GET', '/api/clients');
+  let rows = await api('GET', '/api/clients');
   if (!alive()) return;
+  const saved = (() => { try { return JSON.parse(sessionStorage.getItem('hh_client_view') || '{}'); } catch (_) { return {}; } })();
+  const v = { type: '', status: '', sort: 'custom', ...saved };
+  const typeRank = (c) => S.clientTypes.indexOf(c.client_type);
+  const statusRank = (c) => ['At Risk', 'Newly Onboarded', 'Stable'].indexOf(c.client_status);
+  const SORTS = {
+    custom: ['Custom order', null],
+    name: ['Name A–Z', (a, b) => a.name.localeCompare(b.name)],
+    type: ['Client type', (a, b) => typeRank(a) - typeRank(b) || a.name.localeCompare(b.name)],
+    status: ['At risk first', (a, b) => statusRank(a) - statusRank(b) || a.name.localeCompare(b.name)],
+    open: ['Most open tasks', (a, b) => b.open_tasks - a.open_tasks || a.name.localeCompare(b.name)],
+  };
   page.innerHTML = `
-    <div class="board-bar"><a class="btn ghost" href="#/archive?tab=clients">${I.archive} Archived clients</a><span style="flex:1"></span>
-      <button class="btn red" id="c-add">${I.plus} New client</button></div>
-    <div class="res-grid">${rows.length ? rows.map((c) => `<div class="card" style="border-top:4px solid ${esc(c.color)};${c.archived ? 'opacity:.6' : ''}">
-      <div class="row between"><h2>${esc(c.name)}</h2>${c.archived ? '<span class="badge b-gray">Archived</span>' : `<span class="badge b-navy">${c.open_tasks} open</span>`}</div>
-      <p class="muted small" style="margin:6px 0 10px;min-height:18px">${esc(c.description || 'No description')}</p>
-      <p class="small chat-dest">${I.chat}${c.chat_webhook ? 'Task alerts → <b>this client\'s Chat space</b>' : 'Task alerts → team default space'}</p>
-      <div class="row">${c.archived ? '' : `<a class="btn sm" href="#/board/${c.id}">Open board</a>`}<button class="btn sm ghost" data-edit="${c.id}">Edit</button>
-        <button class="btn sm ghost" data-arch="${c.id}">${c.archived ? 'Restore' : 'Archive'}</button></div></div>`).join('')
-      : '<div class="card empty" style="grid-column:1/-1"><b>No clients yet</b>Create your first client to get a task board for them.</div>'}</div>`;
+    <div class="board-bar client-bar">
+      <select class="input" id="c-type"><option value="">All types</option>${S.clientTypes.map((t) => `<option>${esc(t)}</option>`).join('')}</select>
+      <select class="input" id="c-status"><option value="">All statuses</option>${S.clientStatuses.map((t) => `<option>${esc(t)}</option>`).join('')}</select>
+      <select class="input" id="c-sort" title="Sort clients" aria-label="Sort clients">${Object.entries(SORTS).map(([k, [l]]) => `<option value="${k}">${l}</option>`).join('')}</select>
+      <span style="flex:1"></span>
+      <a class="btn ghost" href="#/archive?tab=clients">${I.archive} Archived</a>
+      <button class="btn red" id="c-add">${I.plus} New client</button>
+    </div>
+    <p class="small muted" id="c-hint" style="margin:-6px 0 14px"></p>
+    <div class="res-grid client-grid" id="c-grid"></div>`;
+  $('#c-type').value = v.type; $('#c-status').value = v.status; $('#c-sort').value = v.sort;
+
+  const draw = () => {
+    sessionStorage.setItem('hh_client_view', JSON.stringify(v));
+    const canArrange = v.sort === 'custom' && !v.type && !v.status;
+    let list = rows.filter((c) => (!v.type || c.client_type === v.type) && (!v.status || c.client_status === v.status));
+    if (SORTS[v.sort][1]) list = [...list].sort(SORTS[v.sort][1]);
+    $('#c-hint').innerHTML = rows.length > 1 ? (canArrange ? `${I.grip.replace('width="18" height="18"', 'width="12" height="12" style="vertical-align:-2px"')} Drag cards to arrange your clients — the sidebar follows this order.`
+      : 'Switch to “Custom order” with no filters to drag clients into place.') : '';
+    $('#c-grid').innerHTML = list.length ? list.map((c) => `<div class="card client-card ${canArrange ? 'can-drag' : ''}" data-cid="${c.id}" ${canArrange ? 'draggable="true"' : ''} style="--client:${esc(c.color)}">
+        <div class="row between" style="flex-wrap:nowrap;gap:8px">
+          <h2 style="min-width:0"><span class="client-dot" style="background:${esc(c.color)}"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.name)}</span></h2>
+          ${canArrange ? `<span class="drag-handle" title="Drag to arrange">${I.grip}</span>` : ''}
+        </div>
+        <div class="row" style="gap:6px;margin:10px 0 8px">${clientTypeBadge(c.client_type)}${clientHealthBadge(c.client_status)}<span class="badge b-gray">${c.open_tasks} open</span></div>
+        <p class="muted small" style="margin:0 0 10px;min-height:18px">${esc(c.description || 'No description')}</p>
+        <p class="small chat-dest">${I.chat}${c.chat_webhook ? 'Task alerts → <b>this client\'s Chat space</b>' : 'Task alerts → team default space'}</p>
+        <div class="row"><a class="btn sm" href="#/board/${c.id}">Open board</a><button class="btn sm ghost" data-edit="${c.id}">Edit</button>
+          <button class="btn sm ghost" data-arch="${c.id}">Archive</button></div>
+      </div>`).join('')
+      : `<div class="card empty" style="grid-column:1/-1"><b>${rows.length ? 'No clients match these filters' : 'No clients yet'}</b>${rows.length ? 'Try a different type or status.' : 'Create your first client to get a task board for them.'}</div>`;
+  };
+  $('#c-type').onchange = (e) => { v.type = e.target.value; draw(); };
+  $('#c-status').onchange = (e) => { v.status = e.target.value; draw(); };
+  $('#c-sort').onchange = (e) => { v.sort = e.target.value; draw(); };
+
+  // Drag to arrange (custom order only)
+  const grid = $('#c-grid');
+  grid.addEventListener('dragstart', (e) => {
+    const card = e.target.closest('.client-card.can-drag'); if (!card) return;
+    card.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', card.dataset.cid);
+  });
+  grid.addEventListener('dragover', (e) => {
+    const dragging = $('.client-card.dragging', grid); if (!dragging) return;
+    e.preventDefault();
+    const others = $$('.client-card:not(.dragging)', grid);
+    const target = others.find((el) => { const r = el.getBoundingClientRect(); return e.clientY < r.bottom && (e.clientY < r.top + r.height / 2 || e.clientX < r.left + r.width / 2); });
+    if (target) grid.insertBefore(dragging, target); else grid.appendChild(dragging);
+  });
+  grid.addEventListener('dragend', async (e) => {
+    const card = e.target.closest('.client-card'); if (!card) return;
+    card.classList.remove('dragging');
+    const ids = $$('.client-card', grid).map((el) => Number(el.dataset.cid));
+    if (ids.join() === rows.map((c) => c.id).join()) return;
+    rows = ids.map((id) => rows.find((c) => c.id === id));
+    try { await api('POST', '/api/clients/reorder', { ids }); await loadClients(); refreshClientNav(); toast('Client order saved', 'ok'); }
+    catch (err) { toast(err.message, 'err'); }
+  });
+
   const fields = (c = {}) => [
     { name: 'name', label: 'Client name', required: true, full: true, value: c.name },
+    { name: 'client_type', label: 'Client type', type: 'select', options: S.clientTypes, value: c.client_type || 'Stable Client' },
+    { name: 'client_status', label: 'Status', type: 'select', options: S.clientStatuses, value: c.client_status || 'Newly Onboarded' },
     { name: 'color', label: 'Board color', type: 'color', full: true, value: c.color || CLIENT_COLORS[0] },
     { name: 'description', label: 'Description', type: 'textarea', full: true, rows: 3, value: c.description, placeholder: 'Market, deal type, point of contact…' },
     { name: 'chat_webhook', label: 'Google Chat space for this client (optional)', full: true, value: c.chat_webhook, placeholder: 'https://chat.googleapis.com/v1/spaces/…',
@@ -1998,9 +2069,10 @@ async function pageClients(page, _a, alive) {
   $('#c-add').onclick = () => formModal({ title: 'New client', fields: fields(), submit: 'Create client', onSubmit: async (d, close) => { await api('POST', '/api/clients', d); close(); toast('Client created', 'ok'); after(); } });
   page.addEventListener('click', async (e) => {
     const ed = e.target.closest('[data-edit]'); const ar = e.target.closest('[data-arch]');
-    if (ed) { const c = rows.find((x) => x.id === Number(ed.dataset.edit)); wireTest(formModal({ title: `Edit ${c.name}`, fields: fields(c), extraFoot: testBtn, onSubmit: async (d, close) => { await api('PUT', `/api/clients/${c.id}`, d); close(); after(); } }), c); }
-    if (ar) { const c = rows.find((x) => x.id === Number(ar.dataset.arch)); if (c.archived || await confirmModal(`Archive ${c.name}? Its board moves to the Archive — nothing is deleted and you can restore it any time.`, { okLabel: 'Archive', danger: false })) { await api('PUT', `/api/clients/${c.id}`, { archived: !c.archived }); after(); } }
+    if (ed) { const c = rows.find((x) => x.id === Number(ed.dataset.edit)); wireTest(formModal({ title: `Edit ${c.name}`, fields: fields(c), extraFoot: testBtn, onSubmit: async (d, close) => { await api('PUT', `/api/clients/${c.id}`, d); close(); toast('Client updated', 'ok'); after(); } }), c); }
+    if (ar) { const c = rows.find((x) => x.id === Number(ar.dataset.arch)); if (await confirmModal(`Archive ${c.name}? Its board moves to the Archive — nothing is deleted and you can restore it any time.`, { okLabel: 'Archive', danger: false })) { await api('PUT', `/api/clients/${c.id}`, { archived: true }); after(); } }
   });
+  draw();
 }
 
 // ============================================================ executive: settings

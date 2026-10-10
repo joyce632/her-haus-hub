@@ -60,6 +60,8 @@ app.config.update(
 )
 
 SAFE_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"}  # no SVG: it can carry script
+CLIENT_TYPES = ["VIP Client", "Stable Client", "Low Priority Client"]
+CLIENT_HEALTH = ["Stable", "At Risk", "Newly Onboarded"]
 STATUSES = ["Not Started", "Blocked", "For Revision", "In Progress", "Done"]
 PRIORITIES = ["Low", "Medium", "High", "Urgent"]
 DEFAULT_SETTINGS = {
@@ -215,6 +217,10 @@ def init_db():
     _add_column(conn, "tasks", "recurring_rule_id", "INTEGER")
     _add_column(conn, "clients", "chat_webhook", "TEXT DEFAULT ''")
     _add_column(conn, "clients", "archived_at", "TEXT")
+    _add_column(conn, "clients", "position", "REAL")
+    _add_column(conn, "clients", "client_type", "TEXT DEFAULT 'Stable Client'")
+    _add_column(conn, "clients", "client_status", "TEXT DEFAULT 'Stable'")
+    conn.execute("UPDATE clients SET position=id WHERE position IS NULL")
     _add_column(conn, "tasks", "archived_at", "TEXT")
     _add_column(conn, "tasks", "archived_by", "INTEGER")
     _add_column(conn, "tasks", "restored_at", "TEXT")
@@ -508,7 +514,8 @@ def me():
     s = settings()
     return jsonify(user=user_out(current_user(), True), settings={
         "company_name": s["company_name"], "currency": s["currency"], "timezone": s["timezone"],
-        "company_direction": s["company_direction"]}, statuses=STATUSES, priorities=PRIORITIES)
+        "company_direction": s["company_direction"]}, statuses=STATUSES, priorities=PRIORITIES,
+                   client_types=CLIENT_TYPES, client_statuses=CLIENT_HEALTH)
 
 
 @app.post("/api/me/password")
@@ -800,7 +807,7 @@ def list_clients():
     show_archived = request.args.get("archived") == "1" and is_exec()
     rows = q("SELECT c.*, (SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.status!='Done' AND t.archived_at IS NULL) open_tasks, "
              "(SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id) total_tasks "
-             "FROM clients c " + ("" if show_archived else "WHERE archived=0 ") + "ORDER BY archived, name")
+             "FROM clients c " + ("" if show_archived else "WHERE archived=0 ") + "ORDER BY archived, position, name")
     return jsonify([_client_out(r) for r in rows])
 
 
@@ -820,9 +827,24 @@ def create_client():
     hook = (d.get("chat_webhook") or "").strip()
     if hook and not valid_webhook(hook):
         return bad("Google Chat webhook URLs start with https://chat.googleapis.com/")
-    cid = ex("INSERT INTO clients(name,color,description,chat_webhook,created_at) VALUES(?,?,?,?,?)",
-             (d["name"].strip(), d.get("color") or "#0C2E60", d.get("description") or "", hook, iso(now_utc())))
+    pos = (q("SELECT MAX(position) m FROM clients", one=True)["m"] or 0) + 1
+    ctype = d.get("client_type") if d.get("client_type") in CLIENT_TYPES else "Stable Client"
+    cstatus = d.get("client_status") if d.get("client_status") in CLIENT_HEALTH else "Newly Onboarded"
+    cid = ex("INSERT INTO clients(name,color,description,chat_webhook,position,client_type,client_status,created_at) "
+             "VALUES(?,?,?,?,?,?,?,?)",
+             (d["name"].strip(), d.get("color") or "#0C2E60", d.get("description") or "", hook, pos, ctype, cstatus,
+              iso(now_utc())))
     return jsonify(q("SELECT * FROM clients WHERE id=?", (cid,), one=True))
+
+
+@app.post("/api/clients/reorder")
+@exec_required
+def reorder_clients():
+    ids = [int(i) for i in (body().get("ids") or []) if str(i).isdigit()]
+    for pos, cid in enumerate(ids, start=1):
+        db().execute("UPDATE clients SET position=? WHERE id=?", (pos, cid))
+    db().commit()
+    return jsonify(ok=True)
 
 
 @app.put("/api/clients/<int:cid>")
@@ -830,6 +852,10 @@ def create_client():
 def update_client(cid):
     d = body()
     f = {k: d[k] for k in ("name", "color", "description") if k in d}
+    if d.get("client_type") in CLIENT_TYPES:
+        f["client_type"] = d["client_type"]
+    if d.get("client_status") in CLIENT_HEALTH:
+        f["client_status"] = d["client_status"]
     if "chat_webhook" in d:
         f["chat_webhook"] = (d["chat_webhook"] or "").strip()
         if f["chat_webhook"] and not valid_webhook(f["chat_webhook"]):

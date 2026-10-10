@@ -827,3 +827,25 @@ body::before {
 .pick-main small { color: var(--muted); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .res-tag { font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--royal); background: rgba(27, 75, 168, .1); padding: 2px 7px; border-radius: 6px; flex-shrink: 0; }
 .section-title .btn svg { width: 14px; height: 14px; }
+
+/* ---------- clients: type, status, arranging ---------- */
+.ct-vip { background: linear-gradient(135deg, rgba(245, 158, 11, .2), rgba(234, 88, 12, .14)); color: #9A3412; }
+.ct-vip svg { fill: currentColor; stroke: none; margin-right: 1px; }
+.ct-stable { background: var(--navy-soft); color: var(--navy); }
+.ct-low { background: rgba(100, 116, 139, .12); color: #64748b; }
+.badge .live-dot { width: 6px; height: 6px; margin-right: 1px; }
+.client-card { border-top: 0; overflow: hidden; transition: transform .2s var(--ease), box-shadow .2s var(--ease), opacity .2s; }
+.client-card::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 4px; background: var(--client); }
+.client-card h2 { gap: 9px; }
+.client-card.can-drag { cursor: grab; }
+.client-card.dragging { opacity: .45; transform: scale(.98); }
+.drag-handle { color: var(--muted); opacity: .55; line-height: 0; flex-shrink: 0; cursor: grab; }
+.client-card:hover .drag-handle { opacity: 1; }
+.drag-handle svg { width: 18px; height: 18px; fill: currentColor; }
+.nav-vip { display: inline-flex; color: #F59E0B; line-height: 0; }
+.nav-vip svg { width: 13px; height: 13px; fill: currentColor; stroke: none; opacity: 1 !important; }
+.nav a.active .nav-vip { color: #FCD34D; }
+.nav-risk { width: 7px; height: 7px; border-radius: 50%; background: var(--red-vivid); box-shadow: 0 0 0 3px rgba(227, 38, 45, .15); flex-shrink: 0; }
+.nav a.active .nav-risk { box-shadow: 0 0 0 2px #fff; }
+.client-bar select.input { min-width: 0; width: 148px; }
+.client-bar #c-sort { width: 158px; }
