@@ -1328,19 +1328,6 @@ def _due_text(deadline):
     return f"{d:%b} {d.day}"
 
 
-def _attachment_lines(t):
-    base = _app_base()
-    links = q("SELECT url, label FROM task_links WHERE task_id=? ORDER BY id", (t["id"],))
-    files = q("SELECT id, original_name FROM files WHERE kind='task' AND ref_id=? ORDER BY id", (t["id"],))
-    out = []
-    if links:
-        out += ["", "Links:"] + [f"• <{l['url']}|{(l['label'] or l['url']).replace('|', '/').replace('>', '')}>" for l in links]
-    if files:
-        name = lambda f: f["original_name"].replace("|", "/").replace(">", "")
-        out += ["", "Files:"] + [f"• <{base}/api/files/{f['id']}|{name(f)}>" if base else f"• {name(f)}" for f in files]
-    return out
-
-
 def task_chat_event(kind, tid, actor=None, old_status=None, snippet=""):
     """Posts a task update to Google Chat if that alert type is switched on. Never raises."""
     try:
@@ -1372,7 +1359,7 @@ def task_chat_event(kind, tid, actor=None, old_status=None, snippet=""):
         common = [f"Assigned to: {t['assignee_name'] or 'Unassigned'}", f"Due date: {due()}",
                   f"Priority: {t['priority']}", f"Status: {label(t['status'])}"]
         if kind == "created":
-            lines = ["📌 *NEW TASK CREATED*", ""] + task_lines + common + _attachment_lines(t)
+            lines = ["📌 *NEW TASK CREATED*", ""] + task_lines + common
         elif kind == "assigned":
             lines = ["👤 *TASK ASSIGNED*", ""] + task_lines + common + ([f"Assigned by: {actor}"] if actor else [])
         elif kind == "status":

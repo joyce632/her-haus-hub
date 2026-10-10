@@ -287,8 +287,7 @@ function renderLogin() {
     try {
       await api('POST', '/api/login', { email: f.email.value, password: f.password.value });
       await setMe(await api('GET', '/api/me'));
-      location.hash = '';
-      route();
+      route();  // keep the address they came in on, e.g. a task link from Google Chat
     } catch (err) { toast(err.message, 'err'); } finally { b.disabled = false; }
   };
 }
