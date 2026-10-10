@@ -1304,7 +1304,7 @@ def _app_base():
 
 def _task_link(t):
     base = _app_base()
-    return f"<{base}/#/board/{t['client_id']}?task={t['id']}|Open in Her Haus Hub>" if base else ""
+    return f"<{base}/#/board/{t['client_id']}?task={t['id']}|Link>" if base else ""
 
 
 def _task_hook(t):
@@ -1334,26 +1334,38 @@ def task_chat_event(kind, tid, actor=None, old_status=None, snippet=""):
         hook = _task_hook(t)
         if not hook:
             return
-        by = f" by {actor}" if actor else ""
-        details = " · ".join(x for x in [
-            f"Assigned to *{t['assignee_name']}*" if t["assignee_name"] else "Unassigned",
-            f"{t['priority']} priority", f"Due {_due_text(t['deadline'])}" if t["deadline"] else ""] if x)
+        def label(status):
+            return (status or "—").capitalize()  # "Not Started" -> "Not started"
+
+        def due():
+            if not t["deadline"]:
+                return "No due date"
+            d = date.fromisoformat(t["deadline"])
+            return f"{d:%b} {d.day}, {d.year}"
+
+        task_lines = [f"Task: {t['title']}", f"Client: {t['client_name']}"]
+        common = [f"Assigned to: {t['assignee_name'] or 'Unassigned'}", f"Due date: {due()}",
+                  f"Priority: {t['priority']}", f"Status: {label(t['status'])}"]
         if kind == "created":
-            lines = [f"🆕 *New task* · {t['client_name']}", f"*{t['title']}*", details + (f" · Added{by}" if actor else "")]
+            lines = ["📌 *NEW TASK CREATED*", ""] + task_lines + common
         elif kind == "assigned":
-            lines = [f"👤 *{t['title']}* was assigned to *{t['assignee_name']}*{by}", f"{t['client_name']} · {details}"]
+            lines = ["👤 *TASK ASSIGNED*", ""] + task_lines + common + ([f"Assigned by: {actor}"] if actor else [])
         elif kind == "status":
-            lines = [f"🔄 *{t['title']}* moved *{old_status or '—'} → {t['status']}*{by}", t["client_name"]]
+            lines = ["🔄 *TASK STATUS UPDATED*", ""] + task_lines + [
+                f"Status: {label(old_status)} → {label(t['status'])}", f"Assigned to: {t['assignee_name'] or 'Unassigned'}",
+                f"Due date: {due()}", f"Priority: {t['priority']}"] + ([f"Updated by: {actor}"] if actor else [])
         elif kind == "done":
-            timing = ""
+            timing = "No due date"
             if t["deadline"] and t["completed_at"]:
                 late = (parse_dt(t["completed_at"]).astimezone(tz()).date() - date.fromisoformat(t["deadline"])).days
-                timing = " · ✔ on time" if late <= 0 else f" · {late} day{'s' if late != 1 else ''} late"
-            lines = [f"✅ *{t['title']}* completed{by}", f"{t['client_name']}{timing}"]
+                timing = "On time" if late <= 0 else f"{late} day{'s' if late != 1 else ''} late"
+            lines = ["✅ *TASK COMPLETED*", ""] + task_lines + [
+                f"Completed by: {actor or t['assignee_name'] or '—'}", f"Due date: {due()}", f"Timing: {timing}",
+                f"Priority: {t['priority']}"]
         else:
-            lines = [f"💬 *{actor}* commented on *{t['title']}*", f"“{snippet[:300]}”", t["client_name"]]
+            lines = ["💬 *NEW COMMENT*", ""] + task_lines + [f"Comment by: {actor}", f"Comment: “{snippet[:300]}”"]
         link = _task_link(t)
-        chat_post_async(hook, "\n".join(lines + ([link] if link else [])))
+        chat_post_async(hook, "\n".join(lines + (["", f"🔗 {link}"] if link else [])))
     except Exception as e:
         print("Task chat alert error:", e)
 
