@@ -16,7 +16,7 @@ The first time it runs, it creates one **executive** account using `ADMIN_EMAIL`
 
 ## Deploy it so the team can use it (Render)
 
-The repo includes a `render.yaml`, so Render sets up almost everything for you. The cost is about **US$7/month** for the Starter server, plus about **$1/month** for a 5 GB disk.
+The repo includes a `render.yaml`, so Render sets up almost everything for you. The cost is about **US$7/month** for the smallest paid server (`0.5c-512mb`), plus about **$1/month** for a 5 GB disk.
 
 1. Put this folder in a **private** GitHub repository.
 2. On [render.com](https://render.com), go to **New → Blueprint** and pick the repo.

@@ -3,7 +3,7 @@ services:
   - type: web
     name: herhaus-hub
     runtime: python
-    plan: starter            # a paid plan is required for the persistent disk below
+    plan: 0.5c-512mb         # smallest paid size (0.5 CPU, 512 MB); needed for the persistent disk below
     region: singapore        # closest to the Philippines; change if you prefer
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn -w 1 --threads 8 --timeout 60 -b 0.0.0.0:$PORT app:app
