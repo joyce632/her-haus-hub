@@ -1,4 +1,14 @@
 # One-click setup on Render: New → Blueprint → pick this repo.
+databases:
+  - name: herhaus-db
+    plan: 0.1c-256mb          # smallest paid Postgres; includes automatic backups / point-in-time recovery
+    region: singapore         # same region as the web service (fast private connection)
+    diskSizeGB: 1
+    postgresMajorVersion: "16"
+    databaseName: herhaus
+    user: herhaus
+    ipAllowList: []           # no public internet access — only the Hub (on Render's private network) connects
+
 services:
   - type: web
     name: herhaus-hub
@@ -17,7 +27,11 @@ services:
       - key: PYTHONUNBUFFERED
         value: "1"
       - key: DATA_DIR
-        value: /var/data
+        value: /var/data      # uploaded files live on the disk; data lives in Postgres
+      - key: DATABASE_URL
+        fromDatabase:
+          name: herhaus-db
+          property: connectionString
       - key: SECRET_KEY
         generateValue: true
       - key: COOKIE_SECURE

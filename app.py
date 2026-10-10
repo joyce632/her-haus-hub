@@ -34,6 +34,12 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(BASE_DIR, "data"))
 UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
 DB_PATH = os.path.join(DATA_DIR, "herhaus.db")
+# Production uses Render's managed Postgres (DATABASE_URL). Without it (local demo, tests) the app uses SQLite.
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+USE_PG = DATABASE_URL.startswith(("postgres://", "postgresql://"))
+if USE_PG:
+    import psycopg
+    from psycopg.rows import dict_row
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
@@ -158,6 +164,96 @@ CREATE TABLE IF NOT EXISTS recurring_rules(
 """
 
 
+PG_SCHEMA = """
+CREATE TABLE IF NOT EXISTS users(
+  id SERIAL PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL, password_hash TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'employee', position TEXT DEFAULT '', salary_per_cutoff DOUBLE PRECISION DEFAULT 0,
+  shift_hours DOUBLE PRECISION DEFAULT 8, phone TEXT DEFAULT '', start_date TEXT DEFAULT '', bank_name TEXT DEFAULT '',
+  bank_account_name TEXT DEFAULT '', bank_account_number TEXT DEFAULT '', qr_file_id INTEGER, active INTEGER DEFAULT 1,
+  must_change_password INTEGER DEFAULT 1, created_at TEXT, avatar_file_id INTEGER);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_users_email ON users (lower(email));
+CREATE TABLE IF NOT EXISTS time_entries(
+  id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), clock_in TEXT NOT NULL, clock_out TEXT);
+CREATE INDEX IF NOT EXISTS ix_te_user ON time_entries(user_id, clock_in);
+CREATE TABLE IF NOT EXISTS breaks(
+  id SERIAL PRIMARY KEY, entry_id INTEGER NOT NULL REFERENCES time_entries(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL, kind TEXT DEFAULT 'Break', start TEXT NOT NULL, "end" TEXT);
+CREATE TABLE IF NOT EXISTS clients(
+  id SERIAL PRIMARY KEY, name TEXT NOT NULL, color TEXT DEFAULT '#0C2E60', description TEXT DEFAULT '',
+  archived INTEGER DEFAULT 0, created_at TEXT, chat_webhook TEXT DEFAULT '', archived_at TEXT,
+  position DOUBLE PRECISION, client_type TEXT DEFAULT 'Stable Client', client_status TEXT DEFAULT 'Stable');
+CREATE TABLE IF NOT EXISTS tasks(
+  id SERIAL PRIMARY KEY, client_id INTEGER NOT NULL REFERENCES clients(id), title TEXT NOT NULL,
+  description TEXT DEFAULT '', notes TEXT DEFAULT '', priority TEXT DEFAULT 'Medium', assignee_id INTEGER,
+  deadline TEXT, status TEXT DEFAULT 'Not Started', position DOUBLE PRECISION DEFAULT 0, created_by INTEGER,
+  created_at TEXT, updated_at TEXT, completed_at TEXT, recurring_rule_id INTEGER, archived_at TEXT,
+  archived_by INTEGER, restored_at TEXT, deadline_time TEXT, block_date TEXT, block_start TEXT, block_end TEXT);
+CREATE INDEX IF NOT EXISTS ix_tasks_client ON tasks(client_id, status);
+CREATE INDEX IF NOT EXISTS ix_tasks_assignee ON tasks(assignee_id);
+CREATE TABLE IF NOT EXISTS task_links(
+  id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  url TEXT NOT NULL, label TEXT DEFAULT '', created_at TEXT);
+CREATE TABLE IF NOT EXISTS files(
+  id SERIAL PRIMARY KEY, kind TEXT NOT NULL, ref_id INTEGER, owner_id INTEGER, original_name TEXT,
+  stored_name TEXT, mime TEXT, size BIGINT, created_at TEXT);
+CREATE TABLE IF NOT EXISTS eods(
+  id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL, eod_date TEXT, client_id INTEGER, accomplishments TEXT,
+  blockers TEXT DEFAULT '', tomorrow TEXT DEFAULT '', notes TEXT DEFAULT '', worked_seconds INTEGER DEFAULT 0,
+  chat_status TEXT DEFAULT '', created_at TEXT);
+CREATE TABLE IF NOT EXISTS incidents(
+  id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL, incident_date TEXT, title TEXT, description TEXT DEFAULT '',
+  severity TEXT DEFAULT 'Minor', action_taken TEXT DEFAULT '', employee_response TEXT DEFAULT '',
+  reported_by INTEGER, created_at TEXT);
+CREATE TABLE IF NOT EXISTS kpis(
+  id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL, title TEXT, target DOUBLE PRECISION DEFAULT 0,
+  current DOUBLE PRECISION DEFAULT 0, unit TEXT DEFAULT '', period TEXT DEFAULT 'Weekly', due_date TEXT, created_at TEXT);
+CREATE TABLE IF NOT EXISTS wins(
+  id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL, win_date TEXT, title TEXT, description TEXT DEFAULT '',
+  created_by INTEGER, created_at TEXT);
+CREATE TABLE IF NOT EXISTS metrics(
+  id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL, week_start TEXT, metric TEXT, achieved DOUBLE PRECISION DEFAULT 0,
+  target DOUBLE PRECISION DEFAULT 0, unit TEXT DEFAULT '', notes TEXT DEFAULT '', alignment TEXT DEFAULT 'Pending Review',
+  exec_comment TEXT DEFAULT '', created_at TEXT);
+CREATE TABLE IF NOT EXISTS resources(
+  id SERIAL PRIMARY KEY, owner_id INTEGER, title TEXT, url TEXT DEFAULT '', category TEXT DEFAULT 'General',
+  description TEXT DEFAULT '', shared INTEGER DEFAULT 0, file_id INTEGER, created_at TEXT);
+CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS task_comments(
+  id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, user_id INTEGER NOT NULL,
+  body TEXT NOT NULL, created_at TEXT, edited_at TEXT);
+CREATE INDEX IF NOT EXISTS ix_comments_task ON task_comments(task_id, id);
+CREATE TABLE IF NOT EXISTS notifications(
+  id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL, actor_id INTEGER, kind TEXT NOT NULL, task_id INTEGER,
+  comment_id INTEGER, snippet TEXT DEFAULT '', read_at TEXT, created_at TEXT);
+CREATE INDEX IF NOT EXISTS ix_notif_user ON notifications(user_id, read_at, id);
+CREATE TABLE IF NOT EXISTS recurring_rules(
+  id SERIAL PRIMARY KEY, client_id INTEGER NOT NULL REFERENCES clients(id), title TEXT NOT NULL,
+  description TEXT DEFAULT '', notes TEXT DEFAULT '', priority TEXT DEFAULT 'Medium', assignee_id INTEGER,
+  start_status TEXT DEFAULT 'Not Started', frequency TEXT DEFAULT 'weekly', weekdays TEXT DEFAULT '0',
+  day_of_month INTEGER DEFAULT 1, run_time TEXT DEFAULT '08:00', due_in_days INTEGER, skip_if_open INTEGER DEFAULT 0,
+  active INTEGER DEFAULT 1, next_run_at TEXT, last_run_at TEXT, last_task_id INTEGER, created_by INTEGER,
+  created_at TEXT, due_time TEXT);
+"""
+# Copy order respects foreign keys (parents first).
+PG_TABLES = ["users", "clients", "time_entries", "breaks", "tasks", "task_links", "files", "eods", "incidents", "kpis",
+             "wins", "metrics", "resources", "settings", "task_comments", "notifications", "recurring_rules"]
+_PG_PARENTS = {"time_entries": ("user_id", "users"), "breaks": ("entry_id", "time_entries"),
+               "tasks": ("client_id", "clients"), "task_links": ("task_id", "tasks"),
+               "task_comments": ("task_id", "tasks"), "recurring_rules": ("client_id", "clients")}
+
+
+def _to_pg(sql):
+    """Translate the app's SQLite-flavoured SQL to Postgres (placeholders, upserts, case-insensitive LIKE)."""
+    if "INSERT OR IGNORE INTO" in sql:
+        sql = sql.replace("INSERT OR IGNORE INTO", "INSERT INTO") + " ON CONFLICT DO NOTHING"
+    if "INSERT OR REPLACE INTO settings" in sql:
+        sql = sql.replace("INSERT OR REPLACE INTO", "INSERT INTO") + " ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value"
+    return sql.replace(" LIKE ", " ILIKE ").replace("?", "%s")
+
+
+_INSERT_RE = re.compile(r"\s*INSERT\s+(?:OR\s+\w+\s+)?INTO\s+(\w+)", re.I)
+
+
 # ---------------------------------------------------------------- db helpers
 def _sqlite_open(**kw):
     """Open the database WITHOUT operating-system file locks (SQLite's "unix-none" VFS).
@@ -182,6 +278,10 @@ class _SharedDB:
         self._conn = None
 
     def _connection(self):
+        if USE_PG:
+            if self._conn is None or self._conn.closed:
+                self._conn = psycopg.connect(DATABASE_URL, autocommit=True, row_factory=dict_row, connect_timeout=10)
+            return self._conn
         if self._conn is None:
             conn = _sqlite_open(timeout=30, check_same_thread=False, isolation_level=None)
             conn.row_factory = sqlite3.Row
@@ -193,14 +293,44 @@ class _SharedDB:
 
     busy_since = None   # when the database call currently running started (watched by _db_watchdog)
 
+    def _run(self, sql, args):
+        if not USE_PG:
+            return self._connection().execute(sql, args)
+        pg_sql = _to_pg(sql)
+        try:
+            return self._connection().execute(pg_sql, args)
+        except (psycopg.OperationalError, psycopg.InterfaceError):
+            # The connection to Postgres dropped (network blip, database restart): reconnect.
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            self._conn = None
+            if sql.lstrip()[:6].upper() != "SELECT":
+                raise   # never risk running a write twice
+            return self._connection().execute(pg_sql, args)
+
     def execute(self, sql, args=()):
         with self._lock:
             self.busy_since = _clock.monotonic()
             try:
-                cur = self._connection().execute(sql, args)
+                cur = self._run(sql, args)
                 if cur.description is not None:   # a SELECT: read it fully now so it never holds a lock afterwards
                     cur.fetchall()
                 return cur
+            finally:
+                self.busy_since = None
+
+    def insert(self, sql, args=()):
+        """Runs an INSERT and returns the new row's id."""
+        table = (_INSERT_RE.match(sql) or [None, ""])[1]
+        with self._lock:
+            self.busy_since = _clock.monotonic()
+            try:
+                if USE_PG and table != "settings":
+                    row = self._run(sql + " RETURNING id", args).fetchone()
+                    return row["id"] if row else None
+                return self._run(sql, args).lastrowid if not USE_PG else (self._run(sql, args) and None)
             finally:
                 self.busy_since = None
 
@@ -208,7 +338,7 @@ class _SharedDB:
         with self._lock:
             self.busy_since = _clock.monotonic()
             try:
-                return [dict(r) for r in self._connection().execute(sql, args).fetchall()]
+                return [dict(r) for r in self._run(sql, args).fetchall()]
             finally:
                 self.busy_since = None
 
@@ -229,7 +359,10 @@ def q(sql, args=(), one=False):
 
 
 def ex(sql, args=()):
-    return _shared_db.execute(sql, args).lastrowid
+    if _INSERT_RE.match(sql):
+        return _shared_db.insert(sql, args)
+    _shared_db.execute(sql, args)
+    return None
 
 
 def _add_column(conn, table, col, decl):
@@ -260,7 +393,75 @@ def _open_db_for_startup():
             raise
 
 
+def _first_admin():
+    email = os.environ.get("ADMIN_EMAIL", "admin@herhauscompany.com")
+    password = os.environ.get("ADMIN_PASSWORD") or secrets.token_urlsafe(9)
+    with open(os.path.join(DATA_DIR, "FIRST_LOGIN.txt"), "w") as f:
+        f.write(f"First executive login\nEmail: {email}\nTemporary password: {password}\n"
+                "You will be asked to change it on first login. Delete this file afterwards.\n")
+    print(f"\n  Created first executive account: {email}\n  Temporary password saved to {DATA_DIR}/FIRST_LOGIN.txt\n")
+    return ("Owner", email, hash_pw(password), "executive", "Owner", iso(now_utc()))
+
+
+def _copy_sqlite_to_pg(pg):
+    """One-time move of every row from the old SQLite database (on the disk) into Postgres, ids preserved.
+    Runs inside a single transaction and checks row counts, so it either completes fully or changes nothing."""
+    src = _sqlite_open()
+    src.row_factory = sqlite3.Row
+    have = {r[0] for r in src.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    report = []
+    with pg.transaction():
+        for table in PG_TABLES:
+            if table not in have:
+                continue
+            pg_cols = [r["column_name"] for r in pg.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name=%s ORDER BY ordinal_position",
+                (table,)).fetchall()]
+            cols = [c for c in (r[1] for r in src.execute(f"PRAGMA table_info({table})")) if c in pg_cols]
+            sel = f"SELECT {','.join(cols)} FROM {table}"
+            if table in _PG_PARENTS:   # skip orphaned rows whose parent no longer exists
+                fk, parent = _PG_PARENTS[table]
+                sel += f" WHERE {fk} IN (SELECT id FROM {parent})"
+            rows = [tuple(r) for r in src.execute(sel)]
+            total = src.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            qcols = ",".join(f'"{c}"' for c in cols)
+            if rows:
+                with pg.cursor() as cur:
+                    cur.executemany(f"INSERT INTO {table}({qcols}) VALUES({','.join(['%s'] * len(cols))})", rows)
+            copied = pg.execute(f"SELECT COUNT(*) n FROM {table}").fetchone()["n"]
+            if copied != len(rows):
+                raise RuntimeError(f"Copy check failed for {table}: {copied} of {len(rows)} rows")
+            if "id" in cols:
+                pg.execute(f"SELECT setval(pg_get_serial_sequence('{table}','id'), "
+                           f"GREATEST(COALESCE((SELECT MAX(id) FROM {table}), 0), 1), "
+                           f"(SELECT MAX(id) FROM {table}) IS NOT NULL)")
+            report.append(f"{table}={copied}" + (f" (skipped {total - copied} orphaned)" if total != copied else ""))
+    src.close()
+    print("  Copied existing data from SQLite to Postgres: " + ", ".join(report), flush=True)
+
+
+def _init_postgres():
+    pg = psycopg.connect(DATABASE_URL, autocommit=True, row_factory=dict_row, connect_timeout=15)
+    pg.execute(PG_SCHEMA)
+    if not pg.execute("SELECT 1 FROM users LIMIT 1").fetchone():
+        if os.path.exists(DB_PATH):
+            _copy_sqlite_to_pg(pg)
+        else:
+            pg.execute("INSERT INTO users(name,email,password_hash,role,position,created_at) VALUES(%s,%s,%s,%s,%s,%s)",
+                       _first_admin())
+    for k, v in DEFAULT_SETTINGS.items():
+        pg.execute("INSERT INTO settings(key,value) VALUES(%s,%s) ON CONFLICT DO NOTHING", (k, v))
+    pg.execute("UPDATE clients SET position=id WHERE position IS NULL")
+    counts = pg.execute("SELECT (SELECT COUNT(*) FROM users) u, (SELECT COUNT(*) FROM clients) c, "
+                        "(SELECT COUNT(*) FROM tasks) t").fetchone()
+    print(f"  Database ready: Postgres · {counts['u']} users, {counts['c']} clients, {counts['t']} tasks · "
+          f"pid={os.getpid()}", flush=True)
+    pg.close()
+
+
 def init_db():
+    if USE_PG:
+        return _init_postgres()
     conn, mode = _open_db_for_startup()
     conn.executescript(SCHEMA)
     _add_column(conn, "users", "avatar_file_id", "INTEGER")
@@ -293,16 +494,8 @@ def init_db():
     for k, v in DEFAULT_SETTINGS.items():
         conn.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", (k, v))
     if not conn.execute("SELECT 1 FROM users LIMIT 1").fetchone():
-        email = os.environ.get("ADMIN_EMAIL", "admin@herhauscompany.com")
-        password = os.environ.get("ADMIN_PASSWORD") or secrets.token_urlsafe(9)
-        conn.execute(
-            "INSERT INTO users(name,email,password_hash,role,position,created_at) VALUES(?,?,?,?,?,?)",
-            ("Owner", email, hash_pw(password), "executive", "Owner", iso(now_utc())),
-        )
-        with open(os.path.join(DATA_DIR, "FIRST_LOGIN.txt"), "w") as f:
-            f.write(f"First executive login\nEmail: {email}\nTemporary password: {password}\n"
-                    "You will be asked to change it on first login. Delete this file afterwards.\n")
-        print(f"\n  Created first executive account: {email}\n  Temporary password saved to {DATA_DIR}/FIRST_LOGIN.txt\n")
+        conn.execute("INSERT INTO users(name,email,password_hash,role,position,created_at) VALUES(?,?,?,?,?,?)",
+                     _first_admin())
     conn.commit()
     integrity = conn.execute("PRAGMA quick_check").fetchone()[0]
     print(f"  Database ready: {DB_PATH} · journal={mode} · check={integrity} · pid={os.getpid()}", flush=True)
@@ -427,7 +620,7 @@ def live_status(user_id):
               (user_id,), one=True)
     brk = None
     if entry:
-        brk = q("SELECT * FROM breaks WHERE entry_id=? AND end IS NULL ORDER BY id DESC LIMIT 1",
+        brk = q("SELECT * FROM breaks WHERE entry_id=? AND \"end\" IS NULL ORDER BY id DESC LIMIT 1",
                 (entry["id"],), one=True)
     return entry, brk
 
@@ -565,7 +758,7 @@ def login():
     recent = [t for t in _failed_logins.get(key, []) if now - t < _LOGIN_WINDOW]
     if len(recent) >= _LOGIN_MAX:
         return bad("Too many failed attempts. Please wait 15 minutes and try again.", 429)
-    u = q("SELECT * FROM users WHERE email=? AND active=1", (email,), one=True)
+    u = q("SELECT * FROM users WHERE lower(email)=lower(?) AND active=1", (email,), one=True)
     if not u or not check_password_hash(u["password_hash"], d.get("password") or ""):
         _failed_logins[key] = recent + [now]
         return bad("Incorrect email or password", 401)
@@ -634,7 +827,7 @@ def create_user():
     email = (d.get("email") or "").strip().lower()
     if not email or "@" not in email or not (d.get("name") or "").strip():
         return bad("Name and a valid email are required")
-    if q("SELECT 1 FROM users WHERE email=?", (email,), one=True):
+    if q("SELECT 1 FROM users WHERE lower(email)=lower(?)", (email,), one=True):
         return bad("A user with that email already exists")
     password = d.get("password") or secrets.token_urlsafe(8)
     role = "executive" if d.get("role") == "executive" else "employee"
@@ -715,7 +908,7 @@ def clock_out():
         return bad("You are not clocked in")
     now = iso(now_utc())
     if brk:
-        ex("UPDATE breaks SET end=? WHERE id=?", (now, brk["id"]))
+        ex('UPDATE breaks SET "end"=? WHERE id=?', (now, brk["id"]))
     ex("UPDATE time_entries SET clock_out=? WHERE id=?", (now, entry["id"]))
     payload = status_payload(u)
     if settings().get("notify_clock_out") == "1":
@@ -749,7 +942,7 @@ def break_end():
     entry, brk = live_status(u["id"])
     if not brk:
         return bad("You are not on a break")
-    ex("UPDATE breaks SET end=? WHERE id=?", (iso(now_utc()), brk["id"]))
+    ex('UPDATE breaks SET "end"=? WHERE id=?', (iso(now_utc()), brk["id"]))
     if settings().get("notify_breaks") == "1":
         chat_post_async(settings()["chat_webhook_shift"], f"✅ *{u['name']}* is back from {brk['kind'].lower()}")
     return jsonify(status_payload(u))
@@ -1468,7 +1661,7 @@ def list_notifications():
              "c.name client_name, c.color client_color FROM notifications n LEFT JOIN users a ON a.id=n.actor_id "
              "LEFT JOIN tasks t ON t.id=n.task_id LEFT JOIN clients c ON c.id=t.client_id "
              "WHERE " + " AND ".join(where) + f" ORDER BY n.id DESC LIMIT {limit}", args)
-    counts = q("SELECT COUNT(*) unread, SUM(kind='mention') mentions FROM notifications WHERE user_id=? AND read_at IS NULL",
+    counts = q("SELECT COUNT(*) unread, SUM(CASE WHEN kind='mention' THEN 1 ELSE 0 END) mentions FROM notifications WHERE user_id=? AND read_at IS NULL",
                (uid,), one=True)
     return jsonify(items=rows, unread=counts["unread"] or 0, unread_mentions=counts["mentions"] or 0)
 
@@ -1476,7 +1669,7 @@ def list_notifications():
 @app.get("/api/notifications/count")
 @login_required
 def notification_count():
-    r = q("SELECT COUNT(*) unread, SUM(kind='mention') mentions FROM notifications WHERE user_id=? AND read_at IS NULL",
+    r = q("SELECT COUNT(*) unread, SUM(CASE WHEN kind='mention' THEN 1 ELSE 0 END) mentions FROM notifications WHERE user_id=? AND read_at IS NULL",
           (current_user()["id"],), one=True)
     return jsonify(unread=r["unread"] or 0, unread_mentions=r["mentions"] or 0)
 

@@ -33,7 +33,11 @@ What Render handles for you:
 - **Updates:** push to GitHub and Render redeploys. The database upgrades itself on startup.
 - **Settings:** `SECRET_KEY` is generated for you, and cookies are set to HTTPS-only.
 
-Run a **single worker** (`-w 1`), as `render.yaml` already does. The app keeps one shared database connection and takes SQLite's lock only for the instant each statement runs. The database is opened without operating-system file locks (SQLite's `unix-none` mode). Render's disk had been leaving stale locks behind, which caused "database is locked". Locks aren't needed because Render attaches the disk to one server only, and all access goes through the app's single connection. The crash-recovery journal is still on. Set `SQLITE_FILE_LOCKS=1` to use normal locking, for example on a regular server where other tools also open the database. **Don't** open the live database with other tools (such as the `sqlite3` command) while the app is running.
+**Database:** in production the Hub uses Render's managed **Postgres** (`herhaus-db` in `render.yaml`, wired up through `DATABASE_URL`). It comes with automatic backups and point-in-time restore, and it is only reachable from Render's private network.
+- The first time the app starts with a new, empty Postgres, it copies every row from the old SQLite file on the disk (`/var/data/herhaus.db`). The copy happens in a single transaction and checks row counts, so it either completes fully or changes nothing. The old file is left in place as a backup.
+- Uploaded files stay on the persistent disk (`/var/data/uploads`).
+- Without `DATABASE_URL`, for example on your computer, the app uses a local SQLite file instead.
+- A watchdog restarts the app worker if a database call ever hangs for more than 25 seconds, and logs where it was stuck.
 
 **Other hosts:** any server that can run Python and has a persistent disk works, such as Railway (with a volume), Fly.io (with a volume), or a $6/month DigitalOcean droplet. Use the same start command:
 `gunicorn -w 1 --threads 8 -b 0.0.0.0:$PORT app:app`, with `DATA_DIR` pointing at the persistent disk.
