@@ -72,6 +72,7 @@ DEFAULT_SETTINGS = {
     "company_direction": "",
     "app_url": "",
     "chat_webhook_tasks": "",
+    "chat_webhook_tasks_done": "",
     "task_alert_created": "1",
     "task_alert_assigned": "1",
     "task_alert_status": "0",
@@ -1086,8 +1087,17 @@ def create_task():
               f.get("assignee_id"), f.get("deadline") or None, status, pos, current_user()["id"], now, now,
               now if status == "Done" else None))
     notify(f.get("assignee_id"), "assigned", tid, actor_id=current_user()["id"])
-    task_chat_event("created", tid, actor=current_user()["name"])
+    if d.get("defer_alert") not in (True, "1", 1, "true"):
+        task_chat_event("created", tid, actor=current_user()["name"])
     return jsonify(_task_full(tid))
+
+
+@app.post("/api/tasks/<int:tid>/announce")
+@login_required
+def announce_task(tid):
+    """Sends the 'new task' Chat alert once the creator has finished attaching files and links."""
+    task_chat_event("created", tid, actor=current_user()["name"])
+    return jsonify(ok=True)
 
 
 @app.put("/api/tasks/<int:tid>")
@@ -1318,6 +1328,19 @@ def _due_text(deadline):
     return f"{d:%b} {d.day}"
 
 
+def _attachment_lines(t):
+    base = _app_base()
+    links = q("SELECT url, label FROM task_links WHERE task_id=? ORDER BY id", (t["id"],))
+    files = q("SELECT id, original_name FROM files WHERE kind='task' AND ref_id=? ORDER BY id", (t["id"],))
+    out = []
+    if links:
+        out += ["", "Links:"] + [f"• <{l['url']}|{(l['label'] or l['url']).replace('|', '/').replace('>', '')}>" for l in links]
+    if files:
+        name = lambda f: f["original_name"].replace("|", "/").replace(">", "")
+        out += ["", "Files:"] + [f"• <{base}/api/files/{f['id']}|{name(f)}>" if base else f"• {name(f)}" for f in files]
+    return out
+
+
 def task_chat_event(kind, tid, actor=None, old_status=None, snippet=""):
     """Posts a task update to Google Chat if that alert type is switched on. Never raises."""
     try:
@@ -1331,9 +1354,11 @@ def task_chat_event(kind, tid, actor=None, old_status=None, snippet=""):
         if s.get({"created": "task_alert_created", "assigned": "task_alert_assigned", "status": "task_alert_status",
                   "done": "task_alert_done", "comment": "task_alert_comment"}[kind]) != "1":
             return
-        hook = _task_hook(t)
+        hook = (s.get("chat_webhook_tasks_done") or "").strip() if kind == "done" else ""
+        hook = hook or _task_hook(t)
         if not hook:
             return
+
         def label(status):
             return (status or "—").capitalize()  # "Not Started" -> "Not started"
 
@@ -1347,7 +1372,7 @@ def task_chat_event(kind, tid, actor=None, old_status=None, snippet=""):
         common = [f"Assigned to: {t['assignee_name'] or 'Unassigned'}", f"Due date: {due()}",
                   f"Priority: {t['priority']}", f"Status: {label(t['status'])}"]
         if kind == "created":
-            lines = ["📌 *NEW TASK CREATED*", ""] + task_lines + common
+            lines = ["📌 *NEW TASK CREATED*", ""] + task_lines + common + _attachment_lines(t)
         elif kind == "assigned":
             lines = ["👤 *TASK ASSIGNED*", ""] + task_lines + common + ([f"Assigned by: {actor}"] if actor else [])
         elif kind == "status":
@@ -1355,13 +1380,13 @@ def task_chat_event(kind, tid, actor=None, old_status=None, snippet=""):
                 f"Status: {label(old_status)} → {label(t['status'])}", f"Assigned to: {t['assignee_name'] or 'Unassigned'}",
                 f"Due date: {due()}", f"Priority: {t['priority']}"] + ([f"Updated by: {actor}"] if actor else [])
         elif kind == "done":
-            timing = "No due date"
+            timing = ""
             if t["deadline"] and t["completed_at"]:
                 late = (parse_dt(t["completed_at"]).astimezone(tz()).date() - date.fromisoformat(t["deadline"])).days
                 timing = "On time" if late <= 0 else f"{late} day{'s' if late != 1 else ''} late"
             lines = ["✅ *TASK COMPLETED*", ""] + task_lines + [
-                f"Completed by: {actor or t['assignee_name'] or '—'}", f"Due date: {due()}", f"Timing: {timing}",
-                f"Priority: {t['priority']}"]
+                f"Completed by: {actor or t['assignee_name'] or '—'}", f"Due date: {due()}"] + (
+                [f"Timing: {timing}"] if timing else []) + [f"Priority: {t['priority']}"]
         else:
             lines = ["💬 *NEW COMMENT*", ""] + task_lines + [f"Comment by: {actor}", f"Comment: “{snippet[:300]}”"]
         link = _task_link(t)
@@ -1979,7 +2004,8 @@ def put_settings():
 @exec_required
 def test_webhook():
     which = body().get("which")
-    key, label = {"eod": ("chat_webhook_eod", "EOD"), "tasks": ("chat_webhook_tasks", "Task alerts")}.get(
+    key, label = {"eod": ("chat_webhook_eod", "EOD"), "tasks": ("chat_webhook_tasks", "Task alerts"),
+                  "tasks_done": ("chat_webhook_tasks_done", "Completed tasks")}.get(
         which, ("chat_webhook_shift", "Shift"))
     ok, msg = chat_post(settings().get(key), f"✅ Test message from Her Haus Hub ({label} channel)")
     return jsonify(ok=ok, message=msg), (200 if ok else 400)

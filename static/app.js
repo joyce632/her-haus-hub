@@ -728,7 +728,8 @@ const assigneeOptions = () => [['', 'Unassigned'], ...S.users.filter((u) => u.ac
 
 function newTaskModal(clientId, status, onDone, opts = {}) {
   if (!clientId && !S.clients.length) { toast(isExec() ? 'Create a client first (Clients page)' : 'No clients yet — ask an executive to add one', 'err'); return; }
-  formModal({
+  const files = []; const links = [];
+  const m = formModal({
     title: 'New task', wide: true, submit: 'Create task',
     fields: [
       ...(clientId ? [] : [{ name: 'client_id', label: 'Client', type: 'select', full: true, options: S.clients.map((c) => [c.id, c.name]), value: S.clients[0].id }]),
@@ -738,14 +739,68 @@ function newTaskModal(clientId, status, onDone, opts = {}) {
       { name: 'priority', label: 'Priority level', type: 'select', options: S.priorities, value: 'Medium' },
       { name: 'assignee_id', label: 'Assignee', type: 'select', options: assigneeOptions(), value: opts.assignToMe ? S.me.id : '' },
       { name: 'deadline', label: 'Deadline', type: 'date' },
-      { type: 'info', html: '<p class="small muted">You can attach files and links after the task is created.</p>' },
+      { type: 'info', html: `<div class="nt-attach">
+          <div class="section-title" style="margin-top:4px"><span>Files</span><label class="btn sm soft" style="cursor:pointer">${I.plus} Add files<input type="file" id="nt-file" hidden multiple></label></div>
+          <div class="stack" id="nt-files"><p class="small muted">No files added.</p></div>
+          <div class="section-title"><span>Links</span></div>
+          <div class="stack" id="nt-links"></div>
+          <div class="row" style="margin-top:8px;flex-wrap:nowrap">
+            <input class="input" id="nt-url" placeholder="https://…"><input class="input" id="nt-label" placeholder="Label (optional)" style="max-width:170px">
+            <button type="button" class="btn sm" id="nt-add-link">Add</button></div>
+          <p class="small muted" style="margin-top:10px">Everything here is attached before the Google Chat alert goes out, so the message arrives complete.</p>
+        </div>` },
     ],
     onSubmit: async (d, close) => {
-      const t = await api('POST', '/api/tasks', { ...d, client_id: clientId || d.client_id });
-      close(); toast('Task created', 'ok');
+      addPendingLink();
+      const btn = $('[data-submit]', m.el);
+      const t = await api('POST', '/api/tasks', { ...d, client_id: clientId || d.client_id, defer_alert: true });
+      let failed = 0;
+      for (const [i, file] of files.entries()) {
+        btn.textContent = `Uploading ${i + 1} of ${files.length}…`;
+        const fd = new FormData(); fd.append('file', file);
+        try { await api('POST', `/api/tasks/${t.id}/files`, fd); } catch (err) { failed++; toast(`${file.name}: ${err.message}`, 'err'); }
+      }
+      for (const l of links) {
+        try { await api('POST', `/api/tasks/${t.id}/links`, l); } catch (err) { failed++; toast(err.message, 'err'); }
+      }
+      await api('POST', `/api/tasks/${t.id}/announce`, {}).catch(() => {});
+      close(); toast(failed ? 'Task created — some attachments failed' : 'Task created', failed ? 'err' : 'ok');
       await onDone();
       openTask(t.id, onDone);
     },
+  });
+  const el = m.el;
+  const drawFiles = () => {
+    $('#nt-files', el).innerHTML = files.length ? files.map((f, i) => `<div class="att"><span class="ic">${I.clip}</span>
+      <a>${esc(f.name)}</a><span class="small muted">${f.size > 1048576 ? (f.size / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(f.size / 1024)) + ' KB'}</span>
+      <button type="button" class="icon-btn" data-rm-file="${i}" aria-label="Remove file">${I.trash}</button></div>`).join('') : '<p class="small muted">No files added.</p>';
+  };
+  const drawLinks = () => {
+    $('#nt-links', el).innerHTML = links.map((l, i) => `<div class="att"><span class="ic">${I.link}</span>
+      <a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.label || l.url)}</a>
+      <button type="button" class="icon-btn" data-rm-link="${i}" aria-label="Remove link">${I.trash}</button></div>`).join('');
+  };
+  function addPendingLink() {
+    let url = $('#nt-url', el).value.trim(); if (!url) return;
+    if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+    links.push({ url, label: $('#nt-label', el).value.trim() });
+    $('#nt-url', el).value = ''; $('#nt-label', el).value = ''; drawLinks();
+  }
+  $('#nt-file', el).onchange = (e) => {
+    for (const f of e.target.files) {
+      if (f.size > 25 * 1024 * 1024) { toast(`${f.name} is over 25 MB`, 'err'); continue; }
+      files.push(f);
+    }
+    e.target.value = ''; drawFiles();
+  };
+  $('#nt-add-link', el).onclick = addPendingLink;
+  ['#nt-url', '#nt-label'].forEach((sel) => $(sel, el).addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); addPendingLink(); }  // add the link, don't submit the form
+  }));
+  el.addEventListener('click', (e) => {
+    const rf = e.target.closest('[data-rm-file]'), rl = e.target.closest('[data-rm-link]');
+    if (rf) { files.splice(Number(rf.dataset.rmFile), 1); drawFiles(); }
+    if (rl) { links.splice(Number(rl.dataset.rmLink), 1); drawLinks(); }
   });
 }
 
@@ -1865,6 +1920,9 @@ async function pageSettings(page, _a, alive) {
             <label class="field">Default task-alerts webhook <span class="hint">Used for every client that doesn't have its own Chat space</span>
               <input class="input" name="chat_webhook_tasks" value="${esc(s.chat_webhook_tasks)}" placeholder="https://chat.googleapis.com/v1/spaces/…"></label>
             <div class="row"><button type="button" class="btn sm ghost" data-test="tasks">Send test message</button></div>
+            <label class="field">Completed tasks webhook <span class="hint">Optional. When set, every "Task completed" alert goes to this space instead (all clients).</span>
+              <input class="input" name="chat_webhook_tasks_done" value="${esc(s.chat_webhook_tasks_done || '')}" placeholder="https://chat.googleapis.com/v1/spaces/…"></label>
+            <div class="row"><button type="button" class="btn sm ghost" data-test="tasks_done">Send test message</button></div>
             <label class="field">Hub web address <span class="hint">Used for the "Open in Her Haus Hub" links in Chat messages</span>
               <input class="input" name="app_url" value="${esc(s.app_url || location.origin)}" placeholder="https://hub.yourdomain.com"></label>
           </div>
@@ -1892,7 +1950,7 @@ async function pageSettings(page, _a, alive) {
       notify_clock_out: f.notify_clock_out.checked ? '1' : '0', notify_breaks: f.notify_breaks.checked ? '1' : '0',
       work_days: $$('input[name=wd]:checked', f).map((x) => x.value).join(','),
       auto_archive_days: String(f.auto_archive_days.value || '0'),
-      chat_webhook_tasks: f.chat_webhook_tasks.value.trim(), app_url: f.app_url.value.trim(), task_digest_time: f.task_digest_time.value || '09:00',
+      chat_webhook_tasks: f.chat_webhook_tasks.value.trim(), chat_webhook_tasks_done: f.chat_webhook_tasks_done.value.trim(), app_url: f.app_url.value.trim(), task_digest_time: f.task_digest_time.value || '09:00',
       ...Object.fromEntries(['task_alert_created', 'task_alert_assigned', 'task_alert_done', 'task_alert_status', 'task_alert_comment', 'task_alert_digest']
         .map((k) => [k, f[k].checked ? '1' : '0'])),
     };
