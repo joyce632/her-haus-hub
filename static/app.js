@@ -91,6 +91,9 @@ const dayWord = (d) => {
 };
 const blockRange = (t) => `${fmtClock12(t.block_start).replace(':00', '')}–${fmtClock12(t.block_end).replace(':00', '')}`;
 const isBlockNow = (t) => t.block_date === todayStr() && t.block_start <= nowHHMM() && nowHHMM() < t.block_end;
+const blockMs = (t, which) => Date.parse(fromZonedInput(`${t.block_date}T${which === 'end' ? t.block_end : t.block_start}`));
+const countdownAttrs = (t) => `data-countdown="${blockMs(t, 'end')}" data-start="${blockMs(t, 'start')}"`;
+const countdownText = (t) => `${fmtLeft(blockMs(t, 'end') - Date.now())} left`;
 const shiftDay = (d, n) => { const t = new Date(d + 'T12:00:00Z'); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };
 
 // Horizontal day timeline. rows: [{key, label, items}] — overlapping blocks in a row stack into sub-lanes.
@@ -123,7 +126,9 @@ function timelineHTML(rows, day, { showPeople = false, emptyText = '' } = {}) {
           return `<button type="button" class="tl-block ${done ? 'done' : ''} ${live ? 'live' : ''}" data-task="${t.id}"
             style="left:${pct(minutesOf(t.block_start))}%;width:${pct(minutesOf(t.block_end)) - pct(minutesOf(t.block_start))}%;top:${t._lane * 46 + 4}px;--c:${esc(t.client_color || '#0C2E60')}"
             title="${esc(`${t.title} · ${t.client_name} · ${blockRange(t)}${showPeople && t.assignee_name ? ` · ${t.assignee_name}` : ''}`)}">
-            <b>${done ? '✓ ' : ''}${esc(t.title)}</b><small>${blockRange(t)} · ${esc(t.client_name)}</small></button>`;
+            <b>${done ? '✓ ' : ''}${esc(t.title)}</b>${live
+              ? `<small><span class="tl-timer" ${countdownAttrs(t)}>${countdownText(t)}</span> · ${blockRange(t)}</small><i class="tl-progress"></i>`
+              : `<small>${blockRange(t)} · ${esc(t.client_name)}</small>`}</button>`;
         }).join('')}${nowLine}</div></div>`;
   };
   return `<div class="tl ${showPeople ? 'with-people' : ''}">
@@ -308,7 +313,24 @@ function passwordReveal(title, email, pw) {
 // Any element with data-live="hms|hrs|money" ticks from data-base at data-rate units per second.
 function liveAttrs(kind, base, rate) { return `data-live="${kind}" data-base="${base}" data-rate="${rate}" data-at="${Date.now()}"`; }
 function liveValue(el) { return Number(el.dataset.base) + ((Date.now() - Number(el.dataset.at)) / 1000) * Number(el.dataset.rate); }
+// Countdown for the time block in progress: any element with data-countdown="<end ms>" (and optionally
+// data-start="<start ms>") shows the time remaining; a .tl-progress inside the same block fills up.
+const fmtLeft = (ms) => {
+  const t = Math.max(0, Math.ceil(ms / 1000)), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s2 = t % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(s2).padStart(2, '0')}` : `${m}:${String(s2).padStart(2, '0')}`;
+};
+function tickCountdowns() {
+  const now = Date.now();
+  $$('[data-countdown]').forEach((el) => {
+    const end = Number(el.dataset.countdown), start = Number(el.dataset.start || 0), left = end - now;
+    el.textContent = left > 0 ? `${fmtLeft(left)} left` : 'Time’s up';
+    el.classList.toggle('ended', left <= 0);
+    const bar = el.closest('.tl-block')?.querySelector('.tl-progress');
+    if (bar && start) bar.style.width = `${Math.min(100, Math.max(0, ((now - start) / (end - start)) * 100))}%`;
+  });
+}
 setInterval(() => {
+  tickCountdowns();
   $$('[data-live]').forEach((el) => {
     const v = liveValue(el);
     el.textContent = el.dataset.live === 'money' ? money(v) : el.dataset.live === 'hrs' ? hrs(v) : hms(v);
@@ -645,13 +667,17 @@ function planCard(box, userId, alive) {
     box.innerHTML = `<div class="card-head plan-head">
         <div><h2>${I.clock} ${day === todayStr() ? 'Today’s plan' : `Plan · ${dayWord(day)}`}</h2>
           <p class="small muted" style="margin-top:3px">${items.length ? `${items.length} time block${items.length === 1 ? '' : 's'} · ${hrs(mins * 60)} planned`
-            + (now ? ` · <b class="now-text">Now: ${esc(now.title)}</b>` : next ? ` · Next: <b>${esc(next.title)}</b> at ${fmtClock12(next.block_start)}` : '') : 'Nothing planned yet'}</p></div>
+            + (now ? ` · <b class="now-text">Now: ${esc(now.title)} · <span ${countdownAttrs(now)}>${countdownText(now)}</span></b>` : next ? ` · Next: <b>${esc(next.title)}</b> at ${fmtClock12(next.block_start)}` : '') : 'Nothing planned yet'}</p></div>
         <div class="seg day-nav"><button data-d="-1" aria-label="Previous day">‹</button><button data-d="0" class="${day === todayStr() ? 'on' : ''}">Today</button><button data-d="1" aria-label="Next day">›</button></div>
       </div>
       ${timelineHTML([{ key: userId, items }], day, { emptyText: `<b>No time blocks ${day === todayStr() ? 'today' : 'this day'}</b>Open any of your tasks and set a <b>Time block</b> to plan when you’ll work on it.` })}`;
     $$('.day-nav button', box).forEach((b) => b.onclick = () => { day = b.dataset.d === '0' ? todayStr() : shiftDay(day, Number(b.dataset.d)); reload(); });
     $$('[data-task]', box).forEach((b) => b.onclick = () => openTask(Number(b.dataset.task), () => { reload(); }));
   };
+  const refresher = setInterval(() => {
+    if ((alive && !alive()) || !box.isConnected) return clearInterval(refresher);
+    if (!$('#modal-root .modal-bg')) reload();
+  }, 60000);
   return { reload, ready: reload() };
 }
 
@@ -829,7 +855,7 @@ function taskCardHTML(t, showClient = false) {
     ${showClient ? `<div class="tclient"><span class="client-dot" style="background:${esc(t.client_color)}"></span>${esc(t.client_name)}</div>` : ''}
     <div class="tt">${t.recurring_rule_id ? `<span class="rec-ic" title="Created by an automation">${I.repeat}</span>` : ''}${esc(t.title)}</div>
     ${t.description ? `<div class="td">${esc(t.description)}</div>` : ''}
-    ${t.block_date && t.status !== 'Done' ? `<div class="tblock ${isBlockNow(t) ? 'live' : ''}">${I.clock}${isBlockNow(t) ? 'Now · ' : `${dayWord(t.block_date)} · `}${blockRange(t)}</div>` : ''}
+    ${t.block_date && t.status !== 'Done' ? `<div class="tblock ${isBlockNow(t) ? 'live' : ''}">${I.clock}${isBlockNow(t) ? `Now · <span ${countdownAttrs(t)}>${countdownText(t)}</span>` : `${dayWord(t.block_date)} · ${blockRange(t)}`}</div>` : ''}
     <div class="meta">
       <div class="row" style="gap:6px">${prioBadge(t.priority)}${t.deadline ? `<span class="due ${over ? 'over' : ''}">${dueShort(t)}</span>` : ''}</div>
       <div class="icons">
@@ -1037,6 +1063,7 @@ async function openTask(id, onChange) {
           ${t.assignee_id && (t.assignee_id === S.me.id || isExec()) ? `
             <input class="input" type="date" id="tb-date" value="${esc(t.block_date || '')}">
             <div class="tb-times"><span>From</span><input class="input" type="time" id="tb-start" value="${esc(t.block_start || '')}"><span>To</span><input class="input" type="time" id="tb-end" value="${esc(t.block_end || '')}"></div>
+            ${isBlockNow(t) && t.status !== 'Done' ? `<div class="tb-live">${I.clock}<span ${countdownAttrs(t)}>${countdownText(t)}</span><small>in this time block</small></div>` : ''}
             <p class="small muted">${t.assignee_id === S.me.id ? 'Plan when you’ll work on this. It shows on your dashboard.' : `Planned by ${esc(t.assignee_name)}.`}</p>
             ${t.block_date ? '<button type="button" class="linkbtn dark" id="tb-clear" style="align-self:flex-start">Clear time block</button>' : ''}`
           : `<p class="small muted">${t.block_date ? `${dayWord(t.block_date)} · ${blockRange(t)}` : t.assignee_id ? `Only ${esc(t.assignee_name)} can plan this task’s time block.` : 'Assign this task first — the assignee can then plan a time block.'}</p>`}

@@ -905,3 +905,17 @@ body::before {
 .btn.is-busy { cursor: progress; opacity: .85; }
 .spinner { width: 13px; height: 13px; margin-right: 2px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; display: inline-block; animation: spin .7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- time block countdown ---------- */
+.tl-timer { font-weight: 700; font-variant-numeric: tabular-nums; color: #fff; }
+.tl-progress { position: absolute; left: 0; bottom: 0; height: 3px; width: 0; background: rgba(255, 255, 255, .85); border-radius: 0 3px 0 0; transition: width 1s linear; }
+.tl-block.live { padding-bottom: 3px; }
+.tblock [data-countdown] { font-variant-numeric: tabular-nums; }
+.tb-live { display: flex; align-items: baseline; gap: 6px; padding: 8px 10px; border-radius: 10px; color: #fff; background: var(--navy-grad); box-shadow: var(--glow-navy); }
+.tb-live svg { width: 13px; height: 13px; align-self: center; }
+.tb-live span { font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.tb-live small { font-size: 11px; opacity: .8; }
+[data-countdown].ended { color: var(--red-vivid); }
+.tl-timer.ended, .tb-live .ended { color: #FFD1D3; }
+.tblock { white-space: nowrap; max-width: 100%; }
+.tl-block.live { min-width: 132px; z-index: 2; }
