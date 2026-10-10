@@ -9,6 +9,7 @@ import io
 import json
 import os
 import re
+import hashlib
 import secrets
 import shutil
 import sqlite3
@@ -488,11 +489,24 @@ def exec_required(fn):
 
 
 @app.after_request
-def _cache_static(resp):
-    if request.path.startswith("/static/") and resp.status_code in (200, 304):
-        resp.headers["Cache-Control"] = ("public, max-age=31536000, immutable" if request.args.get("v")
-                                         else "public, max-age=604800")
+def _cache_headers(resp):
+    if request.path.startswith("/api/"):
+        resp.headers["Cache-Control"] = "no-store"          # always fresh data on reload
+        resp.headers["X-App-Version"] = ASSET_VERSION
+    elif request.path.startswith("/static/") and resp.status_code in (200, 304):
+        resp.headers["Cache-Control"] = ("public, max-age=31536000, immutable" if request.args.get("v") == ASSET_VERSION
+                                         else "no-cache")
     return resp
+
+
+@app.post("/api/client-error")
+def client_error():
+    """Browsers report JavaScript errors here so they show up in the server logs."""
+    d = request.get_json(silent=True) or {}
+    u = current_user()
+    print(f"[client-error] user={u['email'] if u else '-'} page={str(d.get('page'))[:80]} "
+          f"version={str(d.get('version'))[:20]} msg={str(d.get('message'))[:300]} at={str(d.get('where'))[:200]}", flush=True)
+    return jsonify(ok=True)
 
 
 @app.before_request
@@ -2234,14 +2248,26 @@ def healthz():
     return jsonify(ok=True)
 
 
+def _asset_version():
+    """A fingerprint of the app's code. Changes whenever app.js or styles.css change (content, not file dates)."""
+    h = hashlib.sha256()
+    for name in ("app.js", "styles.css"):
+        with open(os.path.join(app.static_folder, name), "rb") as f:
+            h.update(f.read())
+    return h.hexdigest()[:12]
+
+
+ASSET_VERSION = _asset_version()
+
+
 def _index_html():
-    # Stamp asset URLs with their modified time so browsers fetch fresh files after every update.
+    # Asset URLs carry the code fingerprint, so a browser can never mix an old app.js with a new server.
     html = open(os.path.join(app.static_folder, "index.html"), encoding="utf-8").read()
     for name in ("styles.css", "app.js"):
-        v = int(os.path.getmtime(os.path.join(app.static_folder, name)))
-        html = html.replace(f"/static/{name}", f"/static/{name}?v={v}")
+        html = html.replace(f"/static/{name}", f"/static/{name}?v={ASSET_VERSION}")
+    html = html.replace("<head>", f'<head>\n  <meta name="app-version" content="{ASSET_VERSION}">', 1)
     resp = Response(html, mimetype="text/html")
-    resp.headers["Cache-Control"] = "no-cache"
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     return resp
 
 

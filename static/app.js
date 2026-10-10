@@ -11,17 +11,43 @@ const S = {
   status: null, view: 'employee',
 };
 
+const APP_VERSION = document.querySelector('meta[name="app-version"]')?.content || '';
+// If this tab is running older code than the server (e.g. a cached page after an update), refresh once.
+function checkVersion(r) {
+  const server = r.headers.get('X-App-Version');
+  if (!server || !APP_VERSION || server === APP_VERSION) return;
+  let last = ''; try { last = sessionStorage.getItem('hh_reloaded_for') || ''; } catch (_) { /* storage blocked */ }
+  if (last === server) return;  // already refreshed for this version — never loop
+  try { sessionStorage.setItem('hh_reloaded_for', server); } catch (_) { /* storage blocked */ }
+  location.reload();
+}
 async function api(method, url, data) {
-  const opt = { method, headers: { 'X-HH': '1' }, credentials: 'same-origin' };
+  const opt = { method, headers: { 'X-HH': '1' }, credentials: 'same-origin', cache: 'no-store' };
   if (data instanceof FormData) opt.body = data;
   else if (data !== undefined) { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(data); }
-  const r = await fetch(url, opt);
+  let r;
+  try { r = await fetch(url, opt); }
+  catch (err) {  // network blip (often while a page is reloading): retry reads once
+    if (method !== 'GET') throw new Error('Connection problem — please try again');
+    await new Promise((res) => setTimeout(res, 600));
+    r = await fetch(url, opt);
+  }
+  checkVersion(r);
   let j = null;
   try { j = await r.json(); } catch (_) { /* non-JSON */ }
   if (r.status === 401 && url !== '/api/login' && url !== '/api/me') { S.me = null; route(); throw new Error('Your session expired — please log in again'); }
   if (!r.ok) throw new Error((j && j.error) || `Request failed (${r.status})`);
   return j;
 }
+
+function reportError(err, where = '') {
+  try {
+    fetch('/api/client-error', { method: 'POST', headers: { 'X-HH': '1', 'Content-Type': 'application/json' }, keepalive: true,
+      body: JSON.stringify({ message: String(err && (err.stack || err.message) || err).slice(0, 600), where, page: location.hash, version: APP_VERSION }) });
+  } catch (_) { /* never let reporting break the page */ }
+}
+window.addEventListener('error', (e) => reportError(e.error || e.message, 'window'));
+window.addEventListener('unhandledrejection', (e) => reportError(e.reason, 'promise'));
 
 function toast(msg, kind = '') {
   const t = document.createElement('div');
@@ -575,7 +601,10 @@ async function route() {
   const seq = ++routeSeq;
   try {
     await ROUTES[key].render(page, parts.slice(1), () => seq === routeSeq);
-  } catch (e) { if (seq === routeSeq) page.innerHTML = `<div class="card empty"><b>Something went wrong</b>${esc(e.message)}</div>`; }
+  } catch (e) {
+    reportError(e, `route ${key}`);
+    if (seq === routeSeq) page.innerHTML = `<div class="card empty"><b>Something went wrong</b>${esc(e.message)}<div style="margin-top:12px"><button class="btn sm" onclick="route()">Try again</button></div></div>`;
+  }
   if (S.me && S.me.must_change_password && !$('#modal-root .modal-bg')) changePasswordModal(true);
 }
 window.addEventListener('hashchange', route);
@@ -849,6 +878,13 @@ async function pageBoard(page, [cid], alive) {
 }
 
 function taskCardHTML(t, showClient = false) {
+  try { return taskCardInner(t, showClient); }
+  catch (err) {
+    reportError(err, `task card ${t && t.id}`);
+    return `<div class="tcard" data-id="${t.id}" draggable="true" data-status="${esc(t.status)}" data-search="${esc(String(t.title || '').toLowerCase())}"><div class="tt">${esc(t.title || 'Task')}</div></div>`;
+  }
+}
+function taskCardInner(t, showClient) {
   const over = isOverdue(t);
   return `<div class="tcard p-${esc(t.priority)}" draggable="true" data-id="${t.id}" data-status="${esc(t.status)}" data-priority="${esc(t.priority)}"
       data-assignee="${t.assignee_id || ''}" data-search="${esc(`${t.title} ${t.description} ${t.assignee_name || ''}`.toLowerCase())}">
