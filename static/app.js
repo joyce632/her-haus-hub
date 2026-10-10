@@ -81,6 +81,7 @@ document.addEventListener('input', (e) => {
   const timeBox = pair.querySelector('[name=deadline_time]');
   timeBox.disabled = !e.target.value; if (!e.target.value) timeBox.value = '';
 });
+const fmtSize = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
 const isExec = () => S.me && S.me.role === 'executive';
 const execView = () => isExec() && S.view === 'exec';
 const userName = (id) => (S.users.find((u) => u.id === id) || {}).name || '';
@@ -750,9 +751,62 @@ function taskCardHTML(t, showClient = false) {
 
 const assigneeOptions = () => [['', 'Unassigned'], ...S.users.filter((u) => u.active).map((u) => [u.id, u.name])];
 
+// Pick saved Resources to attach to a task. kind: 'link' | 'file'. Resolves with the chosen resources ([] if cancelled).
+async function resourcePicker(kind, { attachedUrls = [], attachedFiles = [] } = {}) {
+  const all = (await api('GET', '/api/resources')).filter((r) => (kind === 'file' ? r.file_id : r.url));
+  return new Promise((resolve) => {
+    const noun = kind === 'file' ? 'files' : 'links';
+    const isAttached = (r) => (kind === 'file' ? attachedFiles.includes(r.file_name) : attachedUrls.includes(r.url));
+    const cats = [...new Set(all.map((r) => r.category))].sort();
+    const picked = new Set();
+    let done = false;
+    const finish = (val) => { if (!done) { done = true; resolve(val); } };
+    const { el, close } = openModal({
+      title: `Add ${noun} from Resources`,
+      body: all.length ? `<div class="row picker-bar" style="flex-wrap:nowrap">
+            <input class="input" id="rp-q" placeholder="Search ${noun}…">
+            ${cats.length > 1 ? `<select class="input" id="rp-cat" style="width:auto"><option value="">All categories</option>${cats.map((c) => `<option>${esc(c)}</option>`).join('')}</select>` : ''}
+          </div><div class="picker-list" id="rp-list"></div>`
+        : `<div class="empty"><b>No saved ${noun} yet</b>Add SOPs, templates, and scripts on the <a href="#/resources" data-close>Resources</a> page, then attach them to any task from here.</div>`,
+      foot: `<span class="small muted" id="rp-count" style="margin-right:auto"></span><button class="btn ghost" data-close>Cancel</button><button class="btn" id="rp-add" disabled>Add</button>`,
+    });
+    $$('[data-close]', el).forEach((b) => b.addEventListener('click', () => finish([])));
+    new MutationObserver((_, obs) => { if (!el.isConnected) { obs.disconnect(); finish([]); } }).observe(document.getElementById('modal-root'), { childList: true });
+    const draw = () => {
+      const qv = ($('#rp-q', el)?.value || '').toLowerCase(), cat = $('#rp-cat', el)?.value || '';
+      const rows = all.filter((r) => (!qv || `${r.title} ${r.description} ${r.url} ${r.file_name || ''}`.toLowerCase().includes(qv)) && (!cat || r.category === cat));
+      const list = $('#rp-list', el); if (!list) return;
+      list.innerHTML = rows.length ? rows.map((r) => {
+        const added = isAttached(r);
+        const sub = kind === 'file' ? (r.file_name || '') : r.url.replace(/^https?:\/\//, '').replace(/\/$/, '');
+        return `<label class="pick-row ${added ? 'is-added' : ''}">
+          <input type="checkbox" value="${r.id}" ${picked.has(r.id) ? 'checked' : ''} ${added ? 'disabled' : ''}>
+          <span class="pick-ic ${kind}">${kind === 'file' ? I.clip : I.link}</span>
+          <span class="pick-main"><b>${esc(r.title)}</b><small>${esc(sub)}</small></span>
+          <span class="pick-meta">${added ? '<span class="badge b-green">Added</span>' : `<span class="badge b-navy">${esc(r.category)}</span>`}</span>
+        </label>`;
+      }).join('') : '<div class="empty" style="padding:20px 0">No matches.</div>';
+    };
+    const sync = () => {
+      $('#rp-count', el).textContent = picked.size ? `${picked.size} selected` : '';
+      const b = $('#rp-add', el); b.disabled = !picked.size; b.textContent = picked.size ? `Add ${picked.size} ${picked.size === 1 ? noun.slice(0, -1) : noun}` : 'Add';
+    };
+    if (all.length) {
+      draw(); sync();
+      $('#rp-q', el).addEventListener('input', draw);
+      $('#rp-cat', el)?.addEventListener('change', draw);
+      $('#rp-list', el).addEventListener('change', (e) => {
+        const id = Number(e.target.value); if (e.target.checked) picked.add(id); else picked.delete(id); sync();
+      });
+      setTimeout(() => $('#rp-q', el).focus(), 40);
+    }
+    $('#rp-add', el).onclick = () => { const chosen = all.filter((r) => picked.has(r.id)); finish(chosen); close(); };
+  });
+}
+
 function newTaskModal(clientId, status, onDone, opts = {}) {
   if (!clientId && !S.clients.length) { toast(isExec() ? 'Create a client first (Clients page)' : 'No clients yet — ask an executive to add one', 'err'); return; }
-  const files = []; const links = [];
+  const files = []; const links = []; const resFiles = []; const resLinks = [];  // resFiles/resLinks: chosen Resources
   const m = formModal({
     title: 'New task', wide: true, submit: 'Create task',
     fields: [
@@ -764,9 +818,11 @@ function newTaskModal(clientId, status, onDone, opts = {}) {
       { name: 'assignee_id', label: 'Assignee', type: 'select', options: assigneeOptions(), value: opts.assignToMe ? S.me.id : '' },
       { name: 'deadline', label: 'Deadline', type: 'deadline' },
       { type: 'info', html: `<div class="nt-attach">
-          <div class="section-title" style="margin-top:4px"><span>Files</span><label class="btn sm soft" style="cursor:pointer">${I.plus} Add files<input type="file" id="nt-file" hidden multiple></label></div>
+          <div class="section-title" style="margin-top:4px"><span>Files</span><span class="row" style="gap:6px;flex-wrap:nowrap">
+            <button type="button" class="btn sm ghost" id="nt-res-files">${I.folder} From Resources</button>
+            <label class="btn sm soft" style="cursor:pointer">${I.plus} Upload<input type="file" id="nt-file" hidden multiple></label></span></div>
           <div class="stack" id="nt-files"><p class="small muted">No files added.</p></div>
-          <div class="section-title"><span>Links</span></div>
+          <div class="section-title"><span>Links</span><button type="button" class="btn sm ghost" id="nt-res-links">${I.folder} From Resources</button></div>
           <div class="stack" id="nt-links"></div>
           <div class="row" style="margin-top:8px;flex-wrap:nowrap">
             <input class="input" id="nt-url" placeholder="https://…"><input class="input" id="nt-label" placeholder="Label (optional)" style="max-width:170px">
@@ -787,6 +843,11 @@ function newTaskModal(clientId, status, onDone, opts = {}) {
       for (const l of links) {
         try { await api('POST', `/api/tasks/${t.id}/links`, l); } catch (err) { failed++; toast(err.message, 'err'); }
       }
+      for (const [only, list] of [['files', resFiles], ['links', resLinks]]) {
+        if (!list.length) continue;
+        btn.textContent = 'Adding from Resources…';
+        try { await api('POST', `/api/tasks/${t.id}/import-resources`, { ids: list.map((r) => r.id), only }); } catch (err) { failed++; toast(err.message, 'err'); }
+      }
       await api('POST', `/api/tasks/${t.id}/announce`, {}).catch(() => {});
       close(); toast(failed ? 'Task created — some attachments failed' : 'Task created', failed ? 'err' : 'ok');
       await onDone();
@@ -794,15 +855,29 @@ function newTaskModal(clientId, status, onDone, opts = {}) {
     },
   });
   const el = m.el;
+  const resTag = '<span class="res-tag">Resource</span>';
   const drawFiles = () => {
-    $('#nt-files', el).innerHTML = files.length ? files.map((f, i) => `<div class="att"><span class="ic">${I.clip}</span>
-      <a>${esc(f.name)}</a><span class="small muted">${f.size > 1048576 ? (f.size / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(f.size / 1024)) + ' KB'}</span>
-      <button type="button" class="icon-btn" data-rm-file="${i}" aria-label="Remove file">${I.trash}</button></div>`).join('') : '<p class="small muted">No files added.</p>';
+    $('#nt-files', el).innerHTML = (files.length || resFiles.length) ? files.map((f, i) => `<div class="att"><span class="ic">${I.clip}</span>
+      <a>${esc(f.name)}</a><span class="small muted">${fmtSize(f.size)}</span>
+      <button type="button" class="icon-btn" data-rm-file="${i}" aria-label="Remove file">${I.trash}</button></div>`).join('')
+      + resFiles.map((r, i) => `<div class="att"><span class="ic">${I.clip}</span><a>${esc(r.file_name || r.title)}</a>${resTag}
+      <button type="button" class="icon-btn" data-rm-resfile="${i}" aria-label="Remove">${I.trash}</button></div>`).join('') : '<p class="small muted">No files added.</p>';
   };
   const drawLinks = () => {
     $('#nt-links', el).innerHTML = links.map((l, i) => `<div class="att"><span class="ic">${I.link}</span>
       <a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.label || l.url)}</a>
-      <button type="button" class="icon-btn" data-rm-link="${i}" aria-label="Remove link">${I.trash}</button></div>`).join('');
+      <button type="button" class="icon-btn" data-rm-link="${i}" aria-label="Remove link">${I.trash}</button></div>`).join('')
+      + resLinks.map((r, i) => `<div class="att"><span class="ic">${I.link}</span>
+      <a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${esc(r.title)}</a>${resTag}
+      <button type="button" class="icon-btn" data-rm-reslink="${i}" aria-label="Remove">${I.trash}</button></div>`).join('');
+  };
+  $('#nt-res-files', el).onclick = async () => {
+    const chosen = await resourcePicker('file', { attachedFiles: [...files.map((f) => f.name), ...resFiles.map((r) => r.file_name)] });
+    chosen.forEach((r) => { if (!resFiles.some((x) => x.id === r.id)) resFiles.push(r); }); drawFiles();
+  };
+  $('#nt-res-links', el).onclick = async () => {
+    const chosen = await resourcePicker('link', { attachedUrls: [...links.map((l) => l.url), ...resLinks.map((r) => r.url)] });
+    chosen.forEach((r) => { if (!resLinks.some((x) => x.id === r.id)) resLinks.push(r); }); drawLinks();
   };
   function addPendingLink() {
     let url = $('#nt-url', el).value.trim(); if (!url) return;
@@ -825,6 +900,9 @@ function newTaskModal(clientId, status, onDone, opts = {}) {
     const rf = e.target.closest('[data-rm-file]'), rl = e.target.closest('[data-rm-link]');
     if (rf) { files.splice(Number(rf.dataset.rmFile), 1); drawFiles(); }
     if (rl) { links.splice(Number(rl.dataset.rmLink), 1); drawLinks(); }
+    const rrf = e.target.closest('[data-rm-resfile]'), rrl = e.target.closest('[data-rm-reslink]');
+    if (rrf) { resFiles.splice(Number(rrf.dataset.rmResfile), 1); drawFiles(); }
+    if (rrl) { resLinks.splice(Number(rrl.dataset.rmReslink), 1); drawLinks(); }
   });
 }
 
@@ -837,9 +915,11 @@ async function openTask(id, onChange) {
       <div>
         <label class="field">Task title<input class="input" id="t-title" value="${esc(t.title)}" style="font-size:16px;font-weight:700"></label>
         <label class="field" style="margin-top:14px">Description<textarea class="input" id="t-desc" rows="5" placeholder="What needs to be done, links to context, acceptance criteria…">${esc(t.description)}</textarea></label>
-        <div class="section-title"><span>Files</span><label class="btn sm soft" style="cursor:pointer">${I.plus} Upload<input type="file" id="t-file" hidden multiple></label></div>
+        <div class="section-title"><span>Files</span><span class="row" style="gap:6px;flex-wrap:nowrap">
+          <button type="button" class="btn sm ghost" id="t-res-files">${I.folder} From Resources</button>
+          <label class="btn sm soft" style="cursor:pointer">${I.plus} Upload<input type="file" id="t-file" hidden multiple></label></span></div>
         <div class="stack" id="t-files"></div>
-        <div class="section-title"><span>Links</span></div>
+        <div class="section-title"><span>Links</span><button type="button" class="btn sm ghost" id="t-res-links">${I.folder} From Resources</button></div>
         <div class="stack" id="t-links"></div>
         <div class="row" style="margin-top:8px;flex-wrap:nowrap">
           <input class="input" id="l-url" placeholder="https://…"><input class="input" id="l-label" placeholder="Label (optional)" style="max-width:170px">
@@ -872,14 +952,27 @@ async function openTask(id, onChange) {
 
   const renderAttachments = (task) => {
     $('#t-files', el).innerHTML = task.files.length ? task.files.map((f) => `<div class="att"><span class="ic">${I.clip}</span>
-      <a href="/api/files/${f.id}" target="_blank" rel="noopener">${esc(f.original_name)}</a><span class="small muted">${(f.size / 1024).toFixed(0)} KB</span>
+      <a href="/api/files/${f.id}" target="_blank" rel="noopener">${esc(f.original_name)}</a><span class="small muted">${fmtSize(f.size)}</span>
       <button class="icon-btn" data-del-file="${f.id}" aria-label="Remove file">${I.trash}</button></div>`).join('') : '<p class="small muted">No files yet.</p>';
     $('#t-links', el).innerHTML = task.links.length ? task.links.map((l) => `<div class="att"><span class="ic">${I.link}</span>
       <a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.label || l.url)}</a>
       <button class="icon-btn" data-del-link="${l.id}" aria-label="Remove link">${I.trash}</button></div>`).join('') : '<p class="small muted">No links yet.</p>';
   };
   renderAttachments(t);
-  const refresh = async () => renderAttachments(await api('GET', `/api/tasks/${id}`));
+  let current = t;
+  const refresh = async () => { current = await api('GET', `/api/tasks/${id}`); renderAttachments(current); };
+  const importFrom = async (kind) => {
+    const chosen = await resourcePicker(kind, { attachedUrls: current.links.map((l) => l.url), attachedFiles: current.files.map((f) => f.original_name) });
+    if (!chosen.length) return;
+    try {
+      const r = await api('POST', `/api/tasks/${id}/import-resources`, { ids: chosen.map((x) => x.id), only: kind === 'file' ? 'files' : 'links' });
+      current = r.task; renderAttachments(current);
+      const n = r.added_files + r.added_links;
+      toast(n ? `Added ${n} from Resources` : 'Already attached', n ? 'ok' : '');
+    } catch (err) { toast(err.message, 'err'); }
+  };
+  $('#t-res-files', el).onclick = () => importFrom('file');
+  $('#t-res-links', el).onclick = () => importFrom('link');
 
   $('#t-file', el).onchange = async (e) => {
     for (const file of e.target.files) {

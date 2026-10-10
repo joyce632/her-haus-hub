@@ -10,6 +10,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import sqlite3
 import ssl
 import threading
@@ -1747,6 +1748,42 @@ def _can_access_file(f):
         r = q("SELECT shared FROM resources WHERE file_id=?", (f["id"],), one=True)
         return bool(r and r["shared"])
     return False  # bank QR: owner + executives only
+
+
+@app.post("/api/tasks/<int:tid>/import-resources")
+@login_required
+def import_resources(tid):
+    """Attach saved Resources to a task: links become task links, files are copied onto the task."""
+    if not q("SELECT 1 FROM tasks WHERE id=?", (tid,), one=True):
+        abort(404)
+    d = body()
+    ids = [int(i) for i in (d.get("ids") or []) if str(i).isdigit()][:100]
+    only = d.get("only")  # "links" or "files" to take just that part of each resource
+    u = current_user()
+    have_urls = {r["url"] for r in q("SELECT url FROM task_links WHERE task_id=?", (tid,))}
+    have_files = {(r["original_name"], r["size"]) for r in q(
+        "SELECT original_name, size FROM files WHERE kind='task' AND ref_id=?", (tid,))}
+    added_links = added_files = 0
+    for rid in ids:
+        r = q("SELECT * FROM resources WHERE id=?", (rid,), one=True)
+        if not r or not (r["shared"] or r["owner_id"] == u["id"] or is_exec()):
+            continue  # only resources this person can see
+        if only != "files" and r["url"] and r["url"] not in have_urls:
+            ex("INSERT INTO task_links(task_id,url,label,created_at) VALUES(?,?,?,?)",
+               (tid, r["url"], r["title"], iso(now_utc())))
+            have_urls.add(r["url"])
+            added_links += 1
+        src = q("SELECT * FROM files WHERE id=?", (r["file_id"],), one=True) if r["file_id"] and only != "links" else None
+        if src and (src["original_name"], src["size"]) not in have_files:
+            # A separate copy, so deleting it from the task never affects the Resource (or vice versa).
+            stored = f"{uuid.uuid4().hex}_{secure_filename(src['original_name']) or 'file'}"
+            shutil.copyfile(os.path.join(UPLOAD_DIR, src["stored_name"]), os.path.join(UPLOAD_DIR, stored))
+            ex("INSERT INTO files(kind,ref_id,owner_id,original_name,stored_name,mime,size,created_at) "
+               "VALUES(?,?,?,?,?,?,?,?)", ("task", tid, u["id"], src["original_name"], stored, src["mime"],
+                                           src["size"], iso(now_utc())))
+            have_files.add((src["original_name"], src["size"]))
+            added_files += 1
+    return jsonify(task=_task_full(tid), added_links=added_links, added_files=added_files)
 
 
 @app.post("/api/tasks/<int:tid>/files")

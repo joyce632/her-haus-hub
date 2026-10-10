@@ -807,3 +807,23 @@ body::before {
 .deadline-pair input[type=time]:disabled { opacity: .45; cursor: not-allowed; }
 .task-side .deadline-pair { grid-template-columns: 1fr; }
 .field-label { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+
+/* ---------- attach from Resources ---------- */
+.picker-bar { margin-bottom: 12px; }
+.picker-list { display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow-y: auto; margin: 0 -4px; padding: 2px 4px; }
+.pick-row {
+  display: grid; grid-template-columns: auto 34px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 10px 12px; cursor: pointer;
+  border-radius: 12px; background: rgba(255, 255, 255, .7); border: 1px solid rgba(12, 46, 96, .08); transition: border-color .15s, box-shadow .15s, background .15s;
+}
+.pick-row:hover { background: #fff; border-color: rgba(27, 75, 168, .25); }
+.pick-row:has(input:checked) { background: #fff; border-color: var(--royal); box-shadow: 0 0 0 3px rgba(27, 75, 168, .12); }
+.pick-row.is-added { cursor: default; opacity: .6; }
+.pick-row input { width: 16px; height: 16px; accent-color: var(--royal); margin: 0; }
+.pick-ic { width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; background: rgba(27, 75, 168, .1); color: var(--royal); }
+.pick-ic.file { background: var(--red-soft); color: var(--red-vivid); }
+.pick-ic svg { width: 16px; height: 16px; }
+.pick-main { display: flex; flex-direction: column; min-width: 0; }
+.pick-main b { font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pick-main small { color: var(--muted); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.res-tag { font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--royal); background: rgba(27, 75, 168, .1); padding: 2px 7px; border-radius: 6px; flex-shrink: 0; }
+.section-title .btn svg { width: 14px; height: 14px; }
