@@ -472,6 +472,14 @@ def exec_required(fn):
     return wrapper
 
 
+@app.after_request
+def _cache_static(resp):
+    if request.path.startswith("/static/") and resp.status_code in (200, 304):
+        resp.headers["Cache-Control"] = ("public, max-age=31536000, immutable" if request.args.get("v")
+                                         else "public, max-age=604800")
+    return resp
+
+
 @app.before_request
 def _csrf_guard():
     # Same-origin JS always sends this header; cross-site forms cannot.
@@ -835,6 +843,12 @@ def list_clients():
     return jsonify([_client_out(r) for r in rows])
 
 
+def _client_row(cid):
+    return _client_out(q("SELECT c.*, (SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.status!='Done' "
+                         "AND t.archived_at IS NULL) open_tasks, (SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id) "
+                         "total_tasks FROM clients c WHERE c.id=?", (cid,), one=True))
+
+
 def _client_out(c):
     # A webhook URL lets anyone post into that Chat space, so only executives see it.
     if c and not is_exec():
@@ -858,7 +872,7 @@ def create_client():
              "VALUES(?,?,?,?,?,?,?,?)",
              (d["name"].strip(), d.get("color") or "#0C2E60", d.get("description") or "", hook, pos, ctype, cstatus,
               iso(now_utc())))
-    return jsonify(q("SELECT * FROM clients WHERE id=?", (cid,), one=True))
+    return jsonify(_client_row(cid))
 
 
 @app.post("/api/clients/reorder")
@@ -889,7 +903,7 @@ def update_client(cid):
         f["archived_at"] = iso(now_utc()) if f["archived"] else None
     if f:
         ex(f"UPDATE clients SET {','.join(k + '=?' for k in f)} WHERE id=?", (*f.values(), cid))
-    return jsonify(q("SELECT * FROM clients WHERE id=?", (cid,), one=True))
+    return jsonify(_client_row(cid))
 
 
 # ---------------------------------------------------------------- tasks

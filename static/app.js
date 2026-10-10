@@ -259,6 +259,8 @@ function formModal({ title, fields, submit = 'Save', wide = false, onSubmit, ext
     const missing = fields.find((f) => f.required && !String(form.elements[f.name]?.value || '').trim());
     if (missing) { toast(`${missing.label} is required`, 'err'); form.elements[missing.name].focus(); return; }
     btn.disabled = true;
+    const label = btn.innerHTML;
+    btn.classList.add('is-busy'); btn.innerHTML = '<span class="spinner"></span>Saving…';
     try {
       let data;
       if (fields.some((f) => f.type === 'file')) {
@@ -273,7 +275,7 @@ function formModal({ title, fields, submit = 'Save', wide = false, onSubmit, ext
         });
       }
       await onSubmit(data, close);
-    } catch (e) { toast(e.message, 'err'); } finally { btn.disabled = false; }
+    } catch (e) { toast(e.message, 'err'); } finally { btn.disabled = false; btn.classList.remove('is-busy'); if (btn.innerHTML.includes('spinner')) btn.innerHTML = label; }
   };
   btn.onclick = submitIt;
   form.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.tagName === 'INPUT' && e.target.type !== 'checkbox') { e.preventDefault(); submitIt(); } });
@@ -350,7 +352,7 @@ function renderLogin() {
     </div>
     <div class="login-form">
       <form id="login-form">
-        <img src="/static/logo-dark.png" alt="Her Haus LLC — Real Estate Wholesaling">
+        <img src="/static/logo-dark.webp" alt="Her Haus LLC — Real Estate Wholesaling">
         <div><h1>Welcome back</h1><p class="muted" style="margin-top:4px">Sign in with your work email.</p></div>
         <label class="field">Email<input class="input" type="email" name="email" autocomplete="username" required></label>
         <label class="field">Password<input class="input" type="password" name="password" autocomplete="current-password" required></label>
@@ -431,7 +433,7 @@ function renderShell() {
   $('#app').innerHTML = `
   <div class="shell">
     <aside class="sidebar" id="sidebar">
-      <a class="brand" href="#/" aria-label="Her Haus Hub home"><img src="/static/logo-dark.png" alt="Her Haus LLC — Real Estate Wholesaling"></a>
+      <a class="brand" href="#/" aria-label="Her Haus Hub home"><img src="/static/logo-dark.webp" alt="Her Haus LLC — Real Estate Wholesaling"></a>
       ${isExec() ? `<div class="view-switch"><button data-view="exec" class="${S.view === 'exec' ? 'on' : ''}">Executive</button><button data-view="employee" class="${S.view === 'employee' ? 'on' : ''}">Employee</button></div>` : ''}
       <nav class="nav">
         ${(execView() ? execNav : empNav).join('')}
@@ -2189,12 +2191,20 @@ async function pageClients(page, _a, alive) {
     if (!c) { toast('Create the client first, then send a test from Edit', 'err'); return; }
     try { const r = await api('POST', `/api/clients/${c.id}/test-webhook`, { url }); toast(r.message, 'ok'); } catch (err) { toast(err.message, 'err'); }
   }; };
-  const after = async () => { await loadClients(); refreshClientNav(); route(); };
-  $('#c-add').onclick = () => formModal({ title: 'New client', fields: fields(), submit: 'Create client', onSubmit: async (d, close) => { await api('POST', '/api/clients', d); close(); toast('Client created', 'ok'); after(); } });
+  // Apply the server's reply directly: no extra round trips after a save.
+  const applyClient = (c, { remove = false } = {}) => {
+    rows = rows.filter((x) => x.id !== c.id); S.clients = S.clients.filter((x) => x.id !== c.id);
+    if (!remove) {
+      const at = (list) => { const i = list.findIndex((x) => (x.position ?? x.id) > (c.position ?? c.id)); return i < 0 ? list.length : i; };
+      rows.splice(at(rows), 0, c); S.clients.splice(at(S.clients), 0, c);
+    }
+    refreshClientNav(); draw();
+  };
+  $('#c-add').onclick = () => formModal({ title: 'New client', fields: fields(), submit: 'Create client', onSubmit: async (d, close) => { const c = await api('POST', '/api/clients', d); close(); applyClient(c); toast(`${c.name} created`, 'ok'); } });
   page.addEventListener('click', async (e) => {
     const ed = e.target.closest('[data-edit]'); const ar = e.target.closest('[data-arch]');
-    if (ed) { const c = rows.find((x) => x.id === Number(ed.dataset.edit)); wireTest(formModal({ title: `Edit ${c.name}`, fields: fields(c), extraFoot: testBtn, onSubmit: async (d, close) => { await api('PUT', `/api/clients/${c.id}`, d); close(); toast('Client updated', 'ok'); after(); } }), c); }
-    if (ar) { const c = rows.find((x) => x.id === Number(ar.dataset.arch)); if (await confirmModal(`Archive ${c.name}? Its board moves to the Archive — nothing is deleted and you can restore it any time.`, { okLabel: 'Archive', danger: false })) { await api('PUT', `/api/clients/${c.id}`, { archived: true }); after(); } }
+    if (ed) { const c = rows.find((x) => x.id === Number(ed.dataset.edit)); wireTest(formModal({ title: `Edit ${c.name}`, fields: fields(c), extraFoot: testBtn, onSubmit: async (d, close) => { const u = await api('PUT', `/api/clients/${c.id}`, d); close(); applyClient(u); toast('Client updated', 'ok'); } }), c); }
+    if (ar) { const c = rows.find((x) => x.id === Number(ar.dataset.arch)); if (await confirmModal(`Archive ${c.name}? Its board moves to the Archive — nothing is deleted and you can restore it any time.`, { okLabel: 'Archive', danger: false })) { const u = await api('PUT', `/api/clients/${c.id}`, { archived: true }); applyClient(u, { remove: true }); toast(`${c.name} archived`, 'ok'); } }
   });
   draw();
 }
