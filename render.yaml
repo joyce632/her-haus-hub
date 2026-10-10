@@ -1,0 +1,25 @@
+# One-click setup on Render: New → Blueprint → pick this repo.
+services:
+  - type: web
+    name: herhaus-hub
+    runtime: python
+    plan: starter            # a paid plan is required for the persistent disk below
+    region: singapore        # closest to the Philippines; change if you prefer
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -w 1 --threads 8 --timeout 60 -b 0.0.0.0:$PORT app:app
+    healthCheckPath: /healthz
+    disk:
+      name: herhaus-data
+      mountPath: /var/data   # database + all uploads live here and survive redeploys
+      sizeGB: 5
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DATA_DIR
+        value: /var/data
+      - key: SECRET_KEY
+        generateValue: true
+      - key: COOKIE_SECURE
+        value: "1"
+      - key: ADMIN_EMAIL
+        sync: false          # Render asks for this when you create the service

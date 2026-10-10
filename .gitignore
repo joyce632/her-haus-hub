@@ -1,0 +1,7 @@
+.venv/
+data/
+__pycache__/
+.claude/
+DEMO_LOGINS.txt
+*.pyc
+.DS_Store
