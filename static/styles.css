@@ -672,11 +672,20 @@ input[type=date].input, input[type=datetime-local].input { padding-right: 10px; 
 .nav-label { color: rgba(100, 116, 139, .75); }
 .nav a { color: #44546b; }
 .nav a:hover { background: rgba(12, 46, 96, .05); color: var(--navy); }
+/* Selected item: navy frosted glass */
 .nav a.active {
-  color: var(--navy); background: rgba(255, 255, 255, .95); border-color: rgba(12, 46, 96, .06);
-  box-shadow: 0 6px 16px -10px rgba(12, 46, 96, .45), inset 3px 0 0 var(--red);
+  color: #fff; font-weight: 600;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .14) 0%, rgba(255, 255, 255, 0) 55%),
+    linear-gradient(135deg, rgba(20, 59, 117, .82) 0%, rgba(12, 46, 96, .9) 100%);
+  border-color: rgba(255, 255, 255, .22);
+  backdrop-filter: blur(14px) saturate(160%); -webkit-backdrop-filter: blur(14px) saturate(160%);
+  box-shadow: 0 10px 24px -12px rgba(12, 46, 96, .7), inset 0 1px 0 rgba(255, 255, 255, .25);
 }
-.nav a.active svg { color: var(--red); }
+.nav a.active svg { color: #fff; opacity: 1; }
+.nav a.active .dot { box-shadow: 0 0 0 3px rgba(255, 255, 255, .25); }
+.nav a.active .nav-count { background: #fff; color: var(--red); }
+.nav a.active span[style*="opacity"] { color: rgba(255, 255, 255, .8); }
 .nav svg { opacity: .8; }
 .nav a .dot { box-shadow: 0 0 0 3px rgba(255, 255, 255, .9); }
 .sidebar-foot { background: rgba(255, 255, 255, .7); border-color: rgba(12, 46, 96, .07); box-shadow: 0 6px 18px -12px rgba(12, 46, 96, .35); }

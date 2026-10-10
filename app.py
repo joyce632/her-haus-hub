@@ -19,7 +19,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from functools import wraps
 from zoneinfo import ZoneInfo
 
-from flask import Flask, Response, abort, g, has_request_context, jsonify, request, send_file, send_from_directory, session
+from flask import Flask, Response, abort, g, has_request_context, jsonify, request, send_file, session
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
@@ -1956,16 +1956,27 @@ def healthz():
     return jsonify(ok=True)
 
 
+def _index_html():
+    # Stamp asset URLs with their modified time so browsers fetch fresh files after every update.
+    html = open(os.path.join(app.static_folder, "index.html"), encoding="utf-8").read()
+    for name in ("styles.css", "app.js"):
+        v = int(os.path.getmtime(os.path.join(app.static_folder, name)))
+        html = html.replace(f"/static/{name}", f"/static/{name}?v={v}")
+    resp = Response(html, mimetype="text/html")
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
 @app.get("/")
 def index():
-    return send_from_directory(app.static_folder, "index.html")
+    return _index_html()
 
 
 @app.errorhandler(404)
 def not_found(_e):
     if request.path.startswith("/api/"):
         return jsonify(error="Not found"), 404
-    return send_from_directory(app.static_folder, "index.html")
+    return _index_html()
 
 
 @app.errorhandler(403)
