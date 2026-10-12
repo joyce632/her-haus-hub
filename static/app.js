@@ -1036,6 +1036,7 @@ async function myTasksBoard(box, alive, onChange) {
   $('#my-new', box).onclick = () => newTaskModal(clientFilter ? Number(clientFilter) : null, 'Not Started', load, { assignToMe: true });
 
   const board = $('.my-board', box);
+  board.hhReload = load;
   board.addEventListener('click', (e) => { const card = e.target.closest('.tcard'); if (card) openTask(Number(card.dataset.id), load); });
   board.addEventListener('dragstart', (e) => { const card = e.target.closest('.tcard'); if (!card) return; card.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', card.dataset.id); });
   board.addEventListener('dragend', (e) => { e.target.closest('.tcard')?.classList.remove('dragging'); $$('.col', box).forEach((x) => x.classList.remove('drag-over')); });
@@ -1127,6 +1128,7 @@ async function pageBoard(page, [cid], alive) {
   $$('[data-add]', page).forEach((b) => b.onclick = () => newTaskModal(c.id, b.dataset.add, reload));
 
   const board = $('#board');
+  board.hhReload = reload;   // used by the quick reassign menu on cards
   board.addEventListener('click', (e) => { const card = e.target.closest('.tcard'); if (card) openTask(Number(card.dataset.id), reload); });
   board.addEventListener('dragstart', (e) => {
     const card = e.target.closest('.tcard'); if (!card) return;
@@ -1188,11 +1190,52 @@ function taskCardInner(t, showClient) {
         ${t.link_count ? `<span title="Links">${I.link.replace('width="18" height="18"', 'width="13" height="13"')} ${t.link_count}</span>` : ''}
       </div>
     </div>
-    <div class="tassignee ${t.assignee_name ? '' : 'none'}" title="${t.assignee_name ? `Assigned to ${esc(t.assignee_name)}` : 'Nobody is assigned yet'}">
+    <div class="tassignee ${t.assignee_name ? '' : 'none'}" role="button" tabindex="0" data-reassign="${t.id}" data-current="${t.assignee_id || ''}" title="${t.assignee_name ? `Assigned to ${esc(t.assignee_name)} · click to reassign` : 'Nobody is assigned yet · click to assign'}">
       ${t.assignee_name ? `${av(t.assignee_name, t.assignee_avatar, 'xs')}<span>${esc(t.assignee_name.split(' ')[0])}${t.assignee_id === S.me?.id ? ' <em>(you)</em>' : ''}</span>`
         : `<span class="avatar xs ghost">${I.user.replace('width="18" height="18"', 'width="12" height="12"')}</span><span>Unassigned</span>`}
     </div></div>`;
 }
+
+// Quick reassign: click the assignee strip on any task card.
+function closeAssigneeMenu() { $('.as-menu')?.remove(); document.removeEventListener('keydown', assigneeMenuKey); }
+function assigneeMenuKey(e) { if (e.key === 'Escape') closeAssigneeMenu(); }
+function assigneeMenu(strip) {
+  const open = $('.as-menu'); closeAssigneeMenu();
+  if (open && open.dataset.task === strip.dataset.reassign) return;   // second click closes it
+  const tid = Number(strip.dataset.reassign), cur = strip.dataset.current;
+  const people = [{ id: '', name: 'Unassigned' }, ...S.users.filter((u) => u.active)];
+  const m = document.createElement('div');
+  m.className = 'as-menu'; m.dataset.task = tid;
+  m.innerHTML = `<div class="as-head">Assign to</div>${people.map((u) => `<button type="button" data-uid="${u.id}" class="${String(u.id) === cur ? 'on' : ''}">
+    ${u.id ? av(u.name, u.avatar_file_id, 'xs') : `<span class="avatar xs ghost">${I.user.replace('width="18" height="18"', 'width="12" height="12"')}</span>`}
+    <span>${esc(u.name)}${u.id === S.me.id ? ' <em>(you)</em>' : ''}</span>${String(u.id) === cur ? I.check.replace('width="18" height="18"', 'width="14" height="14"') : ''}</button>`).join('')}`;
+  document.body.appendChild(m);
+  const r = strip.getBoundingClientRect(), h = m.offsetHeight, w = m.offsetWidth;
+  m.style.left = `${Math.max(8, Math.min(r.left, innerWidth - w - 8))}px`;
+  m.style.top = `${r.bottom + 6 + h > innerHeight - 8 ? Math.max(8, r.top - h - 6) : r.bottom + 6}px`;
+  document.addEventListener('keydown', assigneeMenuKey);
+  m.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-uid]'); if (!b) return;
+    closeAssigneeMenu();
+    if (b.dataset.uid === cur) return;
+    try {
+      const t = await api('PUT', `/api/tasks/${tid}`, { assignee_id: b.dataset.uid });
+      toast(t.assignee_name ? `Assigned to ${t.assignee_name}${t.assignee_id !== S.me.id ? ' — they’ve been notified' : ''}` : 'Task unassigned', 'ok');
+      const board = strip.closest('.my-board, #board');
+      if (board?.hhReload) board.hhReload(); else route();
+    } catch (err) { toast(err.message, 'err'); }
+  });
+}
+document.addEventListener('click', (e) => {
+  const strip = e.target.closest('.tcard [data-reassign]');
+  if (strip) { e.stopPropagation(); e.preventDefault(); assigneeMenu(strip); return; }   // don't open the task window
+  if (!e.target.closest('.as-menu')) closeAssigneeMenu();
+}, true);
+document.addEventListener('keydown', (e) => {
+  const strip = e.target.closest?.('.tcard [data-reassign]');
+  if (strip && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.stopPropagation(); assigneeMenu(strip); }
+}, true);
+window.addEventListener('scroll', closeAssigneeMenu, true);
 
 const assigneeOptions = () => [['', 'Unassigned'], ...S.users.filter((u) => u.active).map((u) => [u.id, u.name])];
 
@@ -1488,9 +1531,18 @@ async function openTask(id, onChange) {
     const b = e.target.closest('[data-unfollow]'); if (!b) return;
     try { followers = (await api('DELETE', `/api/tasks/${id}/followers/${b.dataset.unfollow}`)).followers; drawFollowers(); } catch (err) { toast(err.message, 'err'); }
   });
-  $('#t-assignee', el).addEventListener('change', (e) => {
-    const u = S.users.find((x) => String(x.id) === e.target.value);
-    $('#t-assignee-av', el).innerHTML = u ? av(u.name, u.avatar_file_id) : `<span class="avatar ghost">${I.user}</span>`;
+  let savedAssignee = String(t.assignee_id || '');
+  $('#t-assignee', el).addEventListener('change', async (e) => {   // reassigning saves right away
+    const sel = e.target, u = S.users.find((x) => String(x.id) === sel.value);
+    try {
+      await api('PUT', `/api/tasks/${id}`, { assignee_id: sel.value });
+      savedAssignee = sel.value;
+      $('#t-assignee-av', el).innerHTML = u ? av(u.name, u.avatar_file_id) : `<span class="avatar ghost">${I.user}</span>`;
+      const tb = $('#tb-date', el)?.closest('.tb-box');   // a time block belongs to its assignee, so it was cleared
+      if (tb) tb.querySelectorAll('#tb-date, .tb-times, .tb-live, #tb-clear, p').forEach((x) => x.remove()), tb.insertAdjacentHTML('beforeend', `<p class="small muted">${u ? `Reassigned — ${esc(u.name.split(' ')[0])} can plan a time block.` : 'Assign this task first — the assignee can then plan a time block.'}</p>`);
+      toast(u ? `Assigned to ${u.name}${u.id !== S.me.id ? ' — they’ve been notified' : ''}` : 'Task unassigned', 'ok');
+      onChange && onChange();
+    } catch (err) { sel.value = savedAssignee; toast(err.message, 'err'); }
   });
   if ($('#tb-clear', el)) $('#tb-clear', el).onclick = () => { $('#tb-date', el).value = ''; $('#tb-start', el).value = ''; $('#tb-end', el).value = ''; toast('Time block will be cleared when you save'); };
   if ($('#tb-date', el)) $('#tb-date', el).addEventListener('change', () => {  // sensible default: a 1-hour block from the next half hour
