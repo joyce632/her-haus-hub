@@ -146,6 +146,9 @@ CREATE TABLE IF NOT EXISTS metrics(
 CREATE TABLE IF NOT EXISTS resources(
   id INTEGER PRIMARY KEY, owner_id INTEGER, title TEXT, url TEXT DEFAULT '', category TEXT DEFAULT 'General',
   description TEXT DEFAULT '', shared INTEGER DEFAULT 0, file_id INTEGER, created_at TEXT);
+CREATE TABLE IF NOT EXISTS task_followers(
+  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, user_id INTEGER NOT NULL, created_at TEXT,
+  PRIMARY KEY(task_id, user_id));
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS task_comments(
   id INTEGER PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, user_id INTEGER NOT NULL,
@@ -217,6 +220,9 @@ CREATE TABLE IF NOT EXISTS metrics(
 CREATE TABLE IF NOT EXISTS resources(
   id SERIAL PRIMARY KEY, owner_id INTEGER, title TEXT, url TEXT DEFAULT '', category TEXT DEFAULT 'General',
   description TEXT DEFAULT '', shared INTEGER DEFAULT 0, file_id INTEGER, created_at TEXT);
+CREATE TABLE IF NOT EXISTS task_followers(
+  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, user_id INTEGER NOT NULL, created_at TEXT,
+  PRIMARY KEY(task_id, user_id));
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS task_comments(
   id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, user_id INTEGER NOT NULL,
@@ -236,10 +242,14 @@ CREATE TABLE IF NOT EXISTS recurring_rules(
 """
 # Copy order respects foreign keys (parents first).
 PG_TABLES = ["users", "clients", "time_entries", "breaks", "tasks", "task_links", "files", "eods", "incidents", "kpis",
-             "wins", "metrics", "resources", "settings", "task_comments", "notifications", "recurring_rules"]
+             "wins", "metrics", "resources", "settings", "task_comments", "notifications", "recurring_rules",
+             "task_followers"]
+PG_MIGRATIONS = ["ALTER TABLE tasks ADD COLUMN IF NOT EXISTS deadline_reminded TEXT"]
+_NO_ID_TABLES = {"settings", "task_followers"}
 _PG_PARENTS = {"time_entries": ("user_id", "users"), "breaks": ("entry_id", "time_entries"),
                "tasks": ("client_id", "clients"), "task_links": ("task_id", "tasks"),
-               "task_comments": ("task_id", "tasks"), "recurring_rules": ("client_id", "clients")}
+               "task_comments": ("task_id", "tasks"), "recurring_rules": ("client_id", "clients"),
+               "task_followers": ("task_id", "tasks")}
 
 
 def _to_pg(sql):
@@ -327,7 +337,7 @@ class _SharedDB:
         with self._lock:
             self.busy_since = _clock.monotonic()
             try:
-                if USE_PG and table != "settings":
+                if USE_PG and table not in _NO_ID_TABLES:
                     row = self._run(sql + " RETURNING id", args).fetchone()
                     return row["id"] if row else None
                 return self._run(sql, args).lastrowid if not USE_PG else (self._run(sql, args) and None)
@@ -443,6 +453,8 @@ def _copy_sqlite_to_pg(pg):
 def _init_postgres():
     pg = psycopg.connect(DATABASE_URL, autocommit=True, row_factory=dict_row, connect_timeout=15)
     pg.execute(PG_SCHEMA)
+    for stmt in PG_MIGRATIONS:   # columns added after the first Postgres release
+        pg.execute(stmt)
     if not pg.execute("SELECT 1 FROM users LIMIT 1").fetchone():
         if os.path.exists(DB_PATH):
             _copy_sqlite_to_pg(pg)
@@ -478,6 +490,7 @@ def init_db():
     _add_column(conn, "tasks", "restored_at", "TEXT")
     _add_column(conn, "tasks", "deadline_time", "TEXT")       # optional "HH:MM", company timezone
     _add_column(conn, "recurring_rules", "due_time", "TEXT")
+    _add_column(conn, "tasks", "deadline_reminded", "TEXT")   # which deadline the 15-minute reminder was sent for
     for col in ("block_date", "block_start", "block_end"):   # optional time block set by the assignee
         _add_column(conn, "tasks", col, "TEXT")
     # Task notes were replaced by comments: move any existing notes into a comment so nothing is lost.
@@ -1145,7 +1158,8 @@ def update_client(cid):
 TASK_SELECT = ("SELECT t.*, u.name assignee_name, u.avatar_file_id assignee_avatar, c.name client_name, c.color client_color, "
                "(SELECT COUNT(*) FROM files f WHERE f.kind='task' AND f.ref_id=t.id) file_count, "
                "(SELECT COUNT(*) FROM task_links l WHERE l.task_id=t.id) link_count, "
-               "(SELECT COUNT(*) FROM task_comments m WHERE m.task_id=t.id) comment_count "
+               "(SELECT COUNT(*) FROM task_comments m WHERE m.task_id=t.id) comment_count, "
+               "(SELECT COUNT(*) FROM task_followers fw WHERE fw.task_id=t.id) follower_count "
                "FROM tasks t LEFT JOIN users u ON u.id=t.assignee_id JOIN clients c ON c.id=t.client_id ")
 
 
@@ -1376,6 +1390,8 @@ def _task_full(tid):
     t["links"] = q("SELECT * FROM task_links WHERE task_id=? ORDER BY id", (tid,))
     rule = q("SELECT id, title FROM recurring_rules WHERE id=?", (t["recurring_rule_id"],), one=True) if t.get("recurring_rule_id") else None
     t["automation"] = rule
+    t["followers"] = q("SELECT u.id, u.name, u.avatar_file_id FROM task_followers f JOIN users u ON u.id=f.user_id "
+                       "WHERE f.task_id=? ORDER BY f.created_at, u.name", (tid,))
     if t.get("archived_by"):
         t["archived_by_name"] = (q("SELECT name FROM users WHERE id=?", (t["archived_by"],), one=True) or {}).get("name")
     return t
@@ -1538,6 +1554,7 @@ def delete_task(tid):
         _remove_file(f)
     ex("DELETE FROM notifications WHERE task_id=?", (tid,))
     ex("DELETE FROM task_comments WHERE task_id=?", (tid,))
+    ex("DELETE FROM task_followers WHERE task_id=?", (tid,))
     ex("DELETE FROM tasks WHERE id=?", (tid,))
     return jsonify(ok=True)
 
@@ -1607,7 +1624,7 @@ def add_comment(tid):
         notify(uid, "mention", tid, actor_id=u["id"], comment_id=cid, snippet=snippet)
     # Everyone else involved in the task hears about new comments too.
     watchers = {task["assignee_id"], task["created_by"]} | {r["user_id"] for r in q(
-        "SELECT DISTINCT user_id FROM task_comments WHERE task_id=?", (tid,))}
+        "SELECT DISTINCT user_id FROM task_comments WHERE task_id=?", (tid,))} | _follower_ids(tid)
     for uid in (watchers & active) - mentioned:
         notify(uid, "comment", tid, actor_id=u["id"], comment_id=cid, snippet=snippet)
     ex("UPDATE tasks SET updated_at=? WHERE id=?", (iso(now_utc()), tid))
@@ -1669,9 +1686,66 @@ def list_notifications():
 @app.get("/api/notifications/count")
 @login_required
 def notification_count():
+    """Unread counts, plus any notifications newer than ?since=<id> so the page can play a sound for them."""
+    uid = current_user()["id"]
     r = q("SELECT COUNT(*) unread, SUM(CASE WHEN kind='mention' THEN 1 ELSE 0 END) mentions FROM notifications WHERE user_id=? AND read_at IS NULL",
-          (current_user()["id"],), one=True)
-    return jsonify(unread=r["unread"] or 0, unread_mentions=r["mentions"] or 0)
+          (uid,), one=True)
+    latest = (q("SELECT MAX(id) m FROM notifications WHERE user_id=?", (uid,), one=True) or {}).get("m") or 0
+    fresh = []
+    since = request.args.get("since")
+    if since and since.isdigit():
+        fresh = q("SELECT n.id, n.kind, n.task_id, n.snippet, n.created_at, a.name actor_name, t.title task_title, "
+                  "t.client_id, c.name client_name FROM notifications n LEFT JOIN users a ON a.id=n.actor_id "
+                  "LEFT JOIN tasks t ON t.id=n.task_id LEFT JOIN clients c ON c.id=t.client_id "
+                  "WHERE n.user_id=? AND n.id>? AND n.read_at IS NULL ORDER BY n.id LIMIT 10", (uid, int(since)))
+    return jsonify(unread=r["unread"] or 0, unread_mentions=r["mentions"] or 0, latest_id=latest, new=fresh)
+
+
+def _follower_ids(tid):
+    return {r["user_id"] for r in q("SELECT user_id FROM task_followers WHERE task_id=?", (tid,))}
+
+
+@app.post("/api/tasks/<int:tid>/followers")
+@login_required
+def add_follower(tid):
+    if not q("SELECT 1 FROM tasks WHERE id=?", (tid,), one=True):
+        abort(404)
+    me = current_user()
+    uid = int(body().get("user_id") or me["id"])
+    if not q("SELECT 1 FROM users WHERE id=? AND active=1", (uid,), one=True):
+        return bad("That team member can't be found")
+    if uid not in _follower_ids(tid):
+        ex("INSERT OR IGNORE INTO task_followers(task_id,user_id,created_at) VALUES(?,?,?)", (tid, uid, iso(now_utc())))
+        if uid != me["id"]:
+            notify(uid, "follow", tid, actor_id=me["id"])
+    return jsonify(followers=_task_full(tid)["followers"])
+
+
+@app.delete("/api/tasks/<int:tid>/followers/<int:uid>")
+@login_required
+def remove_follower(tid, uid):
+    ex("DELETE FROM task_followers WHERE task_id=? AND user_id=?", (tid, uid))
+    return jsonify(followers=_task_full(tid)["followers"])
+
+
+def run_deadline_reminders():
+    """15 minutes before a task's deadline time, remind the assignee and followers (once per deadline)."""
+    now = now_utc()
+    today = now.astimezone(tz()).date()
+    days = (today.isoformat(), (today + timedelta(days=1)).isoformat())
+    for t in q("SELECT t.* FROM tasks t JOIN clients c ON c.id=t.client_id WHERE c.archived=0 AND t.archived_at IS NULL "
+               "AND t.status!='Done' AND t.deadline_time IS NOT NULL AND t.deadline IN (?,?)", days):
+        key = f"{t['deadline']} {t['deadline_time']}"
+        minutes_left = (deadline_moment(t) - now).total_seconds() / 60
+        if t.get("deadline_reminded") == key or not (0 < minutes_left <= 15):
+            continue
+        claimed = db().execute("UPDATE tasks SET deadline_reminded=? WHERE id=? AND COALESCE(deadline_reminded,'')!=?",
+                               (key, t["id"], key))
+        if claimed.rowcount != 1:
+            continue
+        active = {r["id"] for r in q("SELECT id FROM users WHERE active=1")}
+        for uid in ({t["assignee_id"]} | _follower_ids(t["id"])) & active:
+            notify(uid, "deadline", t["id"], actor_id=None, snippet=f"Due at {fmt_hhmm(t['deadline_time'])}")
 
 
 @app.post("/api/notifications/read")
@@ -1949,6 +2023,7 @@ def _scheduler_loop():
                 run_due_rules()
                 run_task_digest()
                 auto_archive()
+                run_deadline_reminders()
         except Exception as e:  # keep the scheduler alive no matter what
             print("Automation scheduler error:", e)
         _time.sleep(30)

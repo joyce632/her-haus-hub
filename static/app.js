@@ -230,6 +230,10 @@ const I = {
   restore: svg('<path d="M3 12a9 9 0 109-9 9.7 9.7 0 00-6.7 2.8L3 8"/><path d="M3 3v5h5"/>'),
   star: svg('<path d="M12 3l2.8 5.7 6.2.9-4.5 4.4 1 6.2L12 17.3 6.5 20.2l1-6.2L3 9.6l6.2-.9z"/>'),
   grip: svg('<circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/>'),
+  eye: svg('<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),
+  volume: svg('<path d="M11 5L6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 010 7M19 5a10 10 0 010 14"/>'),
+  mute: svg('<path d="M11 5L6 9H2v6h4l5 4z"/><path d="M22 9l-6 6M16 9l6 6"/>'),
+  pip: svg('<rect x="2" y="4" width="20" height="16" rx="2"/><rect x="12" y="11" width="8" height="7" rx="1" fill="currentColor" stroke="none"/>'),
   send: svg('<path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/>'),
 };
 
@@ -373,7 +377,7 @@ setInterval(() => {
 
 async function refreshStatus() {
   if (!S.me) return;
-  try { S.status = await api('GET', '/api/time/status'); renderPill(); } catch (_) { /* ignore */ }
+  try { S.status = await api('GET', '/api/time/status'); S.statusAt = Date.now(); renderPill(); } catch (_) { /* ignore */ }
 }
 setInterval(refreshStatus, 60000);
 
@@ -409,6 +413,7 @@ async function boot() {
 
 async function setMe(r) {
   S.me = r.user; S.settings = r.settings; S.statuses = r.statuses; S.priorities = r.priorities;
+  lastNotifId = null;
   S.clientTypes = r.client_types || []; S.clientStatuses = r.client_statuses || [];
   let saved = null;
   try { saved = localStorage.getItem('hh_view'); } catch (_) { /* storage blocked */ }
@@ -576,11 +581,13 @@ function renderPill() {
   } else if (s.on_shift) {
     box.innerHTML = `<div class="shift-pill on"><span class="pulse"></span><span class="lbl">On shift</span>
       <span class="mono" ${liveAttrs('hms', s.today_seconds, 1)}>${hms(s.today_seconds)}</span>
+      <button class="btn sm soft pill-float" type="button" data-float title="Float timer — stays on top in other tabs">${I.pip}</button>
       <a class="btn sm soft" href="#/dashboard">Time clock</a></div>`;
   } else {
     box.innerHTML = `<div class="shift-pill"><span class="pulse"></span><span class="lbl">Off shift</span><button class="btn sm red" data-clock="clock-in">Clock in</button></div>`;
   }
   $$('[data-clock]', box).forEach((b) => b.onclick = () => clockAction(b.dataset.clock));
+  const fb = $('[data-float]', box); if (fb) fb.onclick = openFloater;
 }
 
 function setTitle(t, sub = '') { $('#page-title').textContent = t; $('#page-sub').textContent = sub; document.title = `${t} · Her Haus Hub`; }
@@ -643,7 +650,7 @@ window.addEventListener('hashchange', route);
 // ============================================================ time clock
 async function clockAction(action, extra) {
   try {
-    S.status = await api('POST', `/api/time/${action}`, extra || {});
+    S.status = await api('POST', `/api/time/${action}`, extra || {}); S.statusAt = Date.now();
     const msg = { 'clock-in': 'Clocked in — have a great shift!', 'clock-out': 'Clocked out. Nice work today!', 'break-start': 'Break started', 'break-end': 'Welcome back!' }[action];
     toast(msg, 'ok');
     renderPill();
@@ -714,6 +721,114 @@ async function pageDashboard(page, _a, alive) {
   await plan.ready;
 }
 
+// ============================================================ floating timer
+// A small always-on-top window with the current time block's countdown (and shift time), so it stays visible
+// in other tabs and apps. Chrome/Edge: Document Picture-in-Picture. Safari: a live video picture-in-picture.
+let floater = null;
+let floaterData = { items: [], day: '' };
+async function refreshFloaterData() {
+  if (!S.me) return;
+  try { floaterData = { items: (await api('GET', `/api/schedule?date=${todayStr()}&user_id=${S.me.id}`)).items, day: todayStr() }; } catch (_) { /* keep last */ }
+  refreshStatus();
+}
+function floaterState() {
+  const open = floaterData.items.filter((t) => t.status !== 'Done');
+  const now = open.find(isBlockNow);
+  const next = open.find((t) => t.block_start > nowHHMM());
+  const s = S.status;
+  let shift = 'Off shift';
+  if (s && s.on_break) shift = `On ${s.break.kind.toLowerCase()} · ${hms((Date.now() - new Date(s.break.start)) / 1000)}`;
+  else if (s && s.on_shift) shift = `On shift · ${hms(s.today_seconds + (Date.now() - (S.statusAt || Date.now())) / 1000)}`;
+  return { now, next, shift };
+}
+function floaterHTML() {
+  const { now, next, shift } = floaterState();
+  const pct = now ? Math.min(100, Math.max(0, ((Date.now() - blockMs(now, 'start')) / (blockMs(now, 'end') - blockMs(now, 'start'))) * 100)) : 0;
+  const left = now ? blockMs(now, 'end') - Date.now() : 0;
+  return `<div class="f-top"><span class="f-tag ${now ? 'live' : ''}">${now ? '● Now' : 'Time block'}</span><span class="f-shift">${esc(shift)}</span></div>
+    ${now ? `<div class="f-title">${esc(now.title)}</div><div class="f-client">${esc(now.client_name)} · ${blockRange(now)}</div>
+      <div class="f-count ${left <= 0 ? 'ended' : ''}">${left > 0 ? fmtLeft(left) : 'Time’s up'}<small>${left > 0 ? 'left' : ''}</small></div>
+      <div class="f-bar"><i style="width:${pct}%"></i></div>`
+    : `<div class="f-title muted">No time block right now</div>`}
+    <div class="f-next">${next ? `Up next: <b>${esc(next.title)}</b> · ${fmtClock12(next.block_start)}` : now ? 'Nothing else planned today' : 'Plan time blocks from any of your tasks.'}</div>
+    <button class="f-open" type="button" data-open-hub>Open Her Haus Hub</button>`;
+}
+const FLOAT_CSS = `*{box-sizing:border-box}html,body{margin:0;height:100%}body{font-family:Montserrat,system-ui,sans-serif;color:#fff;
+  background:radial-gradient(260px 160px at 100% 0%,rgba(66,133,244,.45),transparent 65%),radial-gradient(240px 150px at 0% 120%,rgba(227,38,45,.4),transparent 65%),linear-gradient(135deg,#123A7A,#0C2E60 55%,#071C3D);
+  padding:14px 16px;display:flex}#fl{display:flex;flex-direction:column;gap:5px;width:100%}.f-top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .f-tag{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;padding:3px 9px;border-radius:99px;background:rgba(255,255,255,.12)}
+  .f-tag.live{background:#E3262D}.f-shift{font-size:11px;font-weight:600;opacity:.8;font-variant-numeric:tabular-nums}
+  .f-title{font-size:15px;font-weight:700;line-height:1.25;margin-top:4px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .f-title.muted{opacity:.75;font-weight:600}.f-client{font-size:11.5px;opacity:.75}
+  .f-count{font-size:34px;font-weight:300;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1.1;margin-top:2px}
+  .f-count small{font-size:12px;font-weight:600;opacity:.75;margin-left:6px;letter-spacing:0}.f-count.ended{color:#FFD1D3;font-size:22px;font-weight:700}
+  .f-bar{height:4px;border-radius:4px;background:rgba(255,255,255,.18);overflow:hidden}.f-bar i{display:block;height:100%;background:#fff;border-radius:4px}
+  .f-next{font-size:11.5px;opacity:.85;margin-top:2px}.f-next b{font-weight:700}
+  .f-open{margin-top:auto;align-self:flex-start;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.1);color:#fff;font:600 11px Montserrat,sans-serif;padding:5px 10px;border-radius:8px;cursor:pointer}`;
+async function openFloater() {
+  if (floater) { if (floater.kind === 'doc') floater.win.focus(); return; }
+  // Open the window first: browsers only allow it right after the click, so nothing slow may come before it.
+  let opened = false, why = '';
+  if ('documentPictureInPicture' in window) {
+    try {
+      const win = await window.documentPictureInPicture.requestWindow({ width: 340, height: 230 });
+      win.document.title = 'Her Haus · Timer';
+      win.document.head.innerHTML = `<meta charset="utf-8"><link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;500;600;700&display=swap" rel="stylesheet"><style>${FLOAT_CSS}</style>`;
+      win.document.body.innerHTML = '<div id="fl"></div>';
+      const draw = () => { const box = win.document.getElementById('fl'); if (box) box.innerHTML = floaterHTML(); };
+      win.document.body.addEventListener('click', (e) => { if (e.target.closest('[data-open-hub]')) window.focus(); });
+      draw(); win.setInterval(draw, 1000);   // the floating window's own timer keeps ticking while this tab is hidden
+      floater = { kind: 'doc', win };
+      win.addEventListener('pagehide', () => { floater = null; });
+      opened = true;
+    } catch (err) { why = err.message; }
+  }
+  if (!opened && document.pictureInPictureEnabled) {   // second option (and Safari's): picture-in-picture video
+    try { await videoFloater(); opened = true; } catch (err) { why = why || err.message; }
+  }
+  if (!opened) {
+    reportError(new Error(`Floating timer unavailable: ${why || 'not supported'}`), 'floater');
+    toast('This browser couldn’t open a floating window. Use Chrome, Edge, or Safari for the floating timer.', 'err');
+    return;
+  }
+  refreshFloaterData();   // fill in today's blocks right after it opens
+}
+async function videoFloater() {   // Safari fallback: draw the timer on a canvas and show it as picture-in-picture video
+  const c = document.createElement('canvas'); c.width = 640; c.height = 400;
+  const g = c.getContext('2d');
+  const paint = () => {
+    const { now, next, shift } = floaterState();
+    const grad = g.createLinearGradient(0, 0, 640, 400); grad.addColorStop(0, '#123A7A'); grad.addColorStop(1, '#071C3D');
+    g.fillStyle = grad; g.fillRect(0, 0, 640, 400); g.fillStyle = '#fff'; g.textBaseline = 'top';
+    g.font = '600 24px Montserrat, sans-serif'; g.globalAlpha = 0.8; g.fillText(shift, 40, 32); g.globalAlpha = 1;
+    g.font = '700 34px Montserrat, sans-serif'; g.fillText((now ? now.title : 'No time block right now').slice(0, 30), 40, 90);
+    if (now) {
+      const left = blockMs(now, 'end') - Date.now();
+      g.font = '300 96px Montserrat, sans-serif'; g.fillText(left > 0 ? fmtLeft(left) : 'Time’s up', 40, 150);
+      const pct = Math.min(1, Math.max(0, (Date.now() - blockMs(now, 'start')) / (blockMs(now, 'end') - blockMs(now, 'start'))));
+      g.globalAlpha = 0.2; g.fillRect(40, 280, 560, 10); g.globalAlpha = 1; g.fillRect(40, 280, 560 * pct, 10);
+    }
+    g.font = '500 24px Montserrat, sans-serif'; g.globalAlpha = 0.85;
+    g.fillText(next ? `Up next: ${next.title.slice(0, 26)} · ${fmtClock12(next.block_start)}` : '', 40, 320); g.globalAlpha = 1;
+  };
+  paint();
+  const video = document.createElement('video'); video.muted = true; video.playsInline = true; video.srcObject = c.captureStream(2);
+  await video.play(); await video.requestPictureInPicture();
+  const timer = setInterval(paint, 1000);
+  floater = { kind: 'video', video };
+  video.addEventListener('leavepictureinpicture', () => { clearInterval(timer); floater = null; });
+}
+// If someone leaves the tab during a live time block without the floater open, suggest it once a day when they return.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden || floater || !S.me) return;
+  const live = (floaterData.items || []).some((t) => isBlockNow(t) && t.status !== 'Done') || $('.tblock.live');
+  let shown = ''; try { shown = localStorage.getItem('hh_float_tip') || ''; } catch (_) { /* storage blocked */ }
+  if (live && shown !== todayStr()) {
+    try { localStorage.setItem('hh_float_tip', todayStr()); } catch (_) { /* storage blocked */ }
+    toast('Tip: click “Float timer” on your dashboard to keep your countdown visible in other tabs.');
+  }
+});
+
 // "Today's plan": the person's time-blocked tasks on a timeline, with day navigation.
 function planCard(box, userId, alive) {
   let day = todayStr();
@@ -728,11 +843,14 @@ function planCard(box, userId, alive) {
         <div><h2>${I.clock} ${day === todayStr() ? 'Today’s plan' : `Plan · ${dayWord(day)}`}</h2>
           <p class="small muted" style="margin-top:3px">${items.length ? `${items.length} time block${items.length === 1 ? '' : 's'} · ${hrs(mins * 60)} planned`
             + (now ? ` · <b class="now-text">Now: ${esc(now.title)} · <span ${countdownAttrs(now)}>${countdownText(now)}</span></b>` : next ? ` · Next: <b>${esc(next.title)}</b> at ${fmtClock12(next.block_start)}` : '') : 'Nothing planned yet'}</p></div>
-        <div class="seg day-nav"><button data-d="-1" aria-label="Previous day">‹</button><button data-d="0" class="${day === todayStr() ? 'on' : ''}">Today</button><button data-d="1" aria-label="Next day">›</button></div>
+        <div class="row" style="gap:8px;flex-wrap:nowrap"><button class="btn sm ghost" type="button" data-float title="Keep the countdown on top while you work in other tabs">${I.pip} Float timer</button>
+        <div class="seg day-nav"><button data-d="-1" aria-label="Previous day">‹</button><button data-d="0" class="${day === todayStr() ? 'on' : ''}">Today</button><button data-d="1" aria-label="Next day">›</button></div></div>
       </div>
       ${timelineHTML([{ key: userId, items }], day, { emptyText: `<b>No time blocks ${day === todayStr() ? 'today' : 'this day'}</b>Open any of your tasks and set a <b>Time block</b> to plan when you’ll work on it.` })}`;
     $$('.day-nav button', box).forEach((b) => b.onclick = () => { day = b.dataset.d === '0' ? todayStr() : shiftDay(day, Number(b.dataset.d)); reload(); });
     $$('[data-task]', box).forEach((b) => b.onclick = () => openTask(Number(b.dataset.task), () => { reload(); }));
+    $('[data-float]', box).onclick = openFloater;
+    if (day === todayStr()) { floaterData = { items, day }; }
   };
   const refresher = setInterval(() => {
     if ((alive && !alive()) || !box.isConnected) return clearInterval(refresher);
@@ -926,6 +1044,7 @@ function taskCardInner(t, showClient) {
     <div class="meta">
       <div class="row" style="gap:6px">${prioBadge(t.priority)}${t.deadline ? `<span class="due ${over ? 'over' : ''}">${dueShort(t)}</span>` : ''}</div>
       <div class="icons">
+        ${t.follower_count ? `<span title="${t.follower_count} follower${t.follower_count === 1 ? '' : 's'}">${I.eye.replace('width="18" height="18"', 'width="13" height="13"')} ${t.follower_count}</span>` : ''}
         ${t.comment_count ? `<span title="Comments">${I.chat.replace('width="18" height="18"', 'width="13" height="13"')} ${t.comment_count}</span>` : ''}
         ${t.file_count ? `<span title="Files">${I.clip.replace('width="18" height="18"', 'width="13" height="13"')} ${t.file_count}</span>` : ''}
         ${t.link_count ? `<span title="Links">${I.link.replace('width="18" height="18"', 'width="13" height="13"')} ${t.link_count}</span>` : ''}
@@ -1128,6 +1247,12 @@ async function openTask(id, onChange) {
         <label class="field">Priority level<select class="input" id="t-priority">${S.priorities.map((p) => `<option ${p === t.priority ? 'selected' : ''}>${p}</option>`).join('')}</select></label>
         <label class="field">Assignee<span class="assignee-pick"><span id="t-assignee-av">${t.assignee_name ? av(t.assignee_name, t.assignee_avatar) : `<span class="avatar ghost">${I.user}</span>`}</span><select class="input" id="t-assignee">${assigneeOptions().map(([v, l]) => `<option value="${v}" ${String(v) === String(t.assignee_id || '') ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></span></label>
         <label class="field"><span class="field-label">Deadline<span class="hint">· time optional</span></span>${deadlineInputs(t.deadline, t.deadline_time, 't-')}</label>
+        <div class="tb-box fl-box">
+          <div class="field-label" style="font-weight:600;font-size:11.5px;color:var(--navy)">${I.eye.replace('width="18" height="18"', 'width="13" height="13"')} Followers<span class="hint">· comments &amp; deadline alerts</span></div>
+          <div class="fl-list" id="t-followers"></div>
+          <div class="fl-actions"><button type="button" class="btn sm" id="t-follow"></button>
+            <select class="input" id="t-add-follower"><option value="">+ Add teammate</option>${S.users.filter((u) => u.active).map((u) => `<option value="${u.id}">${esc(u.name)}</option>`).join('')}</select></div>
+        </div>
         <div class="tb-box">
           <div class="field-label" style="font-weight:600;font-size:11.5px;color:var(--navy)">${I.clock.replace('width="18" height="18"', 'width="13" height="13"')} Time block<span class="hint">· optional</span></div>
           ${t.assignee_id && (t.assignee_id === S.me.id || isExec()) ? `
@@ -1200,6 +1325,31 @@ async function openTask(id, onChange) {
     } catch (err) { toast(err.message, 'err'); }
   };
   setupComments(el, id);
+  let followers = t.followers || [];
+  const drawFollowers = () => {
+    $('#t-followers', el).innerHTML = followers.length ? followers.map((f) => `<span class="fl-chip">${av(f.name, f.avatar_file_id, 'xs')}<span>${esc(f.name.split(' ')[0])}${f.id === S.me.id ? ' (you)' : ''}</span>
+      <button type="button" data-unfollow="${f.id}" aria-label="Remove ${esc(f.name)}" title="Remove">${I.x.replace('width="18" height="18"', 'width="11" height="11"')}</button></span>`).join('')
+      : '<span class="small muted">No followers yet.</span>';
+    const mine = followers.some((f) => f.id === S.me.id);
+    const btn = $('#t-follow', el); btn.innerHTML = `${I.eye} ${mine ? 'Following' : 'Follow'}`; btn.classList.toggle('soft', mine);
+    $$('#t-add-follower option', el).forEach((o) => { if (o.value) o.disabled = followers.some((f) => String(f.id) === o.value); });
+  };
+  drawFollowers();
+  $('#t-follow', el).onclick = async () => {
+    const mine = followers.some((f) => f.id === S.me.id);
+    try {
+      followers = (await api(mine ? 'DELETE' : 'POST', mine ? `/api/tasks/${id}/followers/${S.me.id}` : `/api/tasks/${id}/followers`, mine ? undefined : {})).followers;
+      drawFollowers(); toast(mine ? 'You’ll no longer get updates on this task' : 'Following — you’ll get comments and deadline alerts', 'ok');
+    } catch (err) { toast(err.message, 'err'); }
+  };
+  $('#t-add-follower', el).onchange = async (e) => {
+    const uid = e.target.value; e.target.value = ''; if (!uid) return;
+    try { followers = (await api('POST', `/api/tasks/${id}/followers`, { user_id: Number(uid) })).followers; drawFollowers(); } catch (err) { toast(err.message, 'err'); }
+  };
+  $('#t-followers', el).addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-unfollow]'); if (!b) return;
+    try { followers = (await api('DELETE', `/api/tasks/${id}/followers/${b.dataset.unfollow}`)).followers; drawFollowers(); } catch (err) { toast(err.message, 'err'); }
+  });
   $('#t-assignee', el).addEventListener('change', (e) => {
     const u = S.users.find((x) => String(x.id) === e.target.value);
     $('#t-assignee-av', el).innerHTML = u ? av(u.name, u.avatar_file_id) : `<span class="avatar ghost">${I.user}</span>`;
@@ -1328,30 +1478,91 @@ function setupComments(el, taskId) {
 }
 
 // ============================================================ notifications
+// ---------- alert sounds (synthesised, no audio files) + desktop pop-ups
+const soundOn = () => { try { return localStorage.getItem('hh_sound') !== 'off'; } catch (_) { return true; } };
+const setSound = (on) => { try { localStorage.setItem('hh_sound', on ? 'on' : 'off'); } catch (_) { /* storage blocked */ } };
+let audioCtx = null;
+function unlockAudio() {  // browsers only allow sound after the person has clicked or typed on the page once
+  try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); } catch (_) { /* no audio */ }
+}
+['pointerdown', 'keydown'].forEach((ev) => document.addEventListener(ev, unlockAudio, { passive: true }));
+const TONES = {   // [frequency Hz, start s, length s]
+  comment: [[659.25, 0, 0.16], [880, 0.13, 0.24]],                                   // soft two-note chime
+  mention: [[783.99, 0, 0.12], [987.77, 0.1, 0.12], [1318.5, 0.2, 0.3]],            // bright rising triad
+  deadline: [[880, 0, 0.13], [880, 0.2, 0.13], [880, 0.4, 0.13], [1174.66, 0.62, 0.34]], // urgent pulses
+};
+const SOUND_PRIORITY = ['deadline', 'mention', 'comment'];
+function playTone(kind, force = false) {
+  if (!force && !soundOn()) return;
+  unlockAudio(); if (!audioCtx) return;
+  const t0 = audioCtx.currentTime + 0.03;
+  for (const [f, at, dur] of TONES[kind] || TONES.comment) {
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = kind === 'deadline' ? 'triangle' : 'sine'; o.frequency.value = f;
+    g.gain.setValueAtTime(0.0001, t0 + at); g.gain.exponentialRampToValueAtTime(0.25, t0 + at + 0.015);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + at + dur);
+    o.connect(g).connect(audioCtx.destination); o.start(t0 + at); o.stop(t0 + at + dur + 0.05);
+  }
+}
+function alertPlain(n) {
+  const who = n.actor_name || 'Someone', task = n.task_title || 'a task';
+  return { mention: [`${who} mentioned you`, `${task}${n.snippet ? ` — “${n.snippet}”` : ''}`],
+    comment: [`${who} commented`, `${task}${n.snippet ? ` — “${n.snippet}”` : ''}`],
+    deadline: ['Due in 15 minutes', `${task}${n.client_name ? ` · ${n.client_name}` : ''}`],
+    assigned: [n.actor_name ? `${who} assigned you a task` : 'New recurring task', task],
+    follow: [`${who} added you as a follower`, task] }[n.kind] || ['Her Haus Hub', task];
+}
+function desktopAlert(n) {
+  if (!('Notification' in window) || Notification.permission !== 'granted' || !document.hidden) return;
+  const [title, body] = alertPlain(n);
+  try {
+    const note = new Notification(title, { body, icon: '/static/icon.png', tag: `hh-${n.id}` });
+    note.onclick = () => { window.focus(); openNotification(n); note.close(); };
+  } catch (_) { /* some browsers only allow this from a service worker */ }
+}
+
 let notifState = { unread: 0, mentions: 0, filter: 'all' };
+let lastNotifId = null;
 async function pollNotifications() {
   if (!S.me) return;
   try {
-    const r = await api('GET', '/api/notifications/count');
+    const r = await api('GET', `/api/notifications/count${lastNotifId !== null ? `?since=${lastNotifId}` : ''}`);
     notifState.unread = r.unread; notifState.mentions = r.unread_mentions;
     const b = $('#bell-count'); if (b) { b.textContent = r.unread > 99 ? '99+' : r.unread; b.hidden = !r.unread; }
     const n = $('#nav-notif-count'); if (n) { n.textContent = r.unread; n.hidden = !r.unread; }
     $('#bell')?.classList.toggle('has-mention', !!r.unread_mentions);
+    if (lastNotifId !== null && (r.new || []).length) {   // something new since the last check
+      const kinds = r.new.map((x) => x.kind);
+      const loudest = SOUND_PRIORITY.find((k) => kinds.includes(k));
+      if (loudest) playTone(loudest);
+      r.new.forEach(desktopAlert);
+      if (!document.hidden) { const [t, body] = alertPlain(r.new[r.new.length - 1]); toast(`${t}: ${body}`.slice(0, 140)); }
+    }
+    lastNotifId = Math.max(lastNotifId || 0, r.latest_id || 0);
   } catch (_) { /* offline */ }
 }
-setInterval(pollNotifications, 30000);
+// A tiny background worker keeps time even when the tab is in the background (browsers slow down page timers there).
+let tickCount = 0;
+const bgTicker = (() => {
+  try { return new Worker(URL.createObjectURL(new Blob(['setInterval(() => postMessage(1), 15000)'], { type: 'text/javascript' }))); }
+  catch (_) { return null; }
+})();
+const onTick = () => { tickCount++; pollNotifications(); if (floater && tickCount % 4 === 0) refreshFloaterData(); };
+if (bgTicker) bgTicker.onmessage = onTick; else setInterval(onTick, 15000);
 
 function notifText(n) {
   const who = `<b>${esc(n.actor_name || 'Automation')}</b>`, task = `<b>${esc(n.task_title || 'a deleted task')}</b>`;
   if (n.kind === 'mention') return `${who} mentioned you in ${task}`;
   if (n.kind === 'comment') return `${who} commented on ${task}`;
   if (n.kind === 'assigned') return n.actor_id ? `${who} assigned you ${task}` : `New recurring task for you: ${task}`;
+  if (n.kind === 'deadline') return `${task} is due in 15 minutes`;
+  if (n.kind === 'follow') return `${who} added you as a follower on ${task}`;
   return task;
 }
 function notifItemHTML(n) {
-  const icon = n.kind === 'mention' ? I.at : n.kind === 'comment' ? I.chat : I.brief;
+  const icon = { mention: I.at, comment: I.chat, deadline: I.clock, follow: I.eye }[n.kind] || I.brief;
   return `<button class="notif ${n.read_at ? '' : 'unread'}" data-n="${n.id}">
-    <span class="notif-av">${n.actor_name ? av(n.actor_name, n.actor_avatar) : `<span class="avatar">${I.repeat}</span>`}<span class="notif-kind k-${n.kind}">${icon}</span></span>
+    <span class="notif-av">${n.actor_name ? av(n.actor_name, n.actor_avatar) : `<span class="avatar">${n.kind === 'deadline' ? I.clock : I.repeat}</span>`}<span class="notif-kind k-${n.kind}">${icon}</span></span>
     <span class="notif-main"><span class="notif-text">${notifText(n)}</span>
       ${n.snippet && n.kind !== 'assigned' ? `<span class="notif-snip">“${esc(n.snippet)}”</span>` : ''}
       <span class="notif-meta">${n.client_name ? `<span class="client-dot" style="background:${esc(n.client_color)}"></span>${esc(n.client_name)} · ` : ''}${timeAgo(n.created_at)}</span></span>
@@ -1370,12 +1581,22 @@ async function renderNotifPanel() {
   pollNotifications();
   const kind = notifState.filter === 'mentions' ? '&kind=mention' : '';
   const r = await api('GET', `/api/notifications?limit=20${kind}`);
-  p.innerHTML = `<div class="notif-head"><h2>Notifications</h2><button class="linkbtn dark" id="n-all-read">Mark all read</button></div>
+  const canDesk = 'Notification' in window && Notification.permission === 'default';
+  p.innerHTML = `<div class="notif-head"><h2>Notifications</h2><div class="row" style="gap:6px;flex-wrap:nowrap">
+      <button class="icon-btn snd-btn ${soundOn() ? 'on' : ''}" id="n-sound" title="${soundOn() ? 'Sounds on — click to mute' : 'Sounds off — click to turn on'}">${soundOn() ? I.volume : I.mute}</button>
+      <button class="linkbtn dark" id="n-all-read">Mark all read</button></div></div>
+    ${canDesk ? `<button class="desk-cta" id="n-desktop">${I.bell}<span>Get alerts even when you’re in another tab · <b>Turn on</b></span></button>` : ''}
     <div class="seg sm" id="n-seg"><button data-f="all" class="${notifState.filter === 'all' ? 'on' : ''}">All${r.unread ? ` · ${r.unread}` : ''}</button><button data-f="mentions" class="${notifState.filter === 'mentions' ? 'on' : ''}">Mentions${r.unread_mentions ? ` · ${r.unread_mentions}` : ''}</button></div>
     <div class="notif-list">${r.items.length ? r.items.map(notifItemHTML).join('') : `<div class="empty"><b>${notifState.filter === 'mentions' ? 'No mentions yet' : "You're all caught up"}</b>${notifState.filter === 'mentions' ? 'When someone tags you with @, it shows up here.' : 'New comments, mentions, and assignments show up here.'}</div>`}</div>
     <a class="notif-foot" href="#/notifications">View all notifications</a>`;
   $$('#n-seg button', p).forEach((b) => b.onclick = (e) => { e.stopPropagation(); notifState.filter = b.dataset.f; renderNotifPanel(); });
   $('#n-all-read', p).onclick = async (e) => { e.stopPropagation(); await api('POST', '/api/notifications/read', { all: true }); pollNotifications(); renderNotifPanel(); };
+  $('#n-sound', p).onclick = (e) => { e.stopPropagation(); setSound(!soundOn()); if (soundOn()) playTone('comment', true); renderNotifPanel(); };
+  if ($('#n-desktop', p)) $('#n-desktop', p).onclick = async (e) => {
+    e.stopPropagation(); const res = await Notification.requestPermission();
+    toast(res === 'granted' ? 'Desktop alerts are on' : 'Desktop alerts stay off (you can allow them later in your browser settings)', res === 'granted' ? 'ok' : '');
+    renderNotifPanel();
+  };
   $$('[data-n]', p).forEach((b) => b.onclick = () => openNotification(r.items.find((x) => x.id === Number(b.dataset.n))));
   $('.notif-foot', p).onclick = closeNotifPanel;
 }
@@ -1391,10 +1612,20 @@ async function pageNotifications(page, _a, alive) {
     const r = await api('GET', `/api/notifications?limit=200${qs}`);
     if (!alive()) return;
     page.innerHTML = `<div class="board-bar"><div class="seg">${[['all', 'All'], ['mentions', `Mentions${r.unread_mentions ? ` · ${r.unread_mentions}` : ''}`], ['unread', `Unread${r.unread ? ` · ${r.unread}` : ''}`]].map(([v, l]) => `<button data-f="${v}" class="${v === filter ? 'on' : ''}">${l}</button>`).join('')}</div>
-      <span style="flex:1"></span><button class="btn ghost" id="np-read">Mark all as read</button></div>
+      <span style="flex:1"></span>
+      <button class="btn ghost" id="np-sound">${soundOn() ? I.volume : I.mute} Sounds ${soundOn() ? 'on' : 'off'}</button>
+      <div class="sound-tests"><span class="small muted">Preview:</span><button class="btn sm soft" data-tone="comment">Comment</button><button class="btn sm soft" data-tone="mention">Mention</button><button class="btn sm soft" data-tone="deadline">Deadline</button></div>
+      ${'Notification' in window ? `<button class="btn ghost" id="np-desk" ${Notification.permission === 'granted' ? 'disabled' : ''}>${I.bell} ${Notification.permission === 'granted' ? 'Desktop alerts on' : Notification.permission === 'denied' ? 'Desktop alerts blocked' : 'Turn on desktop alerts'}</button>` : ''}
+      <button class="btn ghost" id="np-read">Mark all as read</button></div>
       <div class="card notif-page">${r.items.length ? r.items.map(notifItemHTML).join('') : `<div class="empty"><b>Nothing here</b>${filter === 'mentions' ? 'When a teammate tags you with @ in a comment, it shows up here.' : 'You are all caught up.'}</div>`}</div>`;
     $$('.seg button', page).forEach((b) => b.onclick = () => { filter = b.dataset.f; draw(); });
     $('#np-read', page).onclick = async () => { await api('POST', '/api/notifications/read', { all: true }); pollNotifications(); draw(); };
+    $('#np-sound', page).onclick = () => { setSound(!soundOn()); if (soundOn()) playTone('comment', true); draw(); };
+    $$('[data-tone]', page).forEach((b) => b.onclick = () => playTone(b.dataset.tone, true));
+    if ($('#np-desk', page)) $('#np-desk', page).onclick = async () => {
+      if (Notification.permission === 'denied') { toast('Your browser is blocking alerts for this site — allow them in the site settings (padlock in the address bar).', 'err'); return; }
+      await Notification.requestPermission(); draw();
+    };
     $$('[data-n]', page).forEach((b) => b.onclick = () => openNotification(r.items.find((x) => x.id === Number(b.dataset.n))));
   };
   await draw();

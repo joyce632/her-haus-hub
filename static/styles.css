@@ -941,3 +941,25 @@ body::before {
 .assignee-pick > span:first-child { flex-shrink: 0; line-height: 0; }
 .assignee-pick .avatar { width: 34px; height: 34px; }
 .assignee-pick select { flex: 1; min-width: 0; }
+
+/* ---------- followers ---------- */
+.fl-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.fl-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 4px 3px 3px; border-radius: 99px; background: #fff; border: 1px solid rgba(12, 46, 96, .1); font-size: 11.5px; font-weight: 600; color: var(--navy); }
+.fl-chip button { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 2px; border-radius: 50%; line-height: 0; }
+.fl-chip button:hover { color: var(--red-vivid); background: var(--red-soft); }
+.fl-actions { display: grid; grid-template-columns: 1fr; gap: 6px; }
+.fl-actions .btn { white-space: nowrap; }
+.fl-actions .input { height: 32px; font-size: 12px; padding-left: 10px; }
+.fl-box .field-label svg { color: var(--royal); }
+
+/* ---------- alert controls ---------- */
+.snd-btn { color: var(--muted); }
+.snd-btn.on { color: var(--royal); }
+.desk-cta { display: flex; align-items: center; gap: 8px; width: calc(100% - 36px); margin: 0 18px 10px; padding: 9px 12px; border-radius: 12px; border: 1px dashed rgba(27, 75, 168, .35); background: rgba(27, 75, 168, .06); color: var(--navy); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.desk-cta svg { width: 15px; height: 15px; color: var(--royal); flex-shrink: 0; }
+.desk-cta:hover { background: rgba(27, 75, 168, .1); }
+.sound-tests { display: flex; align-items: center; gap: 6px; }
+.notif-kind.k-deadline { background: #D97706; }
+.notif-kind.k-follow { background: var(--royal); }
+.pill-float { padding: 0 9px; }
+.pill-float svg { width: 15px; height: 15px; }
