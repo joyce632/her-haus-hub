@@ -1068,6 +1068,41 @@ def register(module):
             H.ex("INSERT OR IGNORE INTO chat_layout(user_id,data,updated_at) VALUES(?,?,?)", (uid, data, H.iso(H.now_utc())))
         return jsonify(ok=True)
 
+    @app.get("/api/chat/diagnose")
+    @H.exec_required
+    def chat_diagnose():
+        """Executives: ask Google directly why names or messages might be missing for your account."""
+        u = H.current_user()
+        out = {}
+        try:
+            tok = access_token(u["id"])
+        except NotConnected:
+            return jsonify(error="Not connected")
+        try:
+            info = _http("GET", "https://oauth2.googleapis.com/tokeninfo", params={"access_token": tok})
+            out["granted_scopes"] = sorted(s.rsplit("/", 1)[-1] for s in (info.get("scope") or "").split())
+        except GoogleError as e:
+            out["granted_scopes"] = f"error: {e}"
+        try:
+            r = gapi(u["id"], "GET", "/v1/people:listDirectoryPeople", base=PEOPLE_API,
+                     params={"readMask": "names", "sources": "DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE", "pageSize": 5})
+            out["directory"] = f"ok — {len(r.get('people', []))} people in the first page"
+        except GoogleError as e:
+            out["directory"] = f"error {e.status}: {e}"
+        unknown = H.q("SELECT gid FROM chat_people WHERE name='' LIMIT 1", one=True)
+        if unknown:
+            try:
+                r = gapi(u["id"], "GET", "/v1/people:batchGet", base=PEOPLE_API,
+                         params=[("resourceNames", f"people/{_gid_num(unknown['gid'])}"), ("personFields", "names"),
+                                 ("sources", "READ_SOURCE_TYPE_PROFILE"), ("sources", "READ_SOURCE_TYPE_DOMAIN_CONTACT")])
+                res = (r.get("responses") or [{}])[0]
+                out["single_lookup"] = "named" if (res.get("person") or {}).get("names") else f"no name returned ({(res.get('status') or {}).get('message', 'empty')})"
+            except GoogleError as e:
+                out["single_lookup"] = f"error {e.status}: {e}"
+        out["people_known"] = H.q("SELECT COUNT(*) n FROM chat_people WHERE name!=''", one=True)["n"]
+        out["people_unknown"] = H.q("SELECT COUNT(*) n FROM chat_people WHERE name=''", one=True)["n"]
+        return jsonify(out)
+
     @app.get("/api/chat/admin")
     @H.exec_required
     def chat_admin():
