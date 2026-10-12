@@ -82,7 +82,7 @@ you in the hub (bell, sound, floating window).
    "Her Haus Hub" as **Trusted**. Internal apps are usually allowed already.
 
 Then everyone opens **Chat** in the hub and clicks **Connect Google Chat** once. In *Settings*, keep
-"Site address" set to `https://teamhub.herhauscompany.com` so Google sends people back to the right place.
+"Hub web address" set to `https://teamhub.herhauscompany.com` so Google sends people back to the right place.
 
 Notes: the hub only ever sees the spaces each person is a member of. Google sign-in tokens are stored encrypted.
 Disconnecting (bottom of the chat list) stops syncing for that person; it never changes anything in Google Chat.
