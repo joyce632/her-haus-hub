@@ -3024,14 +3024,49 @@ function chatMsgHTML(m, prev, opts = {}) {
     </div>`}
   </div>`;
 }
-function chatListHTML(msgs, opts) {
-  let out = '', prev = null, day = '';
+// Message list as keyed items, so updates only touch what changed (no flicker, no scroll jumps).
+function chatItems(msgs, opts) {
+  const out = []; let prev = null, day = '';
   for (const m of msgs) {
     const d = chatDay(m.create_time);
-    if (d !== day && !opts.thread) { out += `<div class="cday"><span>${esc(d)}</span></div>`; day = d; prev = null; }
-    out += chatMsgHTML(m, prev, opts); prev = m;
+    if (d !== day && !opts.thread) { out.push({ key: `d:${d}`, html: `<div class="cday"><span>${esc(d)}</span></div>` }); day = d; prev = null; }
+    out.push({ key: `m:${m.id}`, html: chatMsgHTML(m, prev, opts), msg: true }); prev = m;
   }
   return out;
+}
+// Make box's children match items (by key): keep unchanged nodes, replace changed ones, add new ones (animated).
+function patchList(box, items, animate) {
+  const old = new Map();
+  [...box.children].forEach((n) => { if (n.dataset.key) old.set(n.dataset.key, n); else n.remove(); });
+  let ref = box.firstElementChild, added = 0;
+  const tpl = document.createElement('template');
+  for (const it of items) {
+    let node = old.get(it.key);
+    if (!node || node._h !== it.html) {
+      tpl.innerHTML = it.html.trim();
+      const fresh = tpl.content.firstElementChild;
+      fresh.dataset.key = it.key; fresh._h = it.html;
+      if (node) { const wasRef = node === ref; node.replaceWith(fresh); if (wasRef) ref = fresh; }
+      else if (animate && it.msg) { fresh.classList.add('cm-in'); added++; }
+      node = fresh;
+    }
+    old.delete(it.key);
+    if (node === ref) ref = ref.nextElementSibling; else box.insertBefore(node, ref);
+  }
+  old.forEach((n) => n.remove());
+  return added;
+}
+function askText(title, label, value = '', okLabel = 'Save') {
+  return new Promise((resolve) => {
+    const { el, close } = openModal({ title, body: `<form id="ask-form"><label class="field">${esc(label)}<input class="input" name="v" maxlength="40" value="${esc(value)}" required autofocus></label></form>`,
+      foot: `<button class="btn ghost" data-close>Cancel</button><button class="btn" form="ask-form">${esc(okLabel)}</button>` });
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; resolve(v); } };
+    $('#ask-form', el).onsubmit = (e) => { e.preventDefault(); const v = e.target.v.value.trim(); if (v) { finish(v); close(); } };
+    $$('[data-close]', el.parentElement).forEach((b) => b.addEventListener('click', () => finish(null)));
+    new MutationObserver((_m, obs) => { if (!el.isConnected) { obs.disconnect(); finish(null); } }).observe($('#modal-root'), { childList: true });
+    setTimeout(() => $('input', el).select(), 30);
+  });
 }
 function chatComposerHTML(id, placeholder) {
   return `<div class="ccomp" id="${id}">
@@ -3151,7 +3186,9 @@ async function pageChat(page, [sidParam], alive) {
   page.classList.add('page-chat');
   page.innerHTML = `<div class="chat-wrap" id="chat-wrap">
     <aside class="chat-side">
-      <div class="chat-side-head"><input class="input" id="cs-search" placeholder="Search chats" autocomplete="off"></div>
+      <div class="chat-side-head"><input class="input" id="cs-search" placeholder="Search chats" autocomplete="off">
+        <button class="icon-btn cs-btn" id="cs-new-sec" title="New section">${I.plus}</button>
+        <button class="icon-btn cs-btn" id="cs-mini" title="Collapse chat list">«</button></div>
       <div class="chat-list" id="chat-list"><div class="empty">Loading…</div></div>
       <div class="chat-side-foot"><span title="${esc(st.email || '')}">${I.chat.replace('width="18" height="18"', 'width="13" height="13"')} ${esc(st.email || '')}</span><button class="linkbtn" id="gc-disconnect">Disconnect</button></div>
     </aside>
@@ -3160,23 +3197,140 @@ async function pageChat(page, [sidParam], alive) {
   </div>`;
   const wrap = $('#chat-wrap'), listEl = $('#chat-list'), main = $('#chat-main'), threadEl = $('#chat-thread');
   let spaces = [], current = null, msgs = [], more = false, historyDone = true, loadingOlder = false, thread = null, threadMsgs = [];
-  let myGid = '', search = '';
+  let myGid = '', search = '', firstPaint = true, stick = true;   // stick: keep the view on the newest message
+  let layout = { sections: [], place: {}, order: {}, collapsed: {}, mini: false };
+  try { layout = { ...layout, ...(await api('GET', '/api/chat/layout')) }; } catch (_) { /* defaults */ }
+  let saveTimer = null;
+  const saveLayout = () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => api('PUT', '/api/chat/layout', layout).catch(() => {}), 400); };
+  const applyMini = () => { wrap.classList.toggle('side-mini', !!layout.mini); const b = $('#cs-mini'); if (b) { b.textContent = layout.mini ? '»' : '«'; b.title = layout.mini ? 'Expand chat list' : 'Collapse chat list'; } };
+  applyMini();
   const fit = () => { const top = wrap.getBoundingClientRect().top; wrap.style.height = `${Math.max(420, innerHeight - top - 18)}px`; };
   fit(); window.addEventListener('resize', fit);
 
+  const secOf = (sp) => {
+    const p = layout.place[sp.id];
+    if (p === 'pinned' || layout.sections.some((x) => x.id === p)) return p;
+    return sp.type === 'SPACE' ? 'spaces' : 'dms';
+  };
+  const itemHTML = (sp, sec) => `<a class="cl-item ${current && sp.id === current.id ? 'on' : ''} ${sp.unread ? 'unread' : ''}" href="#/chat/${sp.id}" draggable="true" data-space="${sp.id}" data-sec-of="${sec}" title="${esc(sp.title)}">
+      <span class="cl-av">${spaceAv(sp, 'sm')}${sp.unread ? '<i class="cl-dot"></i>' : ''}</span>
+      <span class="cl-main"><span class="cl-top"><b>${esc(sp.title)}</b><time>${sp.last_active ? chatClock(sp.last_active) : ''}</time></span>
+        <span class="cl-prev">${sp.preview ? `${sp.preview.who ? `${esc(sp.preview.who)}: ` : ''}${esc(chatPlain(sp.preview.text))}` : '<i>No messages yet</i>'}</span></span>
+      ${sp.unread ? `<span class="cl-badge">${sp.unread > 99 ? '99+' : sp.unread}</span>` : ''}
+      <button type="button" class="cl-more" data-item-menu="${sp.id}" title="Organize" aria-label="Organize">⋯</button></a>`;
   const drawList = () => {
     const f = search.toLowerCase();
-    const shown = spaces.filter((s) => !f || s.title.toLowerCase().includes(f));
-    const sec = (label, items) => items.length ? `<div class="cl-label">${label}</div>${items.map((s) => `
-      <a class="cl-item ${current && s.id === current.id ? 'on' : ''} ${s.unread ? 'unread' : ''}" href="#/chat/${s.id}">
-        <span class="cl-av">${spaceAv(s, 'sm')}</span>
-        <span class="cl-main"><span class="cl-top"><b>${esc(s.title)}</b><time>${s.last_active ? chatClock(s.last_active) : ''}</time></span>
-          <span class="cl-prev">${s.preview ? `${s.preview.who ? `${esc(s.preview.who)}: ` : ''}${esc(chatPlain(s.preview.text))}` : '<i>No messages yet</i>'}</span></span>
-        ${s.unread ? `<span class="cl-badge">${s.unread > 99 ? '99+' : s.unread}</span>` : ''}</a>`).join('')}` : '';
-    listEl.innerHTML = spaces.length
-      ? (sec('Spaces', shown.filter((s) => s.type === 'SPACE')) + sec('Direct messages', shown.filter((s) => s.type !== 'SPACE')) || '<div class="empty">No matches</div>')
-      : `<div class="empty">${st.syncing || !st.last_sync ? 'Bringing in your spaces…' : 'No Google Chat spaces found for this account.'}</div>`;
+    if (!spaces.length) {
+      listEl.innerHTML = `<div class="empty">${st.syncing || !st.last_sync ? 'Bringing in your spaces…' : 'No Google Chat spaces found for this account.'}</div>`;
+      return;
+    }
+    if (f) {   // searching: one flat list
+      const hits = spaces.filter((x) => x.title.toLowerCase().includes(f));
+      patchList(listEl, hits.length ? hits.map((x) => ({ key: `s:${x.id}`, html: itemHTML(x, secOf(x)) })) : [{ key: 'none', html: '<div class="empty">No matches</div>' }]);
+      return;
+    }
+    const secs = [{ id: 'pinned', name: 'Pinned', manual: true }, ...layout.sections.map((x) => ({ ...x, manual: true, custom: true })),
+      { id: 'spaces', name: 'Spaces' }, { id: 'dms', name: 'Direct messages' }];
+    const items = [];
+    for (const sec of secs) {
+      let list = spaces.filter((x) => secOf(x) === sec.id);
+      if (sec.manual) {
+        const ord = layout.order[sec.id] || [];
+        const pos = (x) => { const i = ord.indexOf(x.id); return i < 0 ? 1e6 : i; };
+        list = list.map((x, i) => [x, i]).sort((a, b) => pos(a[0]) - pos(b[0]) || a[1] - b[1]).map((x) => x[0]);
+      }
+      if (!list.length && !sec.custom) continue;
+      const closed = !layout.mini && !!layout.collapsed[sec.id];   // the compact list always shows every chat
+      const unread = list.reduce((n, x) => n + (x.unread || 0), 0);
+      items.push({ key: `h:${sec.id}`, html: `<div class="cl-sec ${closed ? 'closed' : ''}" data-sec="${sec.id}">
+        <button type="button" class="cl-sec-btn" data-collapse="${sec.id}"><span class="cl-chev"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>${esc(sec.name)}<span class="cl-sec-n">${list.length}</span>${closed && unread ? `<span class="cl-badge sm">${unread > 99 ? '99+' : unread}</span>` : ''}</button>
+        ${sec.custom ? `<button type="button" class="cl-more" data-sec-menu="${sec.id}" title="Section options" aria-label="Section options">⋯</button>` : ''}</div>` });
+      if (closed) continue;
+      if (!list.length) items.push({ key: `e:${sec.id}`, html: `<div class="cl-drop-hint" data-sec-drop="${sec.id}">Drag chats here</div>` });
+      list.forEach((x) => items.push({ key: `s:${x.id}`, html: itemHTML(x, sec.id) }));
+    }
+    patchList(listEl, items);
   };
+  // organizing: menus, drag & drop, collapse
+  const moveTo = (sid, sec, before) => {
+    Object.values(layout.order).forEach((arr) => { const i = arr.indexOf(sid); if (i >= 0) arr.splice(i, 1); });
+    if (sec === 'spaces' || sec === 'dms') delete layout.place[sid];
+    else {
+      layout.place[sid] = sec;
+      const ord = layout.order[sec] || (layout.order[sec] = []);
+      const inSec = spaces.filter((x) => secOf(x) === sec && x.id !== sid).map((x) => x.id);
+      inSec.forEach((id) => { if (!ord.includes(id)) ord.push(id); });
+      const i = before ? ord.indexOf(before) : -1;
+      if (i >= 0) ord.splice(i, 0, sid); else ord.push(sid);
+    }
+    saveLayout(); drawList();
+  };
+  const newSection = async (thenMove) => {
+    const name = await askText('New section', 'Section name', '', 'Create');
+    if (!name) return;
+    const id = `c${Date.now().toString(36)}`;
+    layout.sections.push({ id, name });
+    if (thenMove) moveTo(thenMove, id); else { saveLayout(); drawList(); }
+    toast(`Section “${name}” created${thenMove ? '' : ' — drag chats into it'}`, 'ok');
+  };
+  const popMenu = (anchor, entries) => {
+    closeAssigneeMenu();
+    const m = document.createElement('div'); m.className = 'as-menu';
+    m.innerHTML = entries.map((e, i) => e.label ? `<div class="as-head">${esc(e.label)}</div>` : `<button type="button" data-i="${i}" class="${e.danger ? 'danger' : ''}">${e.icon || ''}<span>${esc(e.text)}</span></button>`).join('');
+    document.body.appendChild(m);
+    const r = anchor.getBoundingClientRect();
+    m.style.left = `${Math.max(8, Math.min(r.left, innerWidth - m.offsetWidth - 8))}px`;
+    m.style.top = `${r.bottom + 6 + m.offsetHeight > innerHeight - 8 ? Math.max(8, r.top - m.offsetHeight - 6) : r.bottom + 6}px`;
+    m.addEventListener('click', (e) => { const b = e.target.closest('[data-i]'); if (b) { closeAssigneeMenu(); entries[Number(b.dataset.i)].run(); } });
+  };
+  listEl.addEventListener('click', async (e) => {
+    const col = e.target.closest('[data-collapse]');
+    if (col) { e.preventDefault(); const id = col.dataset.collapse; layout.collapsed[id] = !layout.collapsed[id]; saveLayout(); drawList(); return; }
+    const im = e.target.closest('[data-item-menu]');
+    if (im) {
+      e.preventDefault(); e.stopPropagation();
+      const sid = Number(im.dataset.itemMenu), sp = spaces.find((x) => x.id === sid), sec = secOf(sp);
+      const entries = [sec === 'pinned' ? { text: 'Unpin', icon: '📌', run: () => moveTo(sid, sp.type === 'SPACE' ? 'spaces' : 'dms') } : { text: 'Pin to top', icon: '📌', run: () => moveTo(sid, 'pinned') }];
+      const others = layout.sections.filter((x) => x.id !== sec);
+      if (others.length) entries.push({ label: 'Move to section' }, ...others.map((x) => ({ text: x.name, icon: '›', run: () => moveTo(sid, x.id) })));
+      entries.push({ text: 'New section…', icon: '+', run: () => newSection(sid) });
+      if (sec !== 'spaces' && sec !== 'dms' && sec !== 'pinned') entries.push({ text: `Back to ${sp.type === 'SPACE' ? 'Spaces' : 'Direct messages'}`, icon: '↩', run: () => moveTo(sid, sp.type === 'SPACE' ? 'spaces' : 'dms') });
+      popMenu(im, entries);
+      return;
+    }
+    const sm = e.target.closest('[data-sec-menu]');
+    if (sm) {
+      const id = sm.dataset.secMenu, sec = layout.sections.find((x) => x.id === id);
+      popMenu(sm, [
+        { text: 'Rename section', icon: '✎', run: async () => { const n = await askText('Rename section', 'Section name', sec.name); if (n) { sec.name = n; saveLayout(); drawList(); } } },
+        { text: 'Delete section', icon: '🗑', danger: true, run: async () => {
+          if (!await confirmModal(`Delete “${sec.name}”? Its chats go back to Spaces and Direct messages.`, { okLabel: 'Delete section' })) return;
+          layout.sections = layout.sections.filter((x) => x.id !== id);
+          Object.keys(layout.place).forEach((k) => { if (layout.place[k] === id) delete layout.place[k]; });
+          delete layout.order[id]; delete layout.collapsed[id]; saveLayout(); drawList();
+        } },
+      ]);
+    }
+  });
+  let dragId = null;
+  listEl.addEventListener('dragstart', (e) => { const it = e.target.closest('[data-space]'); if (!it) return; dragId = Number(it.dataset.space); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(dragId)); it.classList.add('dragging'); });
+  listEl.addEventListener('dragend', () => { dragId = null; $$('.dragging, .drop-on', listEl).forEach((n) => n.classList.remove('dragging', 'drop-on')); });
+  const dropTarget = (e) => e.target.closest('[data-space], [data-sec], [data-sec-drop]');
+  listEl.addEventListener('dragover', (e) => {
+    if (dragId == null) return;
+    const t = dropTarget(e); if (!t) return;
+    e.preventDefault(); $$('.drop-on', listEl).forEach((n) => n !== t && n.classList.remove('drop-on')); t.classList.add('drop-on');
+  });
+  listEl.addEventListener('drop', (e) => {
+    if (dragId == null) return;
+    const t = dropTarget(e); if (!t) return;
+    e.preventDefault();
+    const sid = dragId;
+    if (t.dataset.space) { const target = Number(t.dataset.space); if (target !== sid) moveTo(sid, t.dataset.secOf, target); }
+    else moveTo(sid, t.dataset.sec || t.dataset.secDrop);
+  });
+  $('#cs-new-sec').onclick = () => newSection();
+  $('#cs-mini').onclick = () => { layout.mini = !layout.mini; applyMini(); drawList(); saveLayout(); };
   const loadSpaces = async () => {
     try { spaces = await api('GET', '/api/chat/spaces'); } catch (_) { return; }
     if (!alive()) return;
@@ -3192,15 +3346,19 @@ async function pageChat(page, [sidParam], alive) {
 
   const msgBox = () => $('#cm-msgs', main);
   const atBottom = (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+  const scrollBottom = (box, smooth) => { if (smooth) box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' }); else box.scrollTop = box.scrollHeight; };
   const drawMsgs = (keep) => {
     const box = msgBox(); if (!box) return;
-    const wasBottom = atBottom(box), fromBottom = box.scrollHeight - box.scrollTop;
-    const top = more ? `<div class="cm-top">${loadingOlder ? 'Loading older messages…' : historyDone ? '<button class="linkbtn" data-older>Load older messages</button>' : 'Older history is still importing from Google Chat…'}</div>`
+    const wasBottom = stick || atBottom(box), fromBottom = box.scrollHeight - box.scrollTop;
+    const top = more ? `<div class="cm-top">${loadingOlder ? '<span class="cm-spin"></span> Loading older messages…' : historyDone ? '<button class="linkbtn" data-older>Load older messages</button>' : 'Older history is still importing from Google Chat…'}</div>`
       : `<div class="cm-top start">${spaceAv(current, 'lg')}<b>${esc(current.title)}</b><span>This is the beginning of the conversation.</span></div>`;
-    box.innerHTML = top + chatListHTML(msgs, { myGid });
+    const added = patchList(box, [{ key: 'top', html: top }, ...chatItems(msgs, { myGid })], !firstPaint && keep !== 'older');
     if (keep === 'older') box.scrollTop = box.scrollHeight - fromBottom;
-    else if (keep === 'bottom' || wasBottom) box.scrollTop = box.scrollHeight;
-    $$('img', box).forEach((img) => img.addEventListener('load', () => { if (keep === 'bottom' || wasBottom) box.scrollTop = box.scrollHeight; }, { once: true }));
+    else if (keep === 'bottom' || wasBottom) scrollBottom(box, !firstPaint);
+    else if (added) $('#cm-newpill', main)?.classList.add('show');
+    // images finish loading after they're placed: if we're following the newest message, stay with it
+    $$('img', box).forEach((img) => { if (!img.complete) img.addEventListener('load', () => { if (stick) box.scrollTop = box.scrollHeight; }, { once: true }); });
+    firstPaint = false;
   };
   const merge = (list, incoming) => {
     const byId = new Map(list.map((m) => [m.id, m]));
@@ -3212,7 +3370,7 @@ async function pageChat(page, [sidParam], alive) {
   async function openSpace(sid) {
     const s = spaces.find((x) => x.id === sid);
     if (!s) { if (spaces.length) toast('That conversation isn’t available', 'err'); return; }
-    current = s; msgs = []; thread = null; threadEl.hidden = true; wrap.classList.add('has-open'); wrap.classList.remove('has-thread');
+    current = s; msgs = []; thread = null; firstPaint = true; stick = true; threadEl.hidden = true; wrap.classList.add('has-open'); wrap.classList.remove('has-thread');
     drawList();
     main.innerHTML = `<header class="cm-head">
         <button class="icon-btn cm-back" id="cm-back" aria-label="Back to chats">‹</button>
@@ -3220,9 +3378,13 @@ async function pageChat(page, [sidParam], alive) {
         <div class="cm-actions">
           ${isExec() && s.type !== 'DIRECT_MESSAGE' ? `<select class="input sm" id="cm-client" title="Link this chat to a client board"><option value="">Link to client…</option>${S.clients.map((c) => `<option value="${c.id}" ${s.client && s.client.id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>` : ''}
           <a class="btn sm ghost cm-open" href="${esc(s.web_link)}" target="_blank" rel="noopener" title="Open in Google Chat">${I.ext || '↗'}<span>Google Chat</span></a></div></header>
-      <div class="cm-msgs" id="cm-msgs"><div class="empty">Loading…</div></div>
+      <div class="cm-msgs-wrap"><div class="cm-msgs" id="cm-msgs">${'<div class="cm-skel"><i></i><span><b></b><em></em></span></div>'.repeat(5)}</div>
+        <button type="button" class="cm-newpill" id="cm-newpill">↓ New messages</button></div>
       ${chatComposerHTML('cm-comp', `Message ${s.type === 'DIRECT_MESSAGE' ? s.title : s.title}`)}`;
     $('#cm-back').onclick = () => { wrap.classList.remove('has-open'); location.hash = '#/chat'; };
+    const pill = $('#cm-newpill', main), mbox = $('#cm-msgs', main);
+    pill.onclick = () => { scrollBottom(mbox, true); pill.classList.remove('show'); };
+    mbox.addEventListener('scroll', () => { stick = atBottom(mbox); if (stick) pill.classList.remove('show'); });
     if ($('#cm-client')) $('#cm-client').onchange = async (e) => {
       try { await api('PUT', `/api/chat/spaces/${s.id}/client`, { client_id: e.target.value || null }); toast(e.target.value ? 'Linked — the client board now has a Chat button' : 'Unlinked', 'ok'); loadSpaces(); } catch (err) { toast(err.message, 'err'); }
     };
@@ -3259,8 +3421,11 @@ async function pageChat(page, [sidParam], alive) {
     const box = $('#ct-msgs', threadEl); if (!box) return;
     const wasBottom = atBottom(box);
     const [first, ...rest] = threadMsgs;
-    box.innerHTML = first ? chatListHTML([first], { myGid, thread: true }) + `<div class="ct-sep"><span>${rest.length} ${rest.length === 1 ? 'reply' : 'replies'}</span></div>` + chatListHTML(rest, { myGid, thread: true }) : '<div class="empty">This thread is empty.</div>';
-    if (bottom || wasBottom) box.scrollTop = box.scrollHeight;
+    const items = first ? [...chatItems([first], { myGid, thread: true }), { key: 'sep', html: `<div class="ct-sep"><span>${rest.length} ${rest.length === 1 ? 'reply' : 'replies'}</span></div>` },
+      ...chatItems(rest, { myGid, thread: true })] : [{ key: 'none', html: '<div class="empty">This thread is empty.</div>' }];
+    const animate = box.dataset.painted === '1';
+    patchList(box, items, animate); box.dataset.painted = '1';
+    if (bottom || wasBottom) scrollBottom(box, animate);
   };
   const loadThread = async (bottom) => {
     if (!thread) return;
@@ -3308,7 +3473,7 @@ async function pageChat(page, [sidParam], alive) {
 
   // live updates: the open conversation every 4s (the server re-reads it from Google), the chat list every 10s
   let ticks = 0;
-  const timer = setInterval(async () => {
+  const tick = async () => {
     if (!alive()) { clearInterval(timer); window.removeEventListener('resize', fit); return; }
     if (document.hidden) return;
     ticks++;
@@ -3325,8 +3490,10 @@ async function pageChat(page, [sidParam], alive) {
       if (thread && !$('.cm-edit', threadEl)) loadThread(false);
     }
     if (ticks % 3 === 0) loadSpaces();
-  }, 4000);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && alive()) markRead(); });
+  };
+  const timer = setInterval(tick, 4000);
+  // coming back to the tab: catch up right away instead of waiting for the next check
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && alive()) { ticks = 2; tick(); markRead(); } });
 
   await loadSpaces();
   if (sidParam && spaces.length) openSpace(Number(sidParam));

@@ -69,10 +69,11 @@ CREATE INDEX IF NOT EXISTS ix_chatmsg_thread ON chat_messages(space_id, thread_n
 CREATE TABLE IF NOT EXISTS chat_people(gid TEXT PRIMARY KEY, name TEXT DEFAULT '', email TEXT DEFAULT '', photo TEXT DEFAULT '', updated_at REAL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS chat_reads(space_id INTEGER NOT NULL, user_id INTEGER NOT NULL, last_read TEXT, PRIMARY KEY(space_id, user_id));
 CREATE TABLE IF NOT EXISTS chat_my_reactions(message_id INTEGER NOT NULL, user_id INTEGER NOT NULL, emoji TEXT NOT NULL, PRIMARY KEY(message_id, user_id, emoji));
+CREATE TABLE IF NOT EXISTS chat_layout(user_id INTEGER PRIMARY KEY, data TEXT DEFAULT '{}', updated_at TEXT);
 """
 SCHEMA_PG = (SCHEMA_SQLITE.replace("id INTEGER PRIMARY KEY, gname", "id SERIAL PRIMARY KEY, gname"))
-TABLES = ["google_accounts", "chat_spaces", "chat_members", "chat_messages", "chat_people", "chat_reads", "chat_my_reactions"]
-NO_ID_TABLES = {"google_accounts", "chat_members", "chat_people", "chat_reads", "chat_my_reactions"}
+TABLES = ["google_accounts", "chat_spaces", "chat_members", "chat_messages", "chat_people", "chat_reads", "chat_my_reactions", "chat_layout"]
+NO_ID_TABLES = {"google_accounts", "chat_members", "chat_people", "chat_reads", "chat_my_reactions", "chat_layout"}
 
 
 class GoogleError(Exception):
@@ -212,30 +213,86 @@ def _gid_num(gid):
     return (gid or "").split("/", 1)[-1]
 
 
+def _save_person(gid, name, email, photo, stamp=None):
+    stamp = time.time() if stamp is None else stamp
+    if H.q("SELECT 1 FROM chat_people WHERE gid=?", (gid,), one=True):
+        if name:   # never overwrite a known name with a blank one
+            H.ex("UPDATE chat_people SET name=?, email=?, photo=?, updated_at=? WHERE gid=?", (name, email, photo, stamp, gid))
+        else:
+            H.ex("UPDATE chat_people SET updated_at=? WHERE gid=?", (stamp, gid))
+    else:
+        H.ex("INSERT OR IGNORE INTO chat_people(gid,name,email,photo,updated_at) VALUES(?,?,?,?,?)", (gid, name, email, photo, stamp))
+
+
+def _person_fields(p):
+    name = ((p.get("names") or [{}])[0]).get("displayName", "")
+    email = ((p.get("emailAddresses") or [{}])[0]).get("value", "")
+    photo = next((x.get("url", "") for x in (p.get("photos") or []) if not x.get("default")), "")
+    return name, email, photo
+
+
+_directory_at = {}   # uid -> when the company directory was last read with their account
+
+
+def sync_directory(uid, force=False):
+    """Read the whole company directory (names, emails, photos) in a few calls — the reliable way to name teammates."""
+    if not force and _directory_at.get(uid, 0) > time.time() - 6 * 3600:
+        return
+    _directory_at[uid] = time.time()
+    token = None
+    for _ in range(20):
+        params = {"readMask": "names,emailAddresses,photos", "sources": "DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE", "pageSize": 1000}
+        if token:
+            params["pageToken"] = token
+        try:
+            r = gapi(uid, "GET", "/v1/people:listDirectoryPeople", base=PEOPLE_API, params=params)
+        except (GoogleError, NotConnected) as e:
+            print(f"[gchat] directory read failed for user {uid}: {e}", flush=True)
+            return
+        for p in r.get("people", []):
+            name, email, photo = _person_fields(p)
+            if name and p.get("resourceName"):
+                _save_person("users/" + _gid_num(p["resourceName"]), name, email, photo)
+        token = r.get("nextPageToken")
+        if not token:
+            break
+
+
 def resolve_people(uid, gids):
     want = sorted({g for g in gids if g and g.startswith("users/") and g != "users/all"})
     if not want:
         return
-    fresh = {r["gid"] for r in H.q(f"SELECT gid FROM chat_people WHERE updated_at>? AND gid IN ({','.join('?' * len(want))})",
-                                   (time.time() - 7 * 86400, *want))}
+    marks = ",".join("?" * len(want))
+    # Known names stay fresh for a week; people we couldn't name are retried after an hour.
+    fresh = {r["gid"] for r in H.q(f"SELECT gid FROM chat_people WHERE gid IN ({marks}) AND "
+                                   f"((name!='' AND updated_at>?) OR (name='' AND updated_at>?))",
+                                   (*want, time.time() - 7 * 86400, time.time() - 3600))}
     need = [g for g in want if g not in fresh]
-    for i in range(0, len(need), 50):
+    if not need:
+        return
+    sync_directory(uid, force=_directory_at.get(uid, 0) < time.time() - 600)
+    known = {r["gid"] for r in H.q(f"SELECT gid FROM chat_people WHERE name!='' AND gid IN ({','.join('?' * len(need))})", need)}
+    need = [g for g in need if g not in known]
+    for i in range(0, len(need), 50):   # anyone not in the directory (e.g. guests): look them up one by one
         chunk = need[i:i + 50]
+        found = set()
         try:
             r = gapi(uid, "GET", "/v1/people:batchGet", base=PEOPLE_API,
-                     params=[("resourceNames", f"people/{_gid_num(g)}") for g in chunk] + [("personFields", "names,emailAddresses,photos")])
-        except (GoogleError, NotConnected):
-            return   # names are a nice-to-have; the hub falls back to what Chat itself returned
-        for res in r.get("responses", []):
-            person = res.get("person") or {}
-            gid = "users/" + _gid_num(res.get("requestedResourceName") or person.get("resourceName") or "")
-            name = ((person.get("names") or [{}])[0]).get("displayName", "")
-            email = ((person.get("emailAddresses") or [{}])[0]).get("value", "")
-            photo = ((person.get("photos") or [{}])[0]).get("url", "")
-            if not H.q("SELECT 1 FROM chat_people WHERE gid=?", (gid,), one=True):
-                H.ex("INSERT OR IGNORE INTO chat_people(gid,name,email,photo,updated_at) VALUES(?,?,?,?,?)", (gid, name, email, photo, time.time()))
-            else:
-                H.ex("UPDATE chat_people SET name=?, email=?, photo=?, updated_at=? WHERE gid=?", (name, email, photo, time.time(), gid))
+                     params=[("resourceNames", f"people/{_gid_num(g)}") for g in chunk] + [
+                         ("personFields", "names,emailAddresses,photos"), ("sources", "READ_SOURCE_TYPE_PROFILE"),
+                         ("sources", "READ_SOURCE_TYPE_DOMAIN_CONTACT"), ("sources", "READ_SOURCE_TYPE_CONTACT")])
+            for res in r.get("responses", []):
+                person = res.get("person") or {}
+                gid = "users/" + _gid_num(res.get("requestedResourceName") or person.get("resourceName") or "")
+                name, email, photo = _person_fields(person)
+                if name:
+                    _save_person(gid, name, email, photo)
+                    found.add(gid)
+        except (GoogleError, NotConnected) as e:
+            print(f"[gchat] people lookup failed: {e}", flush=True)
+        for gid in chunk:
+            if gid not in found:
+                _save_person(gid, "", "", "")   # remember the miss so we don't ask again for an hour
 
 
 def _people_map(gids):
@@ -508,6 +565,7 @@ def sync_user(uid):
     sids = sync_spaces(uid)
     if not sids:
         return
+    sync_directory(uid)   # teammates' names and photos (at most every few hours)
     marks = ",".join("?" * len(sids))
     rows = H.q(f"SELECT * FROM chat_spaces WHERE id IN ({marks})", sids)
     for sp in rows:   # names for DMs / group chats first, so the chat list reads right straight away
@@ -991,6 +1049,24 @@ def register(module):
         u = H.current_user()
         rows = H.q("SELECT s.id FROM chat_spaces s JOIN chat_members m ON m.space_id=s.id AND m.user_id=? WHERE s.client_id=?", (u["id"], cid))
         return jsonify([r["id"] for r in rows])
+
+    @app.get("/api/chat/layout")
+    @lr
+    def chat_layout_get():
+        r = H.q("SELECT data FROM chat_layout WHERE user_id=?", (H.current_user()["id"],), one=True)
+        return jsonify(json.loads((r and r["data"]) or "{}"))
+
+    @app.put("/api/chat/layout")
+    @lr
+    def chat_layout_put():
+        """How this person arranges their chat list: sections, pins, order, collapsed state."""
+        data = json.dumps(request.get_json(silent=True) or {})
+        if len(data) > 100_000:
+            return H.bad("Layout is too large")
+        uid = H.current_user()["id"]
+        if H.db().execute("UPDATE chat_layout SET data=?, updated_at=? WHERE user_id=?", (data, H.iso(H.now_utc()), uid)).rowcount == 0:
+            H.ex("INSERT OR IGNORE INTO chat_layout(user_id,data,updated_at) VALUES(?,?,?)", (uid, data, H.iso(H.now_utc())))
+        return jsonify(ok=True)
 
     @app.get("/api/chat/admin")
     @H.exec_required
