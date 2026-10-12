@@ -209,6 +209,7 @@ const I = {
   gear: svg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/>'),
   clip: svg('<path d="M21 11l-8.5 8.5a5 5 0 01-7-7L14 4a3.5 3.5 0 015 5l-8.5 8.5a2 2 0 01-3-3L15 7"/>'),
   link: svg('<path d="M10 14a5 5 0 007 0l3-3a5 5 0 00-7-7l-1 1"/><path d="M14 10a5 5 0 00-7 0l-3 3a5 5 0 007 7l1-1"/>'),
+  ext: svg('<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5"/>'),
   plus: svg('<path d="M12 5v14M5 12h14"/>'),
   trash: svg('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>'),
   x: svg('<path d="M6 6l12 12M18 6L6 18"/>'),
@@ -494,11 +495,13 @@ function navLink(href, icon, label, extra = '') {
   return `<a href="#/${href}" data-nav="${href}">${icon}<span style="flex:1">${esc(label)}</span>${extra}</a>`;
 }
 const notifNav = () => navLink('notifications', I.bell, 'Notifications', '<span class="nav-count" id="nav-notif-count" hidden></span>');
+const chatNav = () => navLink('chat', I.chat, 'Chat', '<span class="nav-count" id="nav-chat-count" hidden></span>');
 
 function renderShell() {
   const execNav = [
     navLink('overview', I.chart, 'Overview'),
     notifNav(),
+    chatNav(),
     navLink('team', I.users, 'Team'),
     navLink('timesheets', I.clock, 'Timesheets & Payroll'),
     navLink('metrics', I.bars, 'Task Metrics'),
@@ -511,6 +514,7 @@ function renderShell() {
   const empNav = [
     navLink('dashboard', I.home, 'My Dashboard'),
     notifNav(),
+    chatNav(),
     navLink('eod', I.doc, 'Submit EOD'),
     navLink('metrics', I.bars, 'My Task Metrics'),
     navLink('profile/me', I.user, 'My Profile'),
@@ -608,6 +612,7 @@ const ROUTES = {
   board: { render: pageBoard },
   metrics: { render: pageMetrics },
   notifications: { render: pageNotifications },
+  chat: { render: pageChat },
   archive: { render: pageArchive },
   overview: { render: pageOverview, exec: true },
   team: { render: pageTeam, exec: true },
@@ -636,6 +641,7 @@ async function route() {
   markActiveNav();
   const old = $('#page');
   const page = old.cloneNode(false); // fresh node drops old listeners
+  page.className = 'page';
   old.replaceWith(page);
   page.addEventListener('click', () => $('#sidebar').classList.remove('open'));
   page.innerHTML = '<div class="empty">Loading…</div>';
@@ -756,7 +762,7 @@ function floaterInboxHTML() {
   const head = `<div class="fi-head"><span>${I.bell} Notifications${unread ? ` <b class="fi-count">${unread > 99 ? '99+' : unread}</b>` : ''}</span>
     <span class="fi-acts">${unread ? '<button type="button" class="fi-all" data-fread-all>Mark all read</button>' : ''}<button type="button" class="fi-all" data-fcollapse>Hide</button></span></div>`;
   if (!items.length) return `${head}<div class="fi-empty">You’re all caught up.</div>`;
-  const icon = { mention: I.at, comment: I.chat, deadline: I.clock, follow: I.eye, assigned: I.brief };
+  const icon = { mention: I.at, comment: I.chat, deadline: I.clock, follow: I.eye, assigned: I.brief, chat_mention: I.at, chat_dm: I.chat };
   return head + `<div class="fi-list">${items.map((n) => `<div class="fi-item k-${n.kind} ${n.id > floaterInbox.seen ? 'fresh' : ''}">
       <span class="fi-ic">${icon[n.kind] || I.brief}</span>
       <div class="fi-main"><div class="fi-text">${notifText(n)}</div>
@@ -1081,6 +1087,7 @@ async function pageBoard(page, [cid], alive) {
         ${S.users.filter((u) => u.active).map((u) => `<option value="${u.id}">${esc(u.name)}</option>`).join('')}</select>
       <select class="input" id="f-priority"><option value="">Any priority</option>${S.priorities.map((p) => `<option>${p}</option>`).join('')}</select>
       <span style="flex:1"></span>
+      <a class="btn ghost" id="board-chat" hidden>${I.chat} Chat</a>
       <button class="btn ghost" id="automations">${I.repeat} Automations<span class="btn-count" id="auto-count" hidden></span></button>
       <button class="btn red" id="new-task">${I.plus} New task</button>
     </div>
@@ -1127,6 +1134,9 @@ async function pageBoard(page, [cid], alive) {
   };
   $('#automations').onclick = () => automationsModal(c, async () => { await reload(); countAutos(); });
   countAutos();
+  api('GET', `/api/clients/${c.id}/chat`).then((ids) => {   // a Google Chat space linked to this client
+    const b = $('#board-chat'); if (b && ids.length) { b.href = `#/chat/${ids[0]}`; b.hidden = false; }
+  }).catch(() => {});
   $$('[data-add]', page).forEach((b) => b.onclick = () => newTaskModal(c.id, b.dataset.add, reload));
 
   const board = $('#board');
@@ -1630,11 +1640,11 @@ function attachMentionPicker(ta, pop) {
 
 const REACTION_EMOJI = ['👍', '❤️', '😂', '🎉', '👀', '🙏', '✅', '🔥', '💯', '🙌', '👏', '🚀', '💪', '🤝', '😮', '😅', '🤔', '😢', '⭐', '📌', '❗', '❓', '👌', '🏡'];
 const fileUrl = (id) => `/api/files/${id}?inline=1`;
-function lightbox(src, name) {   // full-size view of a comment image
+function lightbox(src, name, download) {   // full-size view of a comment image
   const box = document.createElement('div');
   box.className = 'lightbox';
   box.innerHTML = `<img src="${esc(src)}" alt="${esc(name || 'Image')}"><div class="lb-bar"><span>${esc(name || '')}</span>
-    <a class="btn sm ghost" href="${esc(src.replace('?inline=1', ''))}">Download</a><button class="btn sm" type="button" data-lb-close>Close</button></div>`;
+    <a class="btn sm ghost" href="${esc(download || src.replace('?inline=1', ''))}">Download</a><button class="btn sm" type="button" data-lb-close>Close</button></div>`;
   const close = () => { box.remove(); document.removeEventListener('keydown', key, true); };
   const key = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
   box.addEventListener('click', (e) => { if (e.target === box || e.target.closest('[data-lb-close]')) close(); });
@@ -1808,7 +1818,9 @@ function alertPlain(n) {
     comment: [`${who} commented`, `${task}${n.snippet ? ` — “${n.snippet}”` : ''}`],
     deadline: ['Due in 15 minutes', `${task}${n.client_name ? ` · ${n.client_name}` : ''}`],
     assigned: [n.actor_name ? `${who} assigned you a task` : 'New recurring task', task],
-    follow: [`${who} added you as a follower`, task] }[n.kind] || ['Her Haus Hub', task];
+    follow: [`${who} added you as a follower`, task],
+    chat_dm: [`${who} · Google Chat`, n.snippet || 'New message'],
+    chat_mention: [`${who} mentioned you${n.chat_title ? ` in ${n.chat_title}` : ''}`, n.snippet || ''] }[n.kind] || ['Her Haus Hub', task];
 }
 function desktopAlert(n) {
   if (!('Notification' in window) || Notification.permission !== 'granted' || !document.hidden) return;
@@ -1828,9 +1840,10 @@ async function pollNotifications() {
     notifState.unread = r.unread; notifState.mentions = r.unread_mentions;
     const b = $('#bell-count'); if (b) { b.textContent = r.unread > 99 ? '99+' : r.unread; b.hidden = !r.unread; }
     const n = $('#nav-notif-count'); if (n) { n.textContent = r.unread; n.hidden = !r.unread; }
+    const cc = $('#nav-chat-count'); if (cc) { cc.textContent = r.chat_unread > 99 ? '99+' : r.chat_unread; cc.hidden = !r.chat_unread; }
     $('#bell')?.classList.toggle('has-mention', !!r.unread_mentions);
     if (lastNotifId !== null && (r.new || []).length) {   // something new since the last check
-      const kinds = r.new.map((x) => x.kind);
+      const kinds = r.new.map((x) => ({ chat_mention: 'mention', chat_dm: 'comment' }[x.kind] || x.kind));
       const loudest = SOUND_PRIORITY.find((k) => kinds.includes(k));
       if (loudest) playTone(loudest);
       r.new.forEach(desktopAlert);
@@ -1857,10 +1870,12 @@ function notifText(n) {
   if (n.kind === 'assigned') return n.actor_id ? `${who} assigned you ${task}` : `New recurring task for you: ${task}`;
   if (n.kind === 'deadline') return `${task} is due in 15 minutes`;
   if (n.kind === 'follow') return `${who} added you as a follower on ${task}`;
+  if (n.kind === 'chat_dm') return `${who} sent you a message in Google Chat`;
+  if (n.kind === 'chat_mention') return `${who} mentioned you in ${n.chat_title ? `<b>${esc(n.chat_title)}</b>` : 'Google Chat'}`;
   return task;
 }
 function notifItemHTML(n) {
-  const icon = { mention: I.at, comment: I.chat, deadline: I.clock, follow: I.eye }[n.kind] || I.brief;
+  const icon = { mention: I.at, comment: I.chat, deadline: I.clock, follow: I.eye, chat_mention: I.at, chat_dm: I.chat }[n.kind] || I.brief;
   return `<button class="notif ${n.read_at ? '' : 'unread'}" data-n="${n.id}">
     <span class="notif-av">${n.actor_name ? av(n.actor_name, n.actor_avatar) : `<span class="avatar">${n.kind === 'deadline' ? I.clock : I.repeat}</span>`}<span class="notif-kind k-${n.kind}">${icon}</span></span>
     <span class="notif-main"><span class="notif-text">${notifText(n)}</span>
@@ -1871,6 +1886,7 @@ function notifItemHTML(n) {
 async function openNotification(n) {
   if (!n.read_at) { api('POST', '/api/notifications/read', { ids: [n.id] }).then(pollNotifications); n.read_at = 'now'; }
   closeNotifPanel();
+  if (n.chat_space_id) { location.hash = `#/chat/${n.chat_space_id}`; return; }
   if (!n.task_title || !n.client_id) { toast('That task was deleted', 'err'); return; }
   S.openTaskOnLoad = n.task_id;
   if (location.hash === `#/board/${n.client_id}`) route(); else location.hash = `#/board/${n.client_id}`;
@@ -2925,6 +2941,399 @@ async function pageSettings(page, _a, alive) {
     try { await api('PUT', '/api/settings', collect()); const r = await api('POST', '/api/settings/test-webhook', { which: b.dataset.test }); toast(r.message, 'ok'); }
     catch (err) { toast(err.message, 'err'); }
   });
+}
+
+// ============================================================ Google Chat (two-way sync — see google_chat.py)
+const chatCache = { members: {} };
+function personAv(p, cls = 'sm') {
+  if (!p) return av('?', null, cls);
+  if (p.avatar_file_id) return av(p.name, p.avatar_file_id, cls);
+  if (p.photo) return `<img class="avatar ${cls}" src="${esc(p.photo)}" alt="${esc(p.name)}" title="${esc(p.name)}" referrerpolicy="no-referrer" loading="lazy">`;
+  return av(p.name, null, cls);
+}
+const SPACE_COLORS = ['#1B4BA8', '#0C2E60', '#CB252B', '#2F855A', '#B7791F', '#6B46C1', '#2B6CB0', '#C05621'];
+function spaceAv(s, cls = '') {
+  if (s.type === 'DIRECT_MESSAGE' && s.partner) return personAv(s.partner, cls);
+  const h = [...(s.title || '?')].reduce((a, ch) => a + ch.charCodeAt(0), 0);
+  return `<span class="space-av ${cls} ${s.type === 'GROUP_CHAT' ? 'group' : ''}" style="background:${SPACE_COLORS[h % SPACE_COLORS.length]}">${s.type === 'GROUP_CHAT' ? I.users.replace('width="18" height="18"', 'width="16" height="16"') : esc(initials(s.title))}</span>`;
+}
+function chatClock(iso) {
+  const d = new Date(iso); const now = new Date();
+  if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const y = new Date(now); y.setDate(now.getDate() - 1);
+  if (d.toDateString() === y.toDateString()) return 'Yesterday';
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric', ...(d.getFullYear() !== now.getFullYear() ? { year: 'numeric' } : {}) });
+}
+function chatDay(iso) {
+  const d = new Date(iso); const now = new Date(); const y = new Date(now); y.setDate(now.getDate() - 1);
+  if (d.toDateString() === now.toDateString()) return 'Today';
+  if (d.toDateString() === y.toDateString()) return 'Yesterday';
+  return d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric', ...(d.getFullYear() !== now.getFullYear() ? { year: 'numeric' } : {}) });
+}
+// Google Chat formatting: *bold* _italic_ ~strike~ `code` ```blocks``` <url|label> and plain links
+function chatFmt(raw) {
+  const codes = [];
+  let s = esc(raw).replace(/```([\s\S]*?)```/g, (_m, c) => { codes.push(`<pre>${c.replace(/^\n/, '')}</pre>`); return `\u0000${codes.length - 1}\u0000`; })
+    .replace(/`([^`\n]+)`/g, (_m, c) => { codes.push(`<code>${c}</code>`); return `\u0000${codes.length - 1}\u0000`; });
+  s = s.replace(/&lt;(https?:\/\/[^|\s]+?)\|([^\n]+?)&gt;/g, (_m, u, l) => { codes.push(`<a href="${u}" target="_blank" rel="noopener noreferrer">${l}</a>`); return `\u0000${codes.length - 1}\u0000`; })
+    .replace(/(https?:\/\/[^\s<\u0000]+[^\s<.,;:!?)\]'"\u0000])/g, (u) => { codes.push(`<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`); return `\u0000${codes.length - 1}\u0000`; })
+    .replace(/(^|[\s(])\*(?=\S)([^*\n]*?\S)\*(?=$|[\s.,!?:;)])/g, '$1<b>$2</b>')
+    .replace(/(^|[\s(])_(?=\S)([^_\n]*?\S)_(?=$|[\s.,!?:;)])/g, '$1<i>$2</i>')
+    .replace(/(^|[\s(])~(?=\S)([^~\n]*?\S)~(?=$|[\s.,!?:;)])/g, '$1<s>$2</s>')
+    .replace(/\n/g, '<br>');
+  return s.replace(/\u0000(\d+)\u0000/g, (_m, i) => codes[i]);
+}
+// Plain-text version for previews: drop formatting marks, show link labels.
+const chatPlain = (s) => (s || '').replace(/<(https?:\/\/[^|\s>]+)\|([^>]+)>/g, '$2').replace(/<users\/[^>]+>/g, '@')
+  .replace(/(^|[\s(])([*_~])(?=\S)([^*_~\n]*?\S)\2(?=$|[\s.,!?:;)])/g, '$1$3').replace(/```|`/g, '');
+function chatTextHTML(m, myGid) {
+  const text = m.text || '';
+  const anns = (m.annotations || []).filter((a) => a.length > 0 && a.start >= 0).sort((a, b) => a.start - b.start);
+  let out = '', i = 0;
+  for (const a of anns) {
+    if (a.start < i) continue;
+    out += chatFmt(text.slice(i, a.start));
+    out += `<span class="mention ${a.user === myGid || a.user === 'users/all' ? 'me' : ''}">${esc(text.slice(a.start, a.start + a.length))}</span>`;
+    i = a.start + a.length;
+  }
+  return out + chatFmt(text.slice(i));
+}
+function chatMsgHTML(m, prev, opts = {}) {
+  const grouped = prev && !opts.thread && prev.sender.gid === m.sender.gid && !prev.reply_count && !m.deleted
+    && new Date(m.create_time) - new Date(prev.create_time) < 6 * 60000 && chatDay(prev.create_time) === chatDay(m.create_time);
+  const imgs = m.attachments.filter((a) => a.is_image && !a.drive), files = m.attachments.filter((a) => !a.is_image || a.drive);
+  const order = (e) => { const i = REACTION_EMOJI.indexOf(e); return i < 0 ? 99 : i; };
+  const rx = [...m.reactions].sort((a, b) => order(a.emoji) - order(b.emoji));
+  const full = new Date(m.create_time).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+  return `<div class="cmsg ${grouped ? 'cont' : ''}" data-mid="${m.id}">
+    <div class="cmsg-av">${grouped ? `<time class="cmsg-hover-time" title="${esc(full)}">${new Date(m.create_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time>` : personAv(m.sender)}</div>
+    <div class="cmsg-main">
+      ${grouped ? '' : `<div class="cmsg-head"><b>${esc(m.sender.name)}</b>${m.sender.is_bot ? '<span class="bot-tag">App</span>' : ''}<time title="${esc(full)}">${chatClock(m.create_time)}${chatClock(m.create_time).includes(':') ? '' : `, ${new Date(m.create_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`}</time></div>`}
+      ${m.deleted ? '<div class="cmsg-body deleted">Message deleted</div>'
+        : `${m.text ? `<div class="cmsg-body">${chatTextHTML(m, opts.myGid)}${m.edited ? ' <span class="cmsg-edited">(edited)</span>' : ''}</div>` : ''}
+      ${m.card_text ? `<div class="cmsg-card">${esc(m.card_text)}</div>` : ''}
+      ${imgs.length ? `<div class="c-imgs ${imgs.length === 1 ? 'one' : ''}">${imgs.map((a) => `<button type="button" class="c-img" data-chat-img="${esc(a.url)}" title="${esc(a.name)}"><img src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy"></button>`).join('')}</div>` : ''}
+      ${files.length ? `<div class="cmsg-files">${files.map((a) => `<a class="cmsg-file" href="${esc(a.url)}${a.drive ? '' : '?download=1'}" target="_blank" rel="noopener">${I.clip.replace('width="18" height="18"', 'width="14" height="14"')}<span>${esc(a.name)}</span></a>`).join('')}</div>` : ''}`}
+      ${rx.length ? `<div class="rx-row">${rx.map((r) => `<button type="button" class="rx ${r.mine ? 'mine' : ''}" data-react="${esc(r.emoji)}"><span class="rx-e">${esc(r.emoji)}</span><span>${r.count}</span></button>`).join('')}<button type="button" class="rx rx-add" data-react-add title="Add reaction">${I.smile}<span>+</span></button></div>` : ''}
+      ${m.reply_count && !opts.thread ? `<button type="button" class="cmsg-replies" data-thread="${esc(m.thread)}">${I.chat.replace('width="18" height="18"', 'width="14" height="14"')}${m.reply_count} ${m.reply_count === 1 ? 'reply' : 'replies'}<span>· last ${timeAgo(m.last_reply.replace(/\.\d+Z$/, 'Z'))}</span></button>` : ''}
+    </div>
+    ${m.deleted ? '' : `<div class="cmsg-tools">
+      <button type="button" data-react-add title="Add reaction">${I.smile}</button>
+      ${opts.thread ? '' : `<button type="button" data-thread="${esc(m.thread)}" title="Reply in thread">${I.chat}</button>`}
+      ${m.can_edit ? `<button type="button" data-cm-edit title="Edit">${I.edit || '✎'}</button><button type="button" data-cm-del title="Delete">${I.trash || '🗑'}</button>` : ''}
+    </div>`}
+  </div>`;
+}
+function chatListHTML(msgs, opts) {
+  let out = '', prev = null, day = '';
+  for (const m of msgs) {
+    const d = chatDay(m.create_time);
+    if (d !== day && !opts.thread) { out += `<div class="cday"><span>${esc(d)}</span></div>`; day = d; prev = null; }
+    out += chatMsgHTML(m, prev, opts); prev = m;
+  }
+  return out;
+}
+function chatComposerHTML(id, placeholder) {
+  return `<div class="ccomp" id="${id}">
+    <div class="c-tray" hidden></div>
+    <div class="ccomp-box"><textarea class="input" rows="1" placeholder="${esc(placeholder)}"></textarea><div class="mention-pop hidden"></div>
+      <label class="icon-btn" title="Attach files (or paste / drop them)">${I.clip}<input type="file" multiple hidden></label>
+      <button type="button" class="btn sm ccomp-send" title="Send (Enter)">${I.send}</button></div>
+    <div class="ccomp-hint">Enter to send · Shift + Enter for a new line · @ to mention</div>
+  </div>`;
+}
+// Wires a composer: files, paste/drop, @mentions of space members, Enter to send. send({text, files}) must return a promise.
+function bindChatComposer(root, spaceId, send) {
+  const ta = $('textarea', root), tray = $('.c-tray', root), pop = $('.mention-pop', root), btn = $('.ccomp-send', root);
+  let files = [], picked = {}, matches = [], idx = 0, start = -1;
+  const grow = () => { ta.style.height = 'auto'; ta.style.height = `${Math.min(ta.scrollHeight, 180)}px`; };
+  const drawTray = () => {
+    tray.hidden = !files.length;
+    tray.innerHTML = files.map((f, i) => f.url ? `<span class="c-thumb" title="${esc(f.file.name)}"><img src="${f.url}" alt=""><button type="button" data-unattach="${i}" aria-label="Remove">${I.x.replace('width="18" height="18"', 'width="11" height="11"')}</button></span>`
+      : `<span class="c-filechip">${I.clip.replace('width="18" height="18"', 'width="13" height="13"')}<span>${esc(f.file.name)}</span><button type="button" data-unattach="${i}" aria-label="Remove">${I.x.replace('width="18" height="18"', 'width="11" height="11"')}</button></span>`).join('');
+  };
+  const add = (list) => {
+    const arr = [...list].filter(Boolean); if (!arr.length) return false;
+    for (const f of arr) {
+      if (f.size > 25 * 1024 * 1024) { toast(`${f.name} is over 25 MB`, 'err'); continue; }
+      if (files.length >= 10) { toast('Up to 10 files per message', 'err'); break; }
+      const name = f.name && f.name !== 'image.png' ? f.name : `Screenshot ${new Date().toLocaleString()}.png`.replace(/[/:]/g, '-');
+      const file = name === f.name ? f : new File([f], name, { type: f.type });
+      files.push({ file, url: f.type.startsWith('image/') ? URL.createObjectURL(f) : '' });
+    }
+    drawTray(); return true;
+  };
+  tray.addEventListener('click', (e) => { const b = e.target.closest('[data-unattach]'); if (!b) return; const f = files.splice(Number(b.dataset.unattach), 1)[0]; if (f?.url) URL.revokeObjectURL(f.url); drawTray(); });
+  $('input[type=file]', root).onchange = (e) => { add(e.target.files); e.target.value = ''; ta.focus(); };
+  ta.addEventListener('paste', (e) => { const fs = [...(e.clipboardData?.items || [])].filter((i) => i.kind === 'file').map((i) => i.getAsFile()); if (fs.length && add(fs)) e.preventDefault(); });
+  root.addEventListener('dragover', (e) => { if ([...(e.dataTransfer?.types || [])].includes('Files')) { e.preventDefault(); root.classList.add('drop'); } });
+  root.addEventListener('dragleave', () => root.classList.remove('drop'));
+  root.addEventListener('drop', (e) => { root.classList.remove('drop'); if (e.dataTransfer?.files?.length) { e.preventDefault(); add(e.dataTransfer.files); } });
+  // @mentions
+  const closePop = () => { pop.classList.add('hidden'); matches = []; };
+  const people = async () => chatCache.members[spaceId] || (chatCache.members[spaceId] = await api('GET', `/api/chat/spaces/${spaceId}/members`).catch(() => []));
+  const update = async () => {
+    const before = ta.value.slice(0, ta.selectionStart);
+    const m = before.match(/(?:^|\s)@([^\s@]{0,30})$/);
+    if (!m) return closePop();
+    start = ta.selectionStart - m[1].length - 1;
+    const qv = m[1].toLowerCase();
+    const list = [{ gid: 'users/all', name: 'all', sub: 'Notify everyone in this space' }, ...(await people())];
+    matches = list.filter((p) => !qv || p.name.toLowerCase().split(/\s+/).some((w) => w.startsWith(qv)) || p.name.toLowerCase().startsWith(qv)).slice(0, 7);
+    if (!matches.length) return closePop();
+    idx = Math.min(idx, matches.length - 1);
+    pop.innerHTML = matches.map((p, i) => `<button type="button" class="${i === idx ? 'on' : ''}" data-i="${i}">${p.gid === 'users/all' ? `<span class="avatar sm">@</span>` : personAv(p)}<span><b>${esc(p.name)}</b><small>${esc(p.sub || '')}</small></span></button>`).join('');
+    pop.classList.remove('hidden');
+  };
+  const pick = (p) => {
+    const after = ta.value.slice(ta.selectionStart);
+    ta.value = `${ta.value.slice(0, start)}@${p.name} ${after}`;
+    picked[`@${p.name}`] = p.gid;
+    const caret = start + p.name.length + 2; ta.setSelectionRange(caret, caret); ta.focus(); closePop(); grow();
+  };
+  pop.addEventListener('mousedown', (e) => { const b = e.target.closest('[data-i]'); if (b) { e.preventDefault(); pick(matches[Number(b.dataset.i)]); } });
+  ta.addEventListener('input', () => { idx = 0; update(); grow(); });
+  ta.addEventListener('blur', () => setTimeout(closePop, 150));
+  const doSend = async () => {
+    let text = ta.value.trim();
+    if (!text && !files.length) return;
+    for (const [label, gid] of Object.entries(picked).sort((a, b) => b[0].length - a[0].length)) text = text.split(label).join(`<${gid}>`);
+    btn.disabled = true;
+    try {
+      await send({ text, files: files.map((f) => f.file) });
+      files.forEach((f) => f.url && URL.revokeObjectURL(f.url)); files = []; picked = {}; ta.value = ''; drawTray(); grow();
+    } catch (err) { toast(err.message, 'err'); } finally { btn.disabled = false; ta.focus(); }
+  };
+  ta.addEventListener('keydown', (e) => {
+    if (!pop.classList.contains('hidden') && matches.length) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); idx = (idx + (e.key === 'ArrowDown' ? 1 : -1) + matches.length) % matches.length; update(); return; }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pick(matches[idx]); return; }
+      if (e.key === 'Escape') { e.stopPropagation(); closePop(); return; }
+    }
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); doSend(); }
+  });
+  btn.onclick = doSend;
+  return { focus: () => ta.focus() };
+}
+async function chatSend(spaceId, { text, files }, thread) {
+  if (files.length) {
+    const fd = new FormData(); fd.append('text', text); if (thread) fd.append('thread', thread);
+    files.forEach((f) => fd.append('files', f, f.name));
+    return api('POST', `/api/chat/spaces/${spaceId}/messages`, fd);
+  }
+  return api('POST', `/api/chat/spaces/${spaceId}/messages`, { text, thread: thread || '' });
+}
+
+async function pageChat(page, [sidParam], alive) {
+  setTitle('Chat', 'Your Google Chat spaces and messages — synced both ways');
+  const qp = new URLSearchParams(location.hash.split('?')[1] || '');
+  if (qp.get('error')) toast(qp.get('error'), 'err');
+  if (qp.get('connected')) toast('Google Chat connected — bringing in your spaces now', 'ok');
+  if (qp.toString()) history.replaceState(null, '', `#/chat${sidParam ? `/${sidParam}` : ''}`);
+  const st = await api('GET', '/api/chat/status');
+  if (!alive()) return;
+  if (!st.configured) {
+    page.innerHTML = `<div class="card chat-setup"><div class="chat-hero-ic">${I.chat}</div><h2>Google Chat isn't set up yet</h2>
+      ${isExec() ? `<p class="muted">An admin needs to create the Google connection once. The steps are in the setup guide — when they're done, add <b>GOOGLE_CLIENT_ID</b> and <b>GOOGLE_CLIENT_SECRET</b> on Render.</p>
+        <p class="small muted">Authorized redirect URI to use: <code>${esc(st.redirect_uri || '')}</code></p>`
+        : '<p class="muted">Ask an executive to finish the Google Chat setup — then you can connect your account here.</p>'}</div>`;
+    return;
+  }
+  if (!st.connected) {
+    page.innerHTML = `<div class="card chat-setup"><div class="chat-hero-ic">${I.chat}</div><h2>Bring your Google Chat into the hub</h2>
+      <p class="muted">Connect your @herhauscompany.com Google account once. Your spaces, group chats and direct messages show up here, and anything you send from the hub appears in Google Chat as you.</p>
+      <ul class="chat-points"><li>Everything stays in sync both ways</li><li>Your past messages are imported too</li><li>Mentions and DMs ping you here, with sound</li></ul>
+      ${st.error ? `<p class="chat-err">${esc(st.error)}</p>` : ''}
+      <a class="btn lg" href="/api/google/connect">${I.chat} Connect Google Chat</a>
+      <p class="small muted" style="margin-top:12px">You'll be asked to allow access on Google's screen. You can disconnect anytime.</p></div>`;
+    return;
+  }
+  page.classList.add('page-chat');
+  page.innerHTML = `<div class="chat-wrap" id="chat-wrap">
+    <aside class="chat-side">
+      <div class="chat-side-head"><input class="input" id="cs-search" placeholder="Search chats" autocomplete="off"></div>
+      <div class="chat-list" id="chat-list"><div class="empty">Loading…</div></div>
+      <div class="chat-side-foot"><span title="${esc(st.email || '')}">${I.chat.replace('width="18" height="18"', 'width="13" height="13"')} ${esc(st.email || '')}</span><button class="linkbtn" id="gc-disconnect">Disconnect</button></div>
+    </aside>
+    <section class="chat-main" id="chat-main"></section>
+    <aside class="chat-thread" id="chat-thread" hidden></aside>
+  </div>`;
+  const wrap = $('#chat-wrap'), listEl = $('#chat-list'), main = $('#chat-main'), threadEl = $('#chat-thread');
+  let spaces = [], current = null, msgs = [], more = false, historyDone = true, loadingOlder = false, thread = null, threadMsgs = [];
+  let myGid = '', search = '';
+  const fit = () => { const top = wrap.getBoundingClientRect().top; wrap.style.height = `${Math.max(420, innerHeight - top - 18)}px`; };
+  fit(); window.addEventListener('resize', fit);
+
+  const drawList = () => {
+    const f = search.toLowerCase();
+    const shown = spaces.filter((s) => !f || s.title.toLowerCase().includes(f));
+    const sec = (label, items) => items.length ? `<div class="cl-label">${label}</div>${items.map((s) => `
+      <a class="cl-item ${current && s.id === current.id ? 'on' : ''} ${s.unread ? 'unread' : ''}" href="#/chat/${s.id}">
+        <span class="cl-av">${spaceAv(s, 'sm')}</span>
+        <span class="cl-main"><span class="cl-top"><b>${esc(s.title)}</b><time>${s.last_active ? chatClock(s.last_active) : ''}</time></span>
+          <span class="cl-prev">${s.preview ? `${s.preview.who ? `${esc(s.preview.who)}: ` : ''}${esc(chatPlain(s.preview.text))}` : '<i>No messages yet</i>'}</span></span>
+        ${s.unread ? `<span class="cl-badge">${s.unread > 99 ? '99+' : s.unread}</span>` : ''}</a>`).join('')}` : '';
+    listEl.innerHTML = spaces.length
+      ? (sec('Spaces', shown.filter((s) => s.type === 'SPACE')) + sec('Direct messages', shown.filter((s) => s.type !== 'SPACE')) || '<div class="empty">No matches</div>')
+      : `<div class="empty">${st.syncing || !st.last_sync ? 'Bringing in your spaces…' : 'No Google Chat spaces found for this account.'}</div>`;
+  };
+  const loadSpaces = async () => {
+    try { spaces = await api('GET', '/api/chat/spaces'); } catch (_) { return; }
+    if (!alive()) return;
+    if (current) current = spaces.find((s) => s.id === current.id) || current;
+    drawList();
+    if (!current && sidParam) openSpace(Number(sidParam));
+  };
+  $('#cs-search').oninput = (e) => { search = e.target.value; drawList(); };
+  $('#gc-disconnect').onclick = async () => {
+    if (!await confirmModal('Disconnect your Google account? Your Google Chat is not affected — the hub just stops syncing it for you.', { okLabel: 'Disconnect' })) return;
+    await api('POST', '/api/google/disconnect', {}); route();
+  };
+
+  const msgBox = () => $('#cm-msgs', main);
+  const atBottom = (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+  const drawMsgs = (keep) => {
+    const box = msgBox(); if (!box) return;
+    const wasBottom = atBottom(box), fromBottom = box.scrollHeight - box.scrollTop;
+    const top = more ? `<div class="cm-top">${loadingOlder ? 'Loading older messages…' : historyDone ? '<button class="linkbtn" data-older>Load older messages</button>' : 'Older history is still importing from Google Chat…'}</div>`
+      : `<div class="cm-top start">${spaceAv(current, 'lg')}<b>${esc(current.title)}</b><span>This is the beginning of the conversation.</span></div>`;
+    box.innerHTML = top + chatListHTML(msgs, { myGid });
+    if (keep === 'older') box.scrollTop = box.scrollHeight - fromBottom;
+    else if (keep === 'bottom' || wasBottom) box.scrollTop = box.scrollHeight;
+    $$('img', box).forEach((img) => img.addEventListener('load', () => { if (keep === 'bottom' || wasBottom) box.scrollTop = box.scrollHeight; }, { once: true }));
+  };
+  const merge = (list, incoming) => {
+    const byId = new Map(list.map((m) => [m.id, m]));
+    incoming.forEach((m) => byId.set(m.id, m));
+    return [...byId.values()].sort((a, b) => (a.create_time < b.create_time ? -1 : a.create_time > b.create_time ? 1 : a.id - b.id));
+  };
+  const markRead = () => { if (current && !document.hidden) api('POST', `/api/chat/spaces/${current.id}/read`, {}).then(() => { const s = spaces.find((x) => x.id === current.id); if (s && s.unread) { s.unread = 0; drawList(); } pollNotifications(); }).catch(() => {}); };
+
+  async function openSpace(sid) {
+    const s = spaces.find((x) => x.id === sid);
+    if (!s) { if (spaces.length) toast('That conversation isn’t available', 'err'); return; }
+    current = s; msgs = []; thread = null; threadEl.hidden = true; wrap.classList.add('has-open'); wrap.classList.remove('has-thread');
+    drawList();
+    main.innerHTML = `<header class="cm-head">
+        <button class="icon-btn cm-back" id="cm-back" aria-label="Back to chats">‹</button>
+        ${spaceAv(s, 'sm')}<div class="cm-title"><b>${esc(s.title)}</b><span>${s.type === 'SPACE' ? 'Space' : s.type === 'GROUP_CHAT' ? 'Group chat' : 'Direct message'}${s.client ? ` · <a href="#/board/${s.client.id}"><span class="client-dot" style="background:${esc(s.client.color)}"></span>${esc(s.client.name)}</a>` : ''}</span></div>
+        <div class="cm-actions">
+          ${isExec() && s.type !== 'DIRECT_MESSAGE' ? `<select class="input sm" id="cm-client" title="Link this chat to a client board"><option value="">Link to client…</option>${S.clients.map((c) => `<option value="${c.id}" ${s.client && s.client.id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>` : ''}
+          <a class="btn sm ghost cm-open" href="${esc(s.web_link)}" target="_blank" rel="noopener" title="Open in Google Chat">${I.ext || '↗'}<span>Google Chat</span></a></div></header>
+      <div class="cm-msgs" id="cm-msgs"><div class="empty">Loading…</div></div>
+      ${chatComposerHTML('cm-comp', `Message ${s.type === 'DIRECT_MESSAGE' ? s.title : s.title}`)}`;
+    $('#cm-back').onclick = () => { wrap.classList.remove('has-open'); location.hash = '#/chat'; };
+    if ($('#cm-client')) $('#cm-client').onchange = async (e) => {
+      try { await api('PUT', `/api/chat/spaces/${s.id}/client`, { client_id: e.target.value || null }); toast(e.target.value ? 'Linked — the client board now has a Chat button' : 'Unlinked', 'ok'); loadSpaces(); } catch (err) { toast(err.message, 'err'); }
+    };
+    const comp = bindChatComposer($('#cm-comp', main), s.id, async (payload) => {
+      const m = await chatSend(s.id, payload); msgs = merge(msgs, [m]); drawMsgs('bottom'); loadSpaces();
+    });
+    comp.focus();
+    const r = await api('GET', `/api/chat/spaces/${s.id}/messages?live=1`);
+    if (!alive() || current !== s) return;
+    msgs = r.messages; more = r.more; historyDone = r.history_done !== false;
+    myGid = (msgs.find((m) => m.sender.is_me) || {}).sender?.gid || myGid;
+    drawMsgs('bottom'); markRead();
+  }
+  const loadOlder = async () => {
+    if (loadingOlder || !more || !msgs.length || !historyDone) return;
+    loadingOlder = true; drawMsgs('older');
+    try {
+      const r = await api('GET', `/api/chat/spaces/${current.id}/messages?before=${encodeURIComponent(msgs[0].create_time)}`);
+      msgs = merge(msgs, r.messages); more = r.more; historyDone = r.history_done !== false;
+    } finally { loadingOlder = false; drawMsgs('older'); }
+  };
+  async function openThread(name) {
+    thread = name; threadEl.hidden = false; wrap.classList.add('has-thread');
+    threadEl.innerHTML = `<header class="ct-head"><b>Thread</b><span class="muted small">${esc(current.title)}</span><button class="icon-btn" id="ct-close" aria-label="Close thread">${I.x}</button></header>
+      <div class="ct-msgs" id="ct-msgs"><div class="empty">Loading…</div></div>${chatComposerHTML('ct-comp', 'Reply in thread')}`;
+    $('#ct-close').onclick = () => { thread = null; threadEl.hidden = true; wrap.classList.remove('has-thread'); };
+    bindChatComposer($('#ct-comp', threadEl), current.id, async (payload) => {
+      const m = await chatSend(current.id, payload, name); threadMsgs = merge(threadMsgs, [m]); drawThread(true);
+      const top = msgs.find((x) => x.thread === name && !x.thread_reply); if (top) { top.reply_count += 1; top.last_reply = m.create_time; drawMsgs(); }
+    }).focus();
+    await loadThread(true);
+  }
+  const drawThread = (bottom) => {
+    const box = $('#ct-msgs', threadEl); if (!box) return;
+    const wasBottom = atBottom(box);
+    const [first, ...rest] = threadMsgs;
+    box.innerHTML = first ? chatListHTML([first], { myGid, thread: true }) + `<div class="ct-sep"><span>${rest.length} ${rest.length === 1 ? 'reply' : 'replies'}</span></div>` + chatListHTML(rest, { myGid, thread: true }) : '<div class="empty">This thread is empty.</div>';
+    if (bottom || wasBottom) box.scrollTop = box.scrollHeight;
+  };
+  const loadThread = async (bottom) => {
+    if (!thread) return;
+    const name = thread;
+    const r = await api('GET', `/api/chat/spaces/${current.id}/messages?thread=${encodeURIComponent(name)}`).catch(() => null);
+    if (!r || thread !== name || !alive()) return;
+    threadMsgs = r.messages; drawThread(bottom);
+  };
+
+  // clicks inside the conversation and thread panes
+  const onMsgClick = async (e, inThread) => {
+    const node = e.target.closest('[data-mid]');
+    const list = inThread ? threadMsgs : msgs;
+    const m = node && list.find((x) => x.id === Number(node.dataset.mid));
+    const img = e.target.closest('[data-chat-img]');
+    if (img) { lightbox(img.dataset.chatImg, img.title, `${img.dataset.chatImg}?download=1`); return; }
+    if (e.target.closest('[data-older]')) { loadOlder(); return; }
+    const th = e.target.closest('[data-thread]');
+    if (th && !inThread) { openThread(th.dataset.thread); return; }
+    if (!m) return;
+    const update = (u) => { const fix = (arr) => arr.map((x) => (x.id === u.id ? { ...u, reply_count: x.reply_count, last_reply: x.last_reply } : x)); msgs = fix(msgs); threadMsgs = fix(threadMsgs); drawMsgs(); drawThread(); };
+    const react = async (emoji) => { try { update(await api('POST', `/api/chat/messages/${m.id}/reactions`, { emoji })); } catch (err) { toast(err.message, 'err'); } };
+    const rx = e.target.closest('[data-react]'), add = e.target.closest('[data-react-add]');
+    if (rx) { react(rx.dataset.react); return; }
+    if (add) { emojiPicker(add, react); return; }
+    if (e.target.closest('[data-cm-del]')) {
+      if (!await confirmModal('Delete this message? It will be deleted in Google Chat too.')) return;
+      try { await api('DELETE', `/api/chat/messages/${m.id}`); update({ ...m, deleted: true, text: '', attachments: [], reactions: [] }); } catch (err) { toast(err.message, 'err'); }
+      return;
+    }
+    if (e.target.closest('[data-cm-edit]')) {
+      const body = $('.cmsg-body', node) || $('.cmsg-main', node);
+      body.innerHTML = `<div class="cm-edit"><textarea class="input" rows="2">${esc(m.text)}</textarea><div class="row" style="justify-content:flex-end;gap:6px;margin-top:6px"><button class="btn sm ghost" data-x>Cancel</button><button class="btn sm" data-ok>Save</button></div></div>`;
+      const ta = $('textarea', body); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
+      $('[data-x]', body).onclick = (ev) => { ev.stopPropagation(); drawMsgs(); drawThread(); };
+      $('[data-ok]', body).onclick = async (ev) => {
+        ev.stopPropagation();
+        try { update(await api('PUT', `/api/chat/messages/${m.id}`, { text: ta.value })); } catch (err) { toast(err.message, 'err'); }
+      };
+    }
+  };
+  main.addEventListener('click', (e) => onMsgClick(e, false));
+  threadEl.addEventListener('click', (e) => onMsgClick(e, true));
+  main.addEventListener('scroll', (e) => { if (e.target.id === 'cm-msgs' && e.target.scrollTop < 80) loadOlder(); }, true);
+
+  // live updates: the open conversation every 4s (the server re-reads it from Google), the chat list every 10s
+  let ticks = 0;
+  const timer = setInterval(async () => {
+    if (!alive()) { clearInterval(timer); window.removeEventListener('resize', fit); return; }
+    if (document.hidden) return;
+    ticks++;
+    if (current) {
+      const s = current;
+      const r = await api('GET', `/api/chat/spaces/${s.id}/messages?live=1`).catch(() => null);
+      if (r && current === s && !$('.cm-edit', main)) {
+        const before = msgs.length ? msgs[msgs.length - 1].id : 0;
+        const changed = JSON.stringify(r.messages) !== JSON.stringify(msgs.slice(-r.messages.length));
+        msgs = merge(msgs, r.messages);
+        if (!myGid) myGid = (msgs.find((m) => m.sender.is_me) || {}).sender?.gid || '';
+        if (changed) { drawMsgs(); if (msgs.length && msgs[msgs.length - 1].id !== before) markRead(); }
+      }
+      if (thread && !$('.cm-edit', threadEl)) loadThread(false);
+    }
+    if (ticks % 3 === 0) loadSpaces();
+  }, 4000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && alive()) markRead(); });
+
+  await loadSpaces();
+  if (sidParam && spaces.length) openSpace(Number(sidParam));
+  else if (!sidParam) main.innerHTML = `<div class="cm-empty">${I.chat}<b>Pick a conversation</b><span>Your Google Chat spaces and direct messages are on the left.</span></div>`;
+  if (!spaces.length) {   // first import still running: check again shortly
+    const wait = setInterval(async () => { if (!alive()) return clearInterval(wait); await loadSpaces(); if (spaces.length) { clearInterval(wait); if (sidParam) openSpace(Number(sidParam)); } }, 3000);
+  }
 }
 
 boot();

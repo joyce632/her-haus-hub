@@ -52,6 +52,41 @@ What Render handles for you:
 
 Clock-in alerts are always sent. Clock-out and break alerts are optional and can be turned on in Settings.
 
+## Google Chat inside the hub (two-way sync)
+
+The **Chat** page shows everyone's real Google Chat — spaces, group chats and DMs, with past messages — and stays
+in sync both ways: messages sent from the hub appear in Google Chat as that person, and new Google Chat messages
+show up in the hub within about 15 seconds (faster in the conversation you have open). Threads, @mentions,
+emoji reactions, images and files, editing and deleting your own messages all work. Mentions and DMs also ping
+you in the hub (bell, sound, floating window).
+
+**One-time setup (Google Workspace admin, ~15 minutes)** — at https://console.cloud.google.com signed in as an
+@herhauscompany.com admin:
+
+1. **Create a project** (top bar › project picker › *New project*), e.g. "Her Haus Hub".
+2. **Turn on the APIs** — *APIs & Services › Library*: enable **Google Chat API** and **People API**.
+3. **Consent screen** — *Google Auth Platform › Branding › Get started*: app name "Her Haus Hub", your support
+   email, Audience **Internal**, contact email › *Create*.
+4. **Scopes** — *Google Auth Platform › Data Access › Add or remove scopes*, add:
+   `chat.spaces.readonly`, `chat.messages`, `chat.memberships.readonly` and `directory.readonly`
+   (all under `https://www.googleapis.com/auth/`) › *Update* › *Save*.
+5. **OAuth client** — *Google Auth Platform › Clients › Create client*: type **Web application**, name
+   "Her Haus Hub", Authorized redirect URI **https://teamhub.herhauscompany.com/api/google/callback** › *Create*.
+   Copy the **Client ID** and **Client secret**.
+6. **Chat app details** (Google requires this even though nobody chats with a bot) — *APIs & Services › Enabled
+   APIs › Google Chat API › Configuration*: app name "Her Haus Hub", avatar URL
+   `https://teamhub.herhauscompany.com/static/icon.png`, a short description; turn **Interactive features off** › *Save*.
+7. **Render** — herhaus-hub › *Environment*: add `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` with the values
+   from step 5 › *Save* (the app redeploys).
+8. If your Workspace restricts third-party apps (*admin.google.com › Security › API controls*), mark
+   "Her Haus Hub" as **Trusted**. Internal apps are usually allowed already.
+
+Then everyone opens **Chat** in the hub and clicks **Connect Google Chat** once. In *Settings*, keep
+"Site address" set to `https://teamhub.herhauscompany.com` so Google sends people back to the right place.
+
+Notes: the hub only ever sees the spaces each person is a member of. Google sign-in tokens are stored encrypted.
+Disconnecting (bottom of the chat list) stops syncing for that person; it never changes anything in Google Chat.
+
 ## How pay is calculated
 
 - **Cutoffs:** the 1st–15th and the 16th to the end of the month, in the company timezone (Settings).

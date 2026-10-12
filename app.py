@@ -30,6 +30,8 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
 
+import google_chat as gchat
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(BASE_DIR, "data"))
 UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
@@ -250,8 +252,14 @@ CREATE TABLE IF NOT EXISTS recurring_rules(
 PG_TABLES = ["users", "clients", "time_entries", "breaks", "tasks", "task_links", "files", "eods", "incidents", "kpis",
              "wins", "metrics", "resources", "settings", "task_comments", "notifications", "recurring_rules",
              "task_followers", "comment_reactions"]
-PG_MIGRATIONS = ["ALTER TABLE tasks ADD COLUMN IF NOT EXISTS deadline_reminded TEXT"]
-_NO_ID_TABLES = {"settings", "task_followers", "comment_reactions"}
+PG_MIGRATIONS = ["ALTER TABLE tasks ADD COLUMN IF NOT EXISTS deadline_reminded TEXT",
+                 "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS actor_label TEXT",
+                 "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS chat_space_id INTEGER"]
+_NO_ID_TABLES = {"settings", "task_followers", "comment_reactions"} | gchat.NO_ID_TABLES
+# Google Chat sync tables (see google_chat.py)
+SCHEMA += gchat.SCHEMA_SQLITE
+PG_SCHEMA += gchat.SCHEMA_PG
+PG_TABLES += gchat.TABLES
 _PG_PARENTS = {"time_entries": ("user_id", "users"), "breaks": ("entry_id", "time_entries"),
                "tasks": ("client_id", "clients"), "task_links": ("task_id", "tasks"),
                "task_comments": ("task_id", "tasks"), "recurring_rules": ("client_id", "clients"),
@@ -309,10 +317,10 @@ class _SharedDB:
 
     busy_since = None   # when the database call currently running started (watched by _db_watchdog)
 
-    def _run(self, sql, args):
+    def _run(self, sql, args, pg_suffix=""):
         if not USE_PG:
             return self._connection().execute(sql, args)
-        pg_sql = _to_pg(sql)
+        pg_sql = _to_pg(sql) + pg_suffix   # suffix goes after any ON CONFLICT clause
         try:
             return self._connection().execute(pg_sql, args)
         except (psycopg.OperationalError, psycopg.InterfaceError):
@@ -344,7 +352,7 @@ class _SharedDB:
             self.busy_since = _clock.monotonic()
             try:
                 if USE_PG and table not in _NO_ID_TABLES:
-                    row = self._run(sql + " RETURNING id", args).fetchone()
+                    row = self._run(sql, args, " RETURNING id").fetchone()
                     return row["id"] if row else None
                 return self._run(sql, args).lastrowid if not USE_PG else (self._run(sql, args) and None)
             finally:
@@ -497,6 +505,8 @@ def init_db():
     _add_column(conn, "tasks", "deadline_time", "TEXT")       # optional "HH:MM", company timezone
     _add_column(conn, "recurring_rules", "due_time", "TEXT")
     _add_column(conn, "tasks", "deadline_reminded", "TEXT")   # which deadline the 15-minute reminder was sent for
+    _add_column(conn, "notifications", "actor_label", "TEXT")      # sender name for Google Chat alerts
+    _add_column(conn, "notifications", "chat_space_id", "INTEGER")
     for col in ("block_date", "block_start", "block_end"):   # optional time block set by the assignee
         _add_column(conn, "tasks", col, "TEXT")
     # Task notes were replaced by comments: move any existing notes into a comment so nothing is lost.
@@ -1752,15 +1762,15 @@ def list_notifications():
     uid = current_user()["id"]
     where, args = ["n.user_id=?"], [uid]
     if request.args.get("kind") == "mention":
-        where.append("n.kind='mention'")
+        where.append("n.kind IN ('mention','chat_mention')")
     if request.args.get("unread") == "1":
         where.append("n.read_at IS NULL")
     limit = min(int(request.args.get("limit") or 50), 200)
-    rows = q("SELECT n.*, a.name actor_name, a.avatar_file_id actor_avatar, t.title task_title, t.client_id, "
-             "c.name client_name, c.color client_color FROM notifications n LEFT JOIN users a ON a.id=n.actor_id "
-             "LEFT JOIN tasks t ON t.id=n.task_id LEFT JOIN clients c ON c.id=t.client_id "
+    rows = q("SELECT n.*, COALESCE(a.name, n.actor_label) actor_name, a.avatar_file_id actor_avatar, t.title task_title, t.client_id, "
+             "c.name client_name, c.color client_color, cs.display_name chat_title FROM notifications n LEFT JOIN users a ON a.id=n.actor_id "
+             "LEFT JOIN tasks t ON t.id=n.task_id LEFT JOIN clients c ON c.id=t.client_id LEFT JOIN chat_spaces cs ON cs.id=n.chat_space_id "
              "WHERE " + " AND ".join(where) + f" ORDER BY n.id DESC LIMIT {limit}", args)
-    counts = q("SELECT COUNT(*) unread, SUM(CASE WHEN kind='mention' THEN 1 ELSE 0 END) mentions FROM notifications WHERE user_id=? AND read_at IS NULL",
+    counts = q("SELECT COUNT(*) unread, SUM(CASE WHEN kind IN ('mention','chat_mention') THEN 1 ELSE 0 END) mentions FROM notifications WHERE user_id=? AND read_at IS NULL",
                (uid,), one=True)
     return jsonify(items=rows, unread=counts["unread"] or 0, unread_mentions=counts["mentions"] or 0)
 
@@ -1770,17 +1780,19 @@ def list_notifications():
 def notification_count():
     """Unread counts, plus any notifications newer than ?since=<id> so the page can play a sound for them."""
     uid = current_user()["id"]
-    r = q("SELECT COUNT(*) unread, SUM(CASE WHEN kind='mention' THEN 1 ELSE 0 END) mentions FROM notifications WHERE user_id=? AND read_at IS NULL",
+    r = q("SELECT COUNT(*) unread, SUM(CASE WHEN kind IN ('mention','chat_mention') THEN 1 ELSE 0 END) mentions FROM notifications WHERE user_id=? AND read_at IS NULL",
           (uid,), one=True)
     latest = (q("SELECT MAX(id) m FROM notifications WHERE user_id=?", (uid,), one=True) or {}).get("m") or 0
     fresh = []
     since = request.args.get("since")
     if since and since.isdigit():
-        fresh = q("SELECT n.id, n.kind, n.task_id, n.snippet, n.created_at, a.name actor_name, t.title task_title, "
-                  "t.client_id, c.name client_name FROM notifications n LEFT JOIN users a ON a.id=n.actor_id "
-                  "LEFT JOIN tasks t ON t.id=n.task_id LEFT JOIN clients c ON c.id=t.client_id "
+        fresh = q("SELECT n.id, n.kind, n.task_id, n.chat_space_id, n.snippet, n.created_at, COALESCE(a.name, n.actor_label) actor_name, "
+                  "t.title task_title, t.client_id, c.name client_name, cs.display_name chat_title FROM notifications n "
+                  "LEFT JOIN users a ON a.id=n.actor_id LEFT JOIN tasks t ON t.id=n.task_id LEFT JOIN clients c ON c.id=t.client_id "
+                  "LEFT JOIN chat_spaces cs ON cs.id=n.chat_space_id "
                   "WHERE n.user_id=? AND n.id>? AND n.read_at IS NULL ORDER BY n.id LIMIT 10", (uid, int(since)))
-    return jsonify(unread=r["unread"] or 0, unread_mentions=r["mentions"] or 0, latest_id=latest, new=fresh)
+    return jsonify(unread=r["unread"] or 0, unread_mentions=r["mentions"] or 0, latest_id=latest, new=fresh,
+                   chat_unread=gchat.unread_total(uid))
 
 
 def _follower_ids(tid):
@@ -2694,6 +2706,8 @@ def _db_watchdog():
             sys.stdout.flush()
             os._exit(1)   # exit code 1 = gunicorn respawns the worker (code 3 would stop the whole server)
 
+
+gchat.register(sys.modules[__name__])   # Google Chat sync routes + background sync
 
 if os.environ.get("DISABLE_SCHEDULER") != "1":
     threading.Thread(target=_scheduler_loop, daemon=True, name="automations").start()
