@@ -239,7 +239,7 @@ def sync_directory(uid, force=False):
     if not force and _directory_at.get(uid, 0) > time.time() - 6 * 3600:
         return
     _directory_at[uid] = time.time()
-    token = None
+    token, found = None, 0
     for _ in range(20):
         params = {"readMask": "names,emailAddresses,photos", "sources": "DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE", "pageSize": 1000}
         if token:
@@ -253,9 +253,12 @@ def sync_directory(uid, force=False):
             name, email, photo = _person_fields(p)
             if name and p.get("resourceName"):
                 _save_person("users/" + _gid_num(p["resourceName"]), name, email, photo)
+                found += 1
         token = r.get("nextPageToken")
         if not token:
             break
+    if not found:   # directory hidden (e.g. Workspace contact sharing off): try again in 10 minutes, not 6 hours
+        _directory_at[uid] = time.time() - 6 * 3600 + 600
 
 
 def resolve_people(uid, gids):
@@ -1087,6 +1090,9 @@ def register(module):
             r = gapi(u["id"], "GET", "/v1/people:listDirectoryPeople", base=PEOPLE_API,
                      params={"readMask": "names", "sources": "DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE", "pageSize": 5})
             out["directory"] = f"ok — {len(r.get('people', []))} people in the first page"
+            if r.get("people"):   # directory readable: refresh everyone's names now
+                sync_directory(u["id"], force=True)
+                H.ex("UPDATE chat_people SET updated_at=0 WHERE name=''")
         except GoogleError as e:
             out["directory"] = f"error {e.status}: {e}"
         unknown = H.q("SELECT gid FROM chat_people WHERE name='' LIMIT 1", one=True)
