@@ -727,7 +727,8 @@ async function pageDashboard(page, _a, alive) {
 // in other tabs and apps. Chrome/Edge: Document Picture-in-Picture. Safari: a live video picture-in-picture.
 let floater = null;
 let floaterData = { items: [], day: '' };
-let floaterInbox = { items: [], unread: 0, seen: 0, key: '' };   // unread alerts shown in the floating window
+let floaterInbox = { items: [], unread: 0, seen: 0, key: '', open: false };
+const FLOAT_SMALL = 230, FLOAT_BIG = 470;   // window height without / with the notification list   // unread alerts shown in the floating window
 async function refreshFloaterInbox() {
   if (!floater || !S.me) return;
   try {
@@ -736,10 +737,22 @@ async function refreshFloaterInbox() {
   } catch (_) { return; }
   drawFloaterInbox();
 }
+function fitFloater(h) {   // browsers only allow this right after a click inside the floating window
+  const w = floater?.win; if (!w) return;
+  const frame = Math.min(Math.max(w.outerHeight - w.innerHeight, 0), 80);   // title bar
+  try { w.resizeTo(w.outerWidth, h + frame); } catch (_) { /* not allowed right now */ }
+}
+function floaterStripHTML() {   // collapsed: one line with the latest alert
+  const { items, unread } = floaterInbox, [t] = alertPlain(items[0]);
+  return `<div class="fi-strip"><span class="fi-ic k-${items[0].kind}">${I.bell}</span>
+    <span class="fi-strip-text"><b>${esc(t)}</b>${unread > 1 ? ` · +${unread - 1} more` : ''}</span>
+    <button type="button" class="fi-view" data-fexpand>View</button></div>`;
+}
 function floaterInboxHTML() {
   const { items, unread } = floaterInbox;
+  if (!floaterInbox.open) return floaterStripHTML();
   const head = `<div class="fi-head"><span>${I.bell} Notifications${unread ? ` <b class="fi-count">${unread > 99 ? '99+' : unread}</b>` : ''}</span>
-    ${unread ? '<button type="button" class="fi-all" data-fread-all>Mark all read</button>' : ''}</div>`;
+    <span class="fi-acts">${unread ? '<button type="button" class="fi-all" data-fread-all>Mark all read</button>' : ''}<button type="button" class="fi-all" data-fcollapse>Hide</button></span></div>`;
   if (!items.length) return `${head}<div class="fi-empty">You’re all caught up.</div>`;
   const icon = { mention: I.at, comment: I.chat, deadline: I.clock, follow: I.eye, assigned: I.brief };
   return head + `<div class="fi-list">${items.map((n) => `<div class="fi-item k-${n.kind} ${n.id > floaterInbox.seen ? 'fresh' : ''}">
@@ -755,12 +768,25 @@ function drawFloaterInbox() {
   if (floater?.kind !== 'doc') return;
   const box = floater.win.document.getElementById('fl-inbox');
   const key = floaterInbox.unread + ':' + floaterInbox.items.map((n) => n.id).join(',');
-  if (!box || key === floaterInbox.key) return;   // only redraw when something changed, so buttons don't flicker
-  floaterInbox.key = key;
+  if (!box) return;
+  if (!floaterInbox.items.length) {   // nothing unread: hide the section and shrink back to the timer
+    box.hidden = true; box.innerHTML = ''; floaterInbox.key = key;
+    if (floaterInbox.open) { floaterInbox.open = false; fitFloater(FLOAT_SMALL); }
+    return;
+  }
+  const fullKey = `${key}:${floaterInbox.open}`;
+  if (fullKey === floaterInbox.key) return;   // only redraw when something changed, so buttons don't flicker
+  floaterInbox.key = fullKey;
+  box.hidden = false;
+  box.classList.toggle('open', floaterInbox.open);
   box.innerHTML = floaterInboxHTML();
   floaterInbox.seen = Math.max(floaterInbox.seen, ...floaterInbox.items.map((n) => n.id), 0);
 }
 async function floaterInboxClick(e) {
+  const expand = e.target.closest('[data-fexpand]'), collapse = e.target.closest('[data-fcollapse]');
+  if (expand || collapse) {
+    floaterInbox.open = !!expand; fitFloater(expand ? FLOAT_BIG : FLOAT_SMALL); drawFloaterInbox(); return;
+  }
   const all = e.target.closest('[data-fread-all]'), read = e.target.closest('[data-fread]'), open = e.target.closest('[data-fopen]');
   if (all) { await api('POST', '/api/notifications/read', { all: true }); }
   else if (read) { await api('POST', '/api/notifications/read', { ids: [+read.dataset.fread] }); }
@@ -802,7 +828,13 @@ const FLOAT_CSS = `*{box-sizing:border-box}html,body{margin:0;height:100%}body{f
   background:radial-gradient(260px 160px at 100% 0%,rgba(66,133,244,.45),transparent 65%),radial-gradient(240px 150px at 0% 120%,rgba(227,38,45,.4),transparent 65%),linear-gradient(135deg,#123A7A,#0C2E60 55%,#071C3D);
   padding:14px 16px;display:flex;flex-direction:column;gap:12px;overflow:hidden}#fl{display:flex;flex-direction:column;gap:5px;width:100%;flex:none}
   svg{width:14px;height:14px;flex:none}
-  #fl-inbox{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px;border-top:1px solid rgba(255,255,255,.16);padding-top:10px}
+  #fl-inbox{flex:none;display:flex;flex-direction:column;gap:8px}#fl-inbox[hidden]{display:none}
+  #fl-inbox.open{flex:1;min-height:0;border-top:1px solid rgba(255,255,255,.16);padding-top:10px}
+  .fi-strip{display:flex;align-items:center;gap:8px;padding:6px 6px 6px 8px;border-radius:10px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.22);animation:fiIn .4s ease}
+  .fi-strip .fi-ic{width:22px;height:22px}.fi-strip .fi-ic svg{width:12px;height:12px}
+  .fi-strip-text{flex:1;min-width:0;font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.fi-strip-text b{font-weight:700}
+  .fi-view{border:0;background:#fff;color:#0C2E60;font:700 11px Montserrat,sans-serif;padding:4px 11px;border-radius:7px;cursor:pointer;flex:none}
+  .fi-acts{display:flex;gap:12px}.fi-ic.k-mention{background:#E3262D}.fi-ic.k-assigned{background:#1B4BA8}.fi-ic.k-deadline{background:#B7791F}
   .fi-head{display:flex;justify-content:space-between;align-items:center;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
   .fi-head>span{display:flex;align-items:center;gap:6px}.fi-count{background:#E3262D;border-radius:99px;padding:1px 7px;font-size:10.5px;letter-spacing:0}
   .fi-all{border:0;background:none;color:#fff;opacity:.8;font:600 11px Montserrat,sans-serif;cursor:pointer;text-decoration:underline;text-underline-offset:3px;padding:0}
@@ -832,15 +864,15 @@ async function openFloater() {
   let opened = false, why = '';
   if ('documentPictureInPicture' in window) {
     try {
-      const win = await window.documentPictureInPicture.requestWindow({ width: 360, height: 470 });
+      const win = await window.documentPictureInPicture.requestWindow({ width: 360, height: FLOAT_SMALL });
       win.document.title = 'Her Haus · Timer';
       win.document.head.innerHTML = `<meta charset="utf-8"><link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;500;600;700&display=swap" rel="stylesheet"><style>${FLOAT_CSS}</style>`;
-      win.document.body.innerHTML = '<div id="fl"></div><div id="fl-inbox"></div>';
+      win.document.body.innerHTML = '<div id="fl"></div><div id="fl-inbox" hidden></div>';
       const draw = () => { const box = win.document.getElementById('fl'); if (box) box.innerHTML = floaterHTML(); };
       win.document.body.addEventListener('click', (e) => { if (e.target.closest('[data-open-hub]')) window.focus(); else floaterInboxClick(e); });
       draw(); win.setInterval(draw, 1000);   // the floating window's own timer keeps ticking while this tab is hidden
       floater = { kind: 'doc', win };
-      floaterInbox.key = ''; floaterInbox.seen = Number.MAX_SAFE_INTEGER;   // existing alerts don't animate in
+      floaterInbox.key = ''; floaterInbox.open = false; floaterInbox.seen = Number.MAX_SAFE_INTEGER;   // existing alerts don't animate in
       win.addEventListener('pagehide', () => { floater = null; });
       opened = true;
     } catch (err) { why = err.message; }
