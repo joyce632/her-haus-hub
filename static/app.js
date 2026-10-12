@@ -804,16 +804,28 @@ async function refreshFloaterData() {
 }
 function floaterState() {
   const open = floaterData.items.filter((t) => t.status !== 'Done');
-  const now = open.find(isBlockNow);
+  const live = open.filter(isBlockNow).sort((a, b) => blockMs(a, 'end') - blockMs(b, 'end'));   // ending soonest first
+  const now = live[0];
   const next = open.find((t) => t.block_start > nowHHMM());
   const s = S.status;
   let shift = 'Off shift';
   if (s && s.on_break) shift = `On ${s.break.kind.toLowerCase()} · ${hms((Date.now() - new Date(s.break.start)) / 1000)}`;
   else if (s && s.on_shift) shift = `On shift · ${hms(s.today_seconds + (Date.now() - (S.statusAt || Date.now())) / 1000)}`;
-  return { now, next, shift };
+  return { now, live, next, shift };
+}
+const blockPct = (t) => Math.min(100, Math.max(0, ((Date.now() - blockMs(t, 'start')) / (blockMs(t, 'end') - blockMs(t, 'start'))) * 100));
+function floaterMultiHTML(live, next, shift) {   // two or more overlapping blocks: one compact row each
+  return `<div class="f-top"><span class="f-tag live">● ${live.length} ongoing</span><span class="f-shift">${esc(shift)}</span></div>
+    <div class="f-multi">${live.map((t) => { const left = blockMs(t, 'end') - Date.now(); return `
+      <button type="button" class="f-row" data-ftask="${t.id}" title="Open in Her Haus Hub">
+        <span class="f-row-main"><span class="f-row-title">${esc(t.title)}</span><span class="f-row-sub">${esc(t.client_name)} · ${blockRange(t)}</span></span>
+        <span class="f-row-count ${left <= 0 ? 'ended' : ''}">${left > 0 ? fmtLeft(left) : 'Time’s up'}</span>
+        <span class="f-bar"><i style="width:${blockPct(t)}%"></i></span></button>`; }).join('')}</div>
+    ${live.length > 2 ? '' : `<div class="f-next">${next ? `Up next: <b>${esc(next.title)}</b> · ${fmtClock12(next.block_start)}` : 'Nothing else planned today'}</div>`}`;
 }
 function floaterHTML() {
-  const { now, next, shift } = floaterState();
+  const { now, live, next, shift } = floaterState();
+  if (live.length > 1) return floaterMultiHTML(live, next, shift);
   const pct = now ? Math.min(100, Math.max(0, ((Date.now() - blockMs(now, 'start')) / (blockMs(now, 'end') - blockMs(now, 'start'))) * 100)) : 0;
   const left = now ? blockMs(now, 'end') - Date.now() : 0;
   return `<div class="f-top"><span class="f-tag ${now ? 'live' : ''}">${now ? '● Now' : 'Time block'}</span><span class="f-shift">${esc(shift)}</span></div>
@@ -856,8 +868,19 @@ const FLOAT_CSS = `*{box-sizing:border-box}html,body{margin:0;height:100%}body{f
   .f-count{font-size:34px;font-weight:300;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1.1;margin-top:2px}
   .f-count small{font-size:12px;font-weight:600;opacity:.75;margin-left:6px;letter-spacing:0}.f-count.ended{color:#FFD1D3;font-size:22px;font-weight:700}
   .f-bar{height:4px;border-radius:4px;background:rgba(255,255,255,.18);overflow:hidden}.f-bar i{display:block;height:100%;background:#fff;border-radius:4px}
+  .f-multi{display:flex;flex-direction:column;gap:5px;margin-top:4px;max-height:144px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.3) transparent}
+  .f-row{display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:center;text-align:left;width:100%;padding:5px 10px 6px;flex:none;border-radius:10px;
+    background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);color:#fff;font:inherit;cursor:pointer}
+  .f-row:hover{background:rgba(255,255,255,.14)}.f-row-main{min-width:0;display:flex;flex-direction:column}
+  .f-row-title{font-size:12.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.f-row-sub{font-size:10.5px;opacity:.7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .f-row-count{font-size:17px;font-weight:300;font-variant-numeric:tabular-nums;letter-spacing:-.01em}.f-row-count.ended{font-size:11px;font-weight:700;color:#FFD1D3}
+  .f-row .f-bar{grid-column:1/-1;height:3px}
   .f-next{font-size:11.5px;opacity:.85;margin-top:2px}.f-next b{font-weight:700}
   .f-open{margin-top:auto;align-self:flex-start;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.1);color:#fff;font:600 11px Montserrat,sans-serif;padding:5px 10px;border-radius:8px;cursor:pointer}`;
+function openTaskInHub(t) {
+  S.openTaskOnLoad = t.id;
+  if (location.hash === `#/board/${t.client_id}`) route(); else location.hash = `#/board/${t.client_id}`;
+}
 async function openFloater() {
   if (floater) { if (floater.kind === 'doc') floater.win.focus(); return; }
   // Open the window first: browsers only allow it right after the click, so nothing slow may come before it.
@@ -869,7 +892,12 @@ async function openFloater() {
       win.document.head.innerHTML = `<meta charset="utf-8"><link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;500;600;700&display=swap" rel="stylesheet"><style>${FLOAT_CSS}</style>`;
       win.document.body.innerHTML = '<div id="fl"></div><div id="fl-inbox" hidden></div>';
       const draw = () => { const box = win.document.getElementById('fl'); if (box) box.innerHTML = floaterHTML(); };
-      win.document.body.addEventListener('click', (e) => { if (e.target.closest('[data-open-hub]')) window.focus(); else floaterInboxClick(e); });
+      win.document.body.addEventListener('click', (e) => {
+        const row = e.target.closest('[data-ftask]');
+        if (row) { const t = floaterData.items.find((x) => x.id === +row.dataset.ftask); window.focus(); if (t) openTaskInHub(t); }
+        else if (e.target.closest('[data-open-hub]')) window.focus();
+        else floaterInboxClick(e);
+      });
       draw(); win.setInterval(draw, 1000);   // the floating window's own timer keeps ticking while this tab is hidden
       floater = { kind: 'doc', win };
       floaterInbox.key = ''; floaterInbox.open = false; floaterInbox.seen = Number.MAX_SAFE_INTEGER;   // existing alerts don't animate in
@@ -896,8 +924,16 @@ async function videoFloater() {   // Safari fallback: draw the timer on a canvas
     const grad = g.createLinearGradient(0, 0, 640, 400); grad.addColorStop(0, '#123A7A'); grad.addColorStop(1, '#071C3D');
     g.fillStyle = grad; g.fillRect(0, 0, 640, 400); g.fillStyle = '#fff'; g.textBaseline = 'top';
     g.font = '600 24px Montserrat, sans-serif'; g.globalAlpha = 0.8; g.fillText(shift, 40, 32); g.globalAlpha = 1;
-    g.font = '700 34px Montserrat, sans-serif'; g.fillText((now ? now.title : 'No time block right now').slice(0, 30), 40, 90);
-    if (now) {
+    const { live } = floaterState();
+    if (live.length > 1) {   // overlapping blocks: one line each with its countdown
+      live.slice(0, 3).forEach((t, i) => {
+        const left = blockMs(t, 'end') - Date.now(), y = 85 + i * 62;
+        g.font = '700 28px Montserrat, sans-serif'; g.fillText(t.title.slice(0, 24), 40, y);
+        g.font = '300 34px Montserrat, sans-serif'; g.textAlign = 'right'; g.fillText(left > 0 ? fmtLeft(left) : 'Time’s up', 600, y - 4); g.textAlign = 'left';
+        g.globalAlpha = 0.2; g.fillRect(40, y + 38, 560, 5); g.globalAlpha = 1; g.fillRect(40, y + 38, 5.6 * blockPct(t), 5);
+      });
+    } else g.font = '700 34px Montserrat, sans-serif', g.fillText((now ? now.title : 'No time block right now').slice(0, 30), 40, 90);
+    if (now && live.length === 1) {
       const left = blockMs(now, 'end') - Date.now();
       g.font = '300 96px Montserrat, sans-serif'; g.fillText(left > 0 ? fmtLeft(left) : 'Time’s up', 40, 150);
       const pct = Math.min(1, Math.max(0, (Date.now() - blockMs(now, 'start')) / (blockMs(now, 'end') - blockMs(now, 'start'))));
