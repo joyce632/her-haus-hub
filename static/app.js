@@ -200,6 +200,7 @@ const I = {
   users: svg('<circle cx="9" cy="8" r="3.5"/><path d="M2 20c0-3.5 3-6 7-6s7 2.5 7 6"/><path d="M16 4.5a3.5 3.5 0 010 7M22 20c0-2.6-1.6-4.7-4-5.6"/>'),
   user: svg('<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/>'),
   clock: svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
+  check: svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>'),
   doc: svg('<path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4M9 12h6M9 16h6"/>'),
   folder: svg('<path d="M3 6h6l2 2h10v11H3z"/>'),
   brief: svg('<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V4h6v3M3 13h18"/>'),
@@ -726,6 +727,50 @@ async function pageDashboard(page, _a, alive) {
 // in other tabs and apps. Chrome/Edge: Document Picture-in-Picture. Safari: a live video picture-in-picture.
 let floater = null;
 let floaterData = { items: [], day: '' };
+let floaterInbox = { items: [], unread: 0, seen: 0, key: '' };   // unread alerts shown in the floating window
+async function refreshFloaterInbox() {
+  if (!floater || !S.me) return;
+  try {
+    const r = await api('GET', '/api/notifications?unread=1&limit=6');
+    floaterInbox.items = r.items; floaterInbox.unread = r.unread;
+  } catch (_) { return; }
+  drawFloaterInbox();
+}
+function floaterInboxHTML() {
+  const { items, unread } = floaterInbox;
+  const head = `<div class="fi-head"><span>${I.bell} Notifications${unread ? ` <b class="fi-count">${unread > 99 ? '99+' : unread}</b>` : ''}</span>
+    ${unread ? '<button type="button" class="fi-all" data-fread-all>Mark all read</button>' : ''}</div>`;
+  if (!items.length) return `${head}<div class="fi-empty">You’re all caught up.</div>`;
+  const icon = { mention: I.at, comment: I.chat, deadline: I.clock, follow: I.eye, assigned: I.brief };
+  return head + `<div class="fi-list">${items.map((n) => `<div class="fi-item k-${n.kind} ${n.id > floaterInbox.seen ? 'fresh' : ''}">
+      <span class="fi-ic">${icon[n.kind] || I.brief}</span>
+      <div class="fi-main"><div class="fi-text">${notifText(n)}</div>
+        ${n.snippet && n.kind !== 'assigned' ? `<div class="fi-snip">“${esc(n.snippet)}”</div>` : ''}
+        <div class="fi-meta">${n.client_name ? `${esc(n.client_name)} · ` : ''}${timeAgo(n.created_at)}</div>
+        <div class="fi-btns"><button type="button" class="fi-open" data-fopen="${n.id}">Open</button>
+          <button type="button" class="fi-read" data-fread="${n.id}">${I.check} Mark read</button></div></div></div>`).join('')}</div>
+    ${unread > items.length ? `<div class="fi-more">+${unread - items.length} more in the hub</div>` : ''}`;
+}
+function drawFloaterInbox() {
+  if (floater?.kind !== 'doc') return;
+  const box = floater.win.document.getElementById('fl-inbox');
+  const key = floaterInbox.unread + ':' + floaterInbox.items.map((n) => n.id).join(',');
+  if (!box || key === floaterInbox.key) return;   // only redraw when something changed, so buttons don't flicker
+  floaterInbox.key = key;
+  box.innerHTML = floaterInboxHTML();
+  floaterInbox.seen = Math.max(floaterInbox.seen, ...floaterInbox.items.map((n) => n.id), 0);
+}
+async function floaterInboxClick(e) {
+  const all = e.target.closest('[data-fread-all]'), read = e.target.closest('[data-fread]'), open = e.target.closest('[data-fopen]');
+  if (all) { await api('POST', '/api/notifications/read', { all: true }); }
+  else if (read) { await api('POST', '/api/notifications/read', { ids: [+read.dataset.fread] }); }
+  else if (open) {
+    const n = floaterInbox.items.find((x) => x.id === +open.dataset.fopen);
+    window.focus();   // bring the hub tab forward, then open the task there
+    if (n) await openNotification(n);
+  } else return;
+  await refreshFloaterInbox(); pollNotifications();
+}
 async function refreshFloaterData() {
   if (!S.me) return;
   try { floaterData = { items: (await api('GET', `/api/schedule?date=${todayStr()}&user_id=${S.me.id}`)).items, day: todayStr() }; } catch (_) { /* keep last */ }
@@ -755,7 +800,23 @@ function floaterHTML() {
 }
 const FLOAT_CSS = `*{box-sizing:border-box}html,body{margin:0;height:100%}body{font-family:Montserrat,system-ui,sans-serif;color:#fff;
   background:radial-gradient(260px 160px at 100% 0%,rgba(66,133,244,.45),transparent 65%),radial-gradient(240px 150px at 0% 120%,rgba(227,38,45,.4),transparent 65%),linear-gradient(135deg,#123A7A,#0C2E60 55%,#071C3D);
-  padding:14px 16px;display:flex}#fl{display:flex;flex-direction:column;gap:5px;width:100%}.f-top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  padding:14px 16px;display:flex;flex-direction:column;gap:12px;overflow:hidden}#fl{display:flex;flex-direction:column;gap:5px;width:100%;flex:none}
+  svg{width:14px;height:14px;flex:none}
+  #fl-inbox{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px;border-top:1px solid rgba(255,255,255,.16);padding-top:10px}
+  .fi-head{display:flex;justify-content:space-between;align-items:center;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
+  .fi-head>span{display:flex;align-items:center;gap:6px}.fi-count{background:#E3262D;border-radius:99px;padding:1px 7px;font-size:10.5px;letter-spacing:0}
+  .fi-all{border:0;background:none;color:#fff;opacity:.8;font:600 11px Montserrat,sans-serif;cursor:pointer;text-decoration:underline;text-underline-offset:3px;padding:0}
+  .fi-all:hover{opacity:1}.fi-empty{font-size:12px;opacity:.7}
+  .fi-list{display:flex;flex-direction:column;gap:6px;overflow-y:auto;min-height:0;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.3) transparent}
+  .fi-item{display:flex;gap:9px;padding:9px 10px;border-radius:10px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1)}
+  .fi-item.fresh{animation:fiIn .5s ease;border-color:rgba(255,255,255,.35)}@keyframes fiIn{from{opacity:0;transform:translateY(-4px)}}
+  .fi-ic{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:rgba(255,255,255,.14);flex:none}
+  .fi-item.k-mention .fi-ic{background:#E3262D}.fi-item.k-assigned .fi-ic{background:#1B4BA8}.fi-item.k-deadline .fi-ic{background:#B7791F}
+  .fi-main{min-width:0;flex:1}.fi-text{font-size:12px;line-height:1.35}.fi-text b{font-weight:700}
+  .fi-snip{font-size:11.5px;opacity:.8;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.fi-meta{font-size:10.5px;opacity:.6;margin-top:2px}
+  .fi-btns{display:flex;gap:6px;margin-top:6px}.fi-btns button{display:inline-flex;align-items:center;gap:4px;border-radius:7px;font:600 11px Montserrat,sans-serif;padding:4px 10px;cursor:pointer}
+  .fi-open{background:#fff;color:#0C2E60;border:1px solid #fff}.fi-read{background:rgba(255,255,255,.08);color:#fff;border:1px solid rgba(255,255,255,.25)}
+  .fi-btns button:hover{filter:brightness(1.1)}.fi-btns svg{width:12px;height:12px}.fi-more{font-size:11px;opacity:.65;text-align:center}.f-top{display:flex;justify-content:space-between;align-items:center;gap:8px}
   .f-tag{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;padding:3px 9px;border-radius:99px;background:rgba(255,255,255,.12)}
   .f-tag.live{background:#E3262D}.f-shift{font-size:11px;font-weight:600;opacity:.8;font-variant-numeric:tabular-nums}
   .f-title{font-size:15px;font-weight:700;line-height:1.25;margin-top:4px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
@@ -771,14 +832,15 @@ async function openFloater() {
   let opened = false, why = '';
   if ('documentPictureInPicture' in window) {
     try {
-      const win = await window.documentPictureInPicture.requestWindow({ width: 340, height: 230 });
+      const win = await window.documentPictureInPicture.requestWindow({ width: 360, height: 470 });
       win.document.title = 'Her Haus · Timer';
       win.document.head.innerHTML = `<meta charset="utf-8"><link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;500;600;700&display=swap" rel="stylesheet"><style>${FLOAT_CSS}</style>`;
-      win.document.body.innerHTML = '<div id="fl"></div>';
+      win.document.body.innerHTML = '<div id="fl"></div><div id="fl-inbox"></div>';
       const draw = () => { const box = win.document.getElementById('fl'); if (box) box.innerHTML = floaterHTML(); };
-      win.document.body.addEventListener('click', (e) => { if (e.target.closest('[data-open-hub]')) window.focus(); });
+      win.document.body.addEventListener('click', (e) => { if (e.target.closest('[data-open-hub]')) window.focus(); else floaterInboxClick(e); });
       draw(); win.setInterval(draw, 1000);   // the floating window's own timer keeps ticking while this tab is hidden
       floater = { kind: 'doc', win };
+      floaterInbox.key = ''; floaterInbox.seen = Number.MAX_SAFE_INTEGER;   // existing alerts don't animate in
       win.addEventListener('pagehide', () => { floater = null; });
       opened = true;
     } catch (err) { why = err.message; }
@@ -792,6 +854,7 @@ async function openFloater() {
     return;
   }
   refreshFloaterData();   // fill in today's blocks right after it opens
+  await refreshFloaterInbox(); floaterInbox.seen = Math.max(0, ...floaterInbox.items.map((n) => n.id));
 }
 async function videoFloater() {   // Safari fallback: draw the timer on a canvas and show it as picture-in-picture video
   const c = document.createElement('canvas'); c.width = 640; c.height = 400;
@@ -810,12 +873,19 @@ async function videoFloater() {   // Safari fallback: draw the timer on a canvas
     }
     g.font = '500 24px Montserrat, sans-serif'; g.globalAlpha = 0.85;
     g.fillText(next ? `Up next: ${next.title.slice(0, 26)} · ${fmtClock12(next.block_start)}` : '', 40, 320); g.globalAlpha = 1;
+    const latest = floaterInbox.items[0];
+    if (floaterInbox.unread && latest) {
+      g.fillStyle = '#E3262D'; g.fillRect(0, 360, 640, 40); g.fillStyle = '#fff'; g.font = '600 20px Montserrat, sans-serif';
+      const [t, body] = alertPlain(latest);
+      g.fillText(`🔔 ${floaterInbox.unread} new · ${t}: ${body}`.slice(0, 52), 40, 370);
+    }
   };
   paint();
   const video = document.createElement('video'); video.muted = true; video.playsInline = true; video.srcObject = c.captureStream(2);
   await video.play(); await video.requestPictureInPicture();
   const timer = setInterval(paint, 1000);
   floater = { kind: 'video', video };
+  refreshFloaterInbox();
   video.addEventListener('leavepictureinpicture', () => { clearInterval(timer); floater = null; });
 }
 // If someone leaves the tab during a live time block without the floater open, suggest it once a day when they return.
@@ -1538,7 +1608,9 @@ async function pollNotifications() {
       r.new.forEach(desktopAlert);
       if (!document.hidden) { const [t, body] = alertPlain(r.new[r.new.length - 1]); toast(`${t}: ${body}`.slice(0, 140)); }
     }
+    const changed = r.unread !== floaterInbox.unread || (r.new || []).length;
     lastNotifId = Math.max(lastNotifId || 0, r.latest_id || 0);
+    if (floater && changed) refreshFloaterInbox();
   } catch (_) { /* offline */ }
 }
 // A tiny background worker keeps time even when the tab is in the background (browsers slow down page timers there).
