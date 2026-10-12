@@ -201,6 +201,8 @@ const I = {
   user: svg('<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/>'),
   clock: svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
   check: svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>'),
+  image: svg('<rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5-5-8 9"/>'),
+  smile: svg('<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5s1.3 1.8 3.5 1.8 3.5-1.8 3.5-1.8"/><path d="M9 9.5h.01M15 9.5h.01" stroke-width="2.6"/>'),
   doc: svg('<path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4M9 12h6M9 16h6"/>'),
   folder: svg('<path d="M3 6h6l2 2h10v11H3z"/>'),
   brief: svg('<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V4h6v3M3 13h18"/>'),
@@ -1417,9 +1419,12 @@ async function openTask(id, onChange) {
         <div class="composer">
           ${av(S.me.name, S.me.avatar_file_id, 'sm')}
           <div class="composer-box">
-            <textarea class="input" id="c-body" rows="2" placeholder="Write a comment… type @ to tag a teammate"></textarea>
+            <textarea class="input" id="c-body" rows="2" placeholder="Write a comment… type @ to tag, paste a screenshot to attach it"></textarea>
             <div class="mention-pop hidden" id="c-pop"></div>
-            <div class="composer-foot"><span>${navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'} + Enter to send</span><button class="btn sm" id="c-send">${I.send} Comment</button></div>
+            <div class="c-tray" id="c-tray" hidden></div>
+            <div class="composer-foot"><span>${navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'} + Enter to send</span>
+              <span class="row" style="gap:6px;flex-wrap:nowrap"><label class="icon-btn c-attach" title="Attach images (or paste / drop them)">${I.image}<input type="file" id="c-file" accept="image/*" multiple hidden></label>
+              <button class="btn sm" id="c-send">${I.send} Comment</button></span></div>
           </div>
         </div>
       </div>
@@ -1623,44 +1628,147 @@ function attachMentionPicker(ta, pop) {
   pop.addEventListener('mousedown', (e) => { const b = e.target.closest('[data-i]'); if (b) { e.preventDefault(); pick(matches[Number(b.dataset.i)]); } });
 }
 
+const REACTION_EMOJI = ['👍', '❤️', '😂', '🎉', '👀', '🙏', '✅', '🔥', '💯', '🙌', '👏', '🚀', '💪', '🤝', '😮', '😅', '🤔', '😢', '⭐', '📌', '❗', '❓', '👌', '🏡'];
+const fileUrl = (id) => `/api/files/${id}?inline=1`;
+function lightbox(src, name) {   // full-size view of a comment image
+  const box = document.createElement('div');
+  box.className = 'lightbox';
+  box.innerHTML = `<img src="${esc(src)}" alt="${esc(name || 'Image')}"><div class="lb-bar"><span>${esc(name || '')}</span>
+    <a class="btn sm ghost" href="${esc(src.replace('?inline=1', ''))}">Download</a><button class="btn sm" type="button" data-lb-close>Close</button></div>`;
+  const close = () => { box.remove(); document.removeEventListener('keydown', key, true); };
+  const key = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  box.addEventListener('click', (e) => { if (e.target === box || e.target.closest('[data-lb-close]')) close(); });
+  document.addEventListener('keydown', key, true);
+  document.body.appendChild(box);
+}
+function commentImagesHTML(c) {
+  if (!c.images || !c.images.length) return '';
+  return `<div class="c-imgs ${c.images.length === 1 ? 'one' : ''}">${c.images.map((f) => `<button type="button" class="c-img" data-img="${f.id}" title="${esc(f.original_name)}">
+    <img src="${fileUrl(f.id)}" alt="${esc(f.original_name)}" loading="lazy"></button>`).join('')}</div>`;
+}
+function reactionsHTML(c) {
+  const order = (e) => { const i = REACTION_EMOJI.indexOf(e); return i < 0 ? 99 : i; };
+  const chips = [...(c.reactions || [])].sort((a, b) => order(a.emoji) - order(b.emoji)).map((r) => `<button type="button" class="rx ${r.mine ? 'mine' : ''}" data-react="${esc(r.emoji)}"
+    title="${esc(r.names.join(', '))} reacted with ${esc(r.emoji)}"><span class="rx-e">${esc(r.emoji)}</span><span>${r.count}</span></button>`).join('');
+  return `<div class="rx-row ${chips ? '' : 'rx-none'}">${chips}<button type="button" class="rx rx-add" data-react-add title="Add reaction">${I.smile}<span>+</span></button></div>`;
+}
+function emojiPicker(anchor, onPick) {
+  $('.emoji-pop')?.remove();
+  const pop = document.createElement('div');
+  pop.className = 'emoji-pop';
+  pop.innerHTML = REACTION_EMOJI.map((e) => `<button type="button" data-e="${e}">${e}</button>`).join('');
+  document.body.appendChild(pop);
+  const r = anchor.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+  pop.style.left = `${Math.max(8, Math.min(r.left, innerWidth - w - 8))}px`;
+  pop.style.top = `${r.top - h - 6 > 8 ? r.top - h - 6 : r.bottom + 6}px`;
+  const close = () => { pop.remove(); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', key, true); };
+  const outside = (e) => { if (!pop.contains(e.target) && !anchor.contains(e.target)) close(); };
+  const key = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  pop.addEventListener('click', (e) => { const b = e.target.closest('[data-e]'); if (b) { close(); onPick(b.dataset.e); } });
+  setTimeout(() => { document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', key, true); });
+}
+
 function setupComments(el, taskId) {
-  const list = $('#t-comments', el), ta = $('#c-body', el);
+  const list = $('#t-comments', el), ta = $('#c-body', el), tray = $('#c-tray', el);
   attachMentionPicker(ta, $('#c-pop', el));
   let comments = [];
-  const draw = () => {
-    $('#c-count', el).textContent = comments.length ? `· ${comments.length}` : '';
-    list.innerHTML = comments.length ? comments.map((c) => `<div class="comment" data-cid="${c.id}">
+  let pending = [];   // images attached to the comment being written: { key, url, id?, name }
+  const commentHTML = (c) => `<div class="comment" data-cid="${c.id}">
       ${av(c.user_name || 'Former member', c.user_avatar, 'sm')}
       <div class="comment-main">
         <div class="comment-head"><b>${esc(c.user_name || 'Former member')}</b><span class="comment-time" title="${esc(fmtDateTs(c.created_at))} ${esc(fmtTime(c.created_at))}">${timeAgo(c.created_at)}${c.edited_at ? ' · edited' : ''}</span>
-          <span class="comment-actions">${c.user_id === S.me.id ? `<button data-c-edit="${c.id}">Edit</button>` : ''}${c.user_id === S.me.id || isExec() ? `<button data-c-del="${c.id}">Delete</button>` : ''}</span></div>
-        <div class="comment-body">${renderRich(c.body)}</div>
-      </div></div>`).join('') : '<p class="small muted">No comments yet. Start the conversation — type @ to tag someone.</p>';
-    list.scrollTop = list.scrollHeight;
+          <span class="comment-actions"><button data-react-add title="Add reaction">${I.smile.replace('width="18" height="18"', 'width="14" height="14"')}</button>${c.user_id === S.me.id ? `<button data-c-edit="${c.id}">Edit</button>` : ''}${c.user_id === S.me.id || isExec() ? `<button data-c-del="${c.id}">Delete</button>` : ''}</span></div>
+        ${c.body ? `<div class="comment-body">${renderRich(c.body)}</div>` : ''}
+        ${commentImagesHTML(c)}
+        ${reactionsHTML(c)}
+      </div></div>`;
+  const draw = (stay) => {
+    const top = list.scrollTop;
+    $('#c-count', el).textContent = comments.length ? `· ${comments.length}` : '';
+    list.innerHTML = comments.length ? comments.map(commentHTML).join('') : '<p class="small muted">No comments yet. Start the conversation — type @ to tag someone.</p>';
+    list.scrollTop = stay ? top : list.scrollHeight;
+    if (!stay) $$('img', list).forEach((img) => img.addEventListener('load', () => { list.scrollTop = list.scrollHeight; }, { once: true }));
+  };
+  const drawOne = (c) => {   // update a single comment in place (reactions) without jumping the scroll
+    const i = comments.findIndex((x) => x.id === c.id); if (i < 0) return;
+    comments[i] = c;
+    const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+    const node = $(`[data-cid="${c.id}"]`, list); if (node) node.outerHTML = commentHTML(c);
+    if (atBottom) list.scrollTop = list.scrollHeight;
+  };
+  const drawTray = () => {
+    tray.hidden = !pending.length;
+    tray.innerHTML = pending.map((p) => `<span class="c-thumb ${p.id ? '' : 'loading'}" title="${esc(p.name)}"><img src="${p.url}" alt="">
+      <button type="button" data-unattach="${p.key}" aria-label="Remove image">${I.x.replace('width="18" height="18"', 'width="11" height="11"')}</button></span>`).join('');
+  };
+  const addImages = (files) => {
+    const imgs = [...files].filter((f) => f.type.startsWith('image/'));
+    if (!imgs.length) return false;
+    if (pending.length + imgs.length > 10) { toast('Up to 10 images per comment', 'err'); return true; }
+    imgs.forEach(async (file) => {
+      if (file.size > 10 * 1024 * 1024) { toast(`${file.name || 'Image'} is over 10 MB`, 'err'); return; }
+      const ext = (file.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+      const name = file.name && file.name !== 'image.png' ? file.name : `Screenshot ${new Date().toLocaleString()}.${ext}`.replace(/[/:]/g, '-');
+      const p = { key: Math.random().toString(36).slice(2), url: URL.createObjectURL(file), name };
+      pending.push(p); drawTray();
+      try {
+        const fd = new FormData(); fd.append('file', file, name);
+        p.id = (await api('POST', '/api/comment-images', fd)).id;
+      } catch (err) { pending = pending.filter((x) => x !== p); toast(err.message, 'err'); }
+      drawTray();
+    });
+    return true;
   };
   const load = async () => { comments = await api('GET', `/api/tasks/${taskId}/comments`); draw(); };
   const send = async () => {
-    const text = ta.value.trim(); if (!text) return;
+    const text = ta.value.trim(); if (!text && !pending.length) return;
+    if (pending.some((p) => !p.id)) { toast('Still uploading your image — one moment'); return; }
     const btn = $('#c-send', el); btn.disabled = true;
-    try { comments.push(await api('POST', `/api/tasks/${taskId}/comments`, { body: mentionsToTokens(text) })); ta.value = ''; draw(); }
-    catch (err) { toast(err.message, 'err'); } finally { btn.disabled = false; }
+    try {
+      comments.push(await api('POST', `/api/tasks/${taskId}/comments`, { body: mentionsToTokens(text), image_ids: pending.map((p) => p.id) }));
+      ta.value = ''; pending.forEach((p) => URL.revokeObjectURL(p.url)); pending = []; drawTray(); draw();
+    } catch (err) { toast(err.message, 'err'); } finally { btn.disabled = false; }
   };
   $('#c-send', el).onclick = send;
   ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } });
+  ta.addEventListener('paste', (e) => {   // screenshots and copied photos
+    const files = [...(e.clipboardData?.items || [])].filter((i) => i.kind === 'file').map((i) => i.getAsFile()).filter(Boolean);
+    if (files.length && addImages(files)) e.preventDefault();
+  });
+  const box = ta.closest('.composer-box');
+  box.addEventListener('dragover', (e) => { if ([...(e.dataTransfer?.types || [])].includes('Files')) { e.preventDefault(); box.classList.add('drop'); } });
+  box.addEventListener('dragleave', () => box.classList.remove('drop'));
+  box.addEventListener('drop', (e) => { box.classList.remove('drop'); if (e.dataTransfer?.files?.length && addImages(e.dataTransfer.files)) e.preventDefault(); });
+  $('#c-file', el).onchange = (e) => { addImages(e.target.files); e.target.value = ''; };
+  tray.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-unattach]'); if (!b) return;
+    const p = pending.find((x) => x.key === b.dataset.unattach);
+    pending = pending.filter((x) => x !== p); drawTray();
+    if (p?.id) api('DELETE', `/api/files/${p.id}`).catch(() => {});
+  });
   list.addEventListener('click', async (e) => {
     const ed = e.target.closest('[data-c-edit]'), de = e.target.closest('[data-c-del]');
+    const img = e.target.closest('[data-img]'), rx = e.target.closest('[data-react]'), add = e.target.closest('[data-react-add]');
+    const cid = Number(e.target.closest('[data-cid]')?.dataset.cid);
+    if (img) { lightbox(fileUrl(img.dataset.img), img.title); return; }
+    if (rx || add) {
+      const react = async (emoji) => { try { drawOne(await api('POST', `/api/comments/${cid}/reactions`, { emoji })); } catch (err) { toast(err.message, 'err'); } };
+      if (rx) react(rx.dataset.react); else emojiPicker(add, react);
+      return;
+    }
     if (de && await confirmModal('Delete this comment?')) {
-      try { await api('DELETE', `/api/comments/${de.dataset.cDel}`); comments = comments.filter((c) => c.id !== Number(de.dataset.cDel)); draw(); } catch (err) { toast(err.message, 'err'); }
+      try { await api('DELETE', `/api/comments/${de.dataset.cDel}`); comments = comments.filter((c) => c.id !== Number(de.dataset.cDel)); draw(true); } catch (err) { toast(err.message, 'err'); }
     }
     if (ed) {
       const c = comments.find((x) => x.id === Number(ed.dataset.cEdit));
-      const box = $(`[data-cid="${c.id}"] .comment-body`, list);
-      box.innerHTML = `<div class="composer-box"><textarea class="input" rows="3">${esc(tokensToMentions(c.body))}</textarea><div class="mention-pop hidden"></div>
+      let body = $(`[data-cid="${c.id}"] .comment-body`, list);
+      if (!body) { $(`[data-cid="${c.id}"] .comment-head`, list).insertAdjacentHTML('afterend', '<div class="comment-body"></div>'); body = $(`[data-cid="${c.id}"] .comment-body`, list); }
+      body.innerHTML = `<div class="composer-box"><textarea class="input" rows="3">${esc(tokensToMentions(c.body))}</textarea><div class="mention-pop hidden"></div>
         <div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn sm ghost" data-x>Cancel</button><button class="btn sm" data-ok>Save</button></div></div>`;
-      const eta = $('textarea', box); attachMentionPicker(eta, $('.mention-pop', box)); eta.focus();
-      $('[data-x]', box).onclick = draw;
-      $('[data-ok]', box).onclick = async () => {
-        try { const u = await api('PUT', `/api/comments/${c.id}`, { body: mentionsToTokens(eta.value) }); Object.assign(c, u); draw(); } catch (err) { toast(err.message, 'err'); }
+      const eta = $('textarea', body); attachMentionPicker(eta, $('.mention-pop', body)); eta.focus();
+      $('[data-x]', body).onclick = () => draw(true);
+      $('[data-ok]', body).onclick = async () => {
+        try { const u = await api('PUT', `/api/comments/${c.id}`, { body: mentionsToTokens(eta.value) }); Object.assign(c, u); draw(true); } catch (err) { toast(err.message, 'err'); }
       };
     }
   });

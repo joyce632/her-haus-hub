@@ -154,6 +154,9 @@ CREATE TABLE IF NOT EXISTS task_comments(
   id INTEGER PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, user_id INTEGER NOT NULL,
   body TEXT NOT NULL, created_at TEXT, edited_at TEXT);
 CREATE INDEX IF NOT EXISTS ix_comments_task ON task_comments(task_id, id);
+CREATE TABLE IF NOT EXISTS comment_reactions(
+  comment_id INTEGER NOT NULL REFERENCES task_comments(id) ON DELETE CASCADE, user_id INTEGER NOT NULL, emoji TEXT NOT NULL,
+  created_at TEXT, PRIMARY KEY(comment_id, user_id, emoji));
 CREATE TABLE IF NOT EXISTS notifications(
   id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, actor_id INTEGER, kind TEXT NOT NULL, task_id INTEGER,
   comment_id INTEGER, snippet TEXT DEFAULT '', read_at TEXT, created_at TEXT);
@@ -228,6 +231,9 @@ CREATE TABLE IF NOT EXISTS task_comments(
   id SERIAL PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, user_id INTEGER NOT NULL,
   body TEXT NOT NULL, created_at TEXT, edited_at TEXT);
 CREATE INDEX IF NOT EXISTS ix_comments_task ON task_comments(task_id, id);
+CREATE TABLE IF NOT EXISTS comment_reactions(
+  comment_id INTEGER NOT NULL REFERENCES task_comments(id) ON DELETE CASCADE, user_id INTEGER NOT NULL, emoji TEXT NOT NULL,
+  created_at TEXT, PRIMARY KEY(comment_id, user_id, emoji));
 CREATE TABLE IF NOT EXISTS notifications(
   id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL, actor_id INTEGER, kind TEXT NOT NULL, task_id INTEGER,
   comment_id INTEGER, snippet TEXT DEFAULT '', read_at TEXT, created_at TEXT);
@@ -243,13 +249,13 @@ CREATE TABLE IF NOT EXISTS recurring_rules(
 # Copy order respects foreign keys (parents first).
 PG_TABLES = ["users", "clients", "time_entries", "breaks", "tasks", "task_links", "files", "eods", "incidents", "kpis",
              "wins", "metrics", "resources", "settings", "task_comments", "notifications", "recurring_rules",
-             "task_followers"]
+             "task_followers", "comment_reactions"]
 PG_MIGRATIONS = ["ALTER TABLE tasks ADD COLUMN IF NOT EXISTS deadline_reminded TEXT"]
-_NO_ID_TABLES = {"settings", "task_followers"}
+_NO_ID_TABLES = {"settings", "task_followers", "comment_reactions"}
 _PG_PARENTS = {"time_entries": ("user_id", "users"), "breaks": ("entry_id", "time_entries"),
                "tasks": ("client_id", "clients"), "task_links": ("task_id", "tasks"),
                "task_comments": ("task_id", "tasks"), "recurring_rules": ("client_id", "clients"),
-               "task_followers": ("task_id", "tasks")}
+               "task_followers": ("task_id", "tasks"), "comment_reactions": ("comment_id", "task_comments")}
 
 
 def _to_pg(sql):
@@ -1552,8 +1558,9 @@ def reorder_tasks():
 def delete_task(tid):
     for f in q("SELECT * FROM files WHERE kind='task' AND ref_id=?", (tid,)):
         _remove_file(f)
+    for c in q("SELECT id FROM task_comments WHERE task_id=?", (tid,)):
+        _remove_comment(c["id"])
     ex("DELETE FROM notifications WHERE task_id=?", (tid,))
-    ex("DELETE FROM task_comments WHERE task_id=?", (tid,))
     ex("DELETE FROM task_followers WHERE task_id=?", (tid,))
     ex("DELETE FROM tasks WHERE id=?", (tid,))
     return jsonify(ok=True)
@@ -1594,8 +1601,59 @@ def _plain(text):
 
 
 def _comment_rows(where, args):
-    return q("SELECT m.*, u.name user_name, u.avatar_file_id user_avatar FROM task_comments m "
+    rows = q("SELECT m.*, u.name user_name, u.avatar_file_id user_avatar FROM task_comments m "
              "LEFT JOIN users u ON u.id=m.user_id WHERE " + where + " ORDER BY m.id", args)
+    if not rows:
+        return rows
+    ids = [r["id"] for r in rows]
+    marks = ",".join("?" * len(ids))
+    images, reactions = {}, {}
+    for f in q(f"SELECT id, ref_id, original_name, mime, size FROM files WHERE kind='comment' AND ref_id IN ({marks}) ORDER BY id", ids):
+        images.setdefault(f["ref_id"], []).append({k: f[k] for k in ("id", "original_name", "mime", "size")})
+    me = current_user()["id"]
+    for r in q(f"SELECT x.comment_id, x.emoji, x.user_id, u.name FROM comment_reactions x LEFT JOIN users u ON u.id=x.user_id "
+               f"WHERE x.comment_id IN ({marks}) ORDER BY x.created_at, x.user_id", ids):
+        group = reactions.setdefault(r["comment_id"], {}).setdefault(r["emoji"], {"emoji": r["emoji"], "count": 0, "names": [], "mine": False})
+        group["count"] += 1
+        group["names"].append(r["name"] or "Former member")
+        group["mine"] = group["mine"] or r["user_id"] == me
+    for r in rows:
+        r["images"] = images.get(r["id"], [])
+        r["reactions"] = list(reactions.get(r["id"], {}).values())
+    return rows
+
+
+COMMENT_IMAGE_MAX = 10 * 1024 * 1024
+
+
+@app.post("/api/comment-images")
+@login_required
+def upload_comment_image():
+    """A pasted or chosen image, uploaded before the comment is sent. It's linked to the comment when posted."""
+    fs = request.files.get("file")
+    if not fs or not (fs.mimetype or "").startswith("image/"):
+        return bad("Only images can be pasted into comments")
+    fid = _save_upload("comment", None)
+    f = q("SELECT id, original_name, mime, size, stored_name FROM files WHERE id=?", (fid,), one=True)
+    if f["size"] > COMMENT_IMAGE_MAX:
+        _remove_file(f)
+        return bad("That image is over 10 MB")
+    return jsonify(id=f["id"], original_name=f["original_name"], mime=f["mime"], size=f["size"])
+
+
+def _remove_comment(cid):
+    for f in q("SELECT * FROM files WHERE kind='comment' AND ref_id=?", (cid,)):
+        _remove_file(f)
+    ex("DELETE FROM comment_reactions WHERE comment_id=?", (cid,))
+    ex("DELETE FROM notifications WHERE comment_id=?", (cid,))
+    ex("DELETE FROM task_comments WHERE id=?", (cid,))
+
+
+def cleanup_comment_drafts():
+    """Images pasted into a comment that was never sent are removed after a day."""
+    cutoff = iso(now_utc() - timedelta(days=1))
+    for f in q("SELECT * FROM files WHERE kind='comment' AND ref_id IS NULL AND created_at<?", (cutoff,)):
+        _remove_file(f)
 
 
 @app.get("/api/tasks/<int:tid>/comments")
@@ -1608,8 +1666,12 @@ def list_comments(tid):
 @login_required
 def add_comment(tid):
     u = current_user()
-    text = (body().get("body") or "").strip()
-    if not text:
+    d = body()
+    text = (d.get("body") or "").strip()
+    image_ids = [int(i) for i in (d.get("image_ids") or []) if str(i).isdigit()][:10]
+    images = [f for f in (q("SELECT id FROM files WHERE id=? AND kind='comment' AND ref_id IS NULL AND owner_id=?",
+                            (i, u["id"]), one=True) for i in image_ids) if f]
+    if not text and not images:
         return bad("Write a comment first")
     if len(text) > 5000:
         return bad("Comment is too long (5,000 characters max)")
@@ -1617,7 +1679,10 @@ def add_comment(tid):
     if not task:
         abort(404)
     cid = ex("INSERT INTO task_comments(task_id,user_id,body,created_at) VALUES(?,?,?,?)", (tid, u["id"], text, iso(now_utc())))
-    snippet = _plain(text)
+    for f in images:
+        ex("UPDATE files SET ref_id=? WHERE id=?", (cid, f["id"]))
+    pics = f"📷 {len(images)} image{'s' if len(images) > 1 else ''}" if images else ""
+    snippet = " · ".join(x for x in (_plain(text), pics) if x)
     active = {r["id"] for r in q("SELECT id FROM users WHERE active=1")}
     mentioned = {int(m.group(2)) for m in MENTION_RE.finditer(text)} & active
     for uid in mentioned:
@@ -1641,7 +1706,7 @@ def edit_comment(cid):
     if c["user_id"] != current_user()["id"]:
         abort(403)
     text = (body().get("body") or "").strip()
-    if not text:
+    if not text and not q("SELECT 1 FROM files WHERE kind='comment' AND ref_id=?", (cid,), one=True):
         return bad("Comment can't be empty")
     before = {int(m.group(2)) for m in MENTION_RE.finditer(c["body"])}
     ex("UPDATE task_comments SET body=?, edited_at=? WHERE id=?", (text, iso(now_utc()), cid))
@@ -1659,9 +1724,26 @@ def delete_comment(cid):
         abort(404)
     if not (c["user_id"] == current_user()["id"] or is_exec()):
         abort(403)
-    ex("DELETE FROM notifications WHERE comment_id=?", (cid,))
-    ex("DELETE FROM task_comments WHERE id=?", (cid,))
+    _remove_comment(cid)
     return jsonify(ok=True)
+
+
+@app.post("/api/comments/<int:cid>/reactions")
+@login_required
+def toggle_reaction(cid):
+    """Add the emoji reaction, or remove it if this person already reacted with it."""
+    if not q("SELECT 1 FROM task_comments WHERE id=?", (cid,), one=True):
+        abort(404)
+    emoji = (body().get("emoji") or "").strip()
+    if not emoji or len(emoji) > 16:
+        return bad("Pick an emoji")
+    uid = current_user()["id"]
+    if q("SELECT 1 FROM comment_reactions WHERE comment_id=? AND user_id=? AND emoji=?", (cid, uid, emoji), one=True):
+        ex("DELETE FROM comment_reactions WHERE comment_id=? AND user_id=? AND emoji=?", (cid, uid, emoji))
+    else:
+        ex("INSERT OR IGNORE INTO comment_reactions(comment_id,user_id,emoji,created_at) VALUES(?,?,?,?)",
+           (cid, uid, emoji, iso(now_utc())))
+    return jsonify(_comment_rows("m.id=?", (cid,))[0])
 
 
 @app.get("/api/notifications")
@@ -2024,6 +2106,7 @@ def _scheduler_loop():
                 run_task_digest()
                 auto_archive()
                 run_deadline_reminders()
+                cleanup_comment_drafts()
         except Exception as e:  # keep the scheduler alive no matter what
             print("Automation scheduler error:", e)
         _time.sleep(30)
@@ -2165,7 +2248,7 @@ def _can_access_file(f):
     u = current_user()
     if is_exec() or f["owner_id"] == u["id"]:
         return True
-    if f["kind"] in ("task", "avatar"):
+    if f["kind"] in ("task", "avatar", "comment"):
         return True
     if f["kind"] == "resource":
         r = q("SELECT shared FROM resources WHERE file_id=?", (f["id"],), one=True)
