@@ -1617,3 +1617,6 @@ body:has(#hud-bar) #chat-pops { bottom: 0; }
 .cp-msg.first { margin-top: 8px; }
 .gif-item { height: auto; aspect-ratio: auto; }
 .gif-item img { width: 100%; height: auto; object-fit: cover; }
+.gif-grid { grid-auto-rows: max-content; }
+.gif-item { display: block; height: auto !important; }
+.gif-item img { display: block; width: 100%; height: auto !important; max-height: none; }
