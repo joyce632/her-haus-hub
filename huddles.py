@@ -84,7 +84,7 @@ def _out(h, me):
     for uid, p in h["participants"].items():
         u = _user(uid)
         if u:
-            people.append({"id": uid, "name": u["name"], "avatar_file_id": u["avatar_file_id"], "muted": p["muted"],
+            people.append({"id": uid, "name": u["name"], "avatar_file_id": u["avatar_file_id"], "muted": p["muted"], "sharing": p.get("sharing", False),
                            "joined_at": p["joined"], "is_me": uid == me})
     starter = _user(h["started_by"]) or {}
     return {"id": h["id"], "space_id": h["space_id"], "space_title": sp.get("display_name") or "", "space_type": sp.get("space_type") or "",
@@ -214,8 +214,15 @@ def register(module):
         u = H.current_user()
         with _lock:
             h = _get(hid, u["id"], must_be_in=True)
-            h["participants"][u["id"]]["muted"] = bool(H.body().get("muted"))
-            _broadcast(h, u["id"], "state", {"muted": h["participants"][u["id"]]["muted"]})
+            d = H.body()
+            me = h["participants"][u["id"]]
+            if "muted" in d:
+                me["muted"] = bool(d.get("muted"))
+            if "sharing" in d:
+                if d.get("sharing") and any(p.get("sharing") for uid, p in h["participants"].items() if uid != u["id"]):
+                    return H.bad("Someone else is already sharing their screen", 409)
+                me["sharing"] = bool(d.get("sharing"))
+            _broadcast(h, u["id"], "state", {"muted": me["muted"], "sharing": me.get("sharing", False)})
         return jsonify(ok=True)
 
     @app.post("/api/huddles/<hid>/signal")
@@ -225,7 +232,7 @@ def register(module):
         u = H.current_user()
         d = request.get_json(silent=True) or {}
         kind = d.get("type")
-        if kind not in ("offer", "answer", "ice"):
+        if kind not in ("offer", "answer", "ice", "reoffer", "reanswer"):   # re-: adding/removing a shared screen mid-call
             return H.bad("Unknown signal")
         payload = json.dumps(d.get("data"))
         if len(payload) > 60_000:

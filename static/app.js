@@ -201,6 +201,9 @@ const I = {
   user: svg('<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/>'),
   clock: svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
   check: svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>'),
+  play: svg('<path d="M8 5.5v13l11-6.5z" fill="currentColor" stroke="none"/>'),
+  pause: svg('<rect x="6.5" y="5" width="4" height="14" rx="1" fill="currentColor" stroke="none"/><rect x="13.5" y="5" width="4" height="14" rx="1" fill="currentColor" stroke="none"/>'),
+  monitor: svg('<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>'),
   headset: svg('<path d="M4 14v-2a8 8 0 0116 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/>'),
   micOff: svg('<path d="M3 3l18 18"/><path d="M9 9v2a3 3 0 005.1 2.1M15 10V6a3 3 0 00-5.7-1.3"/><path d="M5 11a7 7 0 0011.4 5.4M19 11a7 7 0 01-.6 2.8M12 18v3M8.5 21h7"/>'),
   userPlus: svg('<circle cx="9" cy="8" r="3.5"/><path d="M2 20c0-3.5 3-6 7-6s7 2.5 7 6"/><path d="M19 8v6M16 11h6"/>'),
@@ -3007,7 +3010,86 @@ function chatFmt(raw) {
   return s.replace(/\u0000(\d+)\u0000/g, (_m, i) => codes[i]);
 }
 // a voice note: inline player
-const voiceHTML = (a) => `<div class="voice"><span class="voice-ic">${I.mic}</span><audio controls preload="metadata" src="${esc(a.url)}"></audio></div>`;
+function voiceHTML(a) {
+  let h = 0; for (const c of a.url) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  const bars = Array.from({ length: 30 }, (_, i) => { h = (h * 1103515245 + 12345) >>> 0; return 25 + ((h >>> 8) % 70) * (0.55 + 0.45 * Math.sin(i / 3)); });
+  return `<div class="vnote" data-vsrc="${esc(a.url)}"><button type="button" class="vplay" data-vplay aria-label="Play voice note">${I.play}</button>
+    <span class="vwave">${bars.map((b) => `<i style="height:${Math.max(18, Math.min(100, b)).toFixed(0)}%"></i>`).join('')}</span><span class="vtime">0:00</span></div>`;
+}
+// one voice note plays at a time; the bars fill in as it plays
+const VN = { audio: null, node: null };
+const fmtSecs = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-vplay]'); if (!btn) return;
+  const node = btn.closest('.vnote');
+  if (VN.node === node && VN.audio) { if (VN.audio.paused) VN.audio.play(); else VN.audio.pause(); return; }
+  if (VN.audio) { VN.audio.pause(); VN.node?.classList.remove('playing'); }
+  const audio = new Audio(node.dataset.vsrc); VN.audio = audio; VN.node = node;
+  const bars = $$('.vwave i', node), time = $('.vtime', node);
+  audio.ontimeupdate = () => {
+    const p = audio.duration ? audio.currentTime / audio.duration : 0;
+    bars.forEach((b, i) => b.classList.toggle('on', i / bars.length < p));
+    time.textContent = fmtSecs(audio.currentTime);
+  };
+  audio.onplay = () => { node.classList.add('playing'); btn.innerHTML = I.pause; };
+  audio.onpause = () => { node.classList.remove('playing'); btn.innerHTML = I.play; };
+  audio.onended = () => { bars.forEach((b) => b.classList.remove('on')); time.textContent = fmtSecs(audio.duration || 0); };
+  audio.play().catch(() => toast('Couldn’t play that voice note', 'err'));
+});
+document.addEventListener('click', (e) => {   // tap the bars to jump
+  const wave = e.target.closest('.vnote.playing .vwave'); if (!wave || !VN.audio || !VN.audio.duration) return;
+  const r = wave.getBoundingClientRect(); VN.audio.currentTime = VN.audio.duration * Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+});
+// show each voice note's length once it's on screen
+const vnObserver = 'IntersectionObserver' in window ? new IntersectionObserver((entries) => entries.forEach((en) => {
+  if (!en.isIntersecting) return; vnObserver.unobserve(en.target);
+  const a = new Audio(); a.preload = 'metadata'; a.src = en.target.dataset.vsrc;
+  a.onloadedmetadata = () => { const t = $('.vtime', en.target); if (t && t.textContent === '0:00' && isFinite(a.duration)) t.textContent = fmtSecs(a.duration); };
+})) : null;
+new MutationObserver(() => { if (vnObserver) $$('.vnote:not([data-vseen])').forEach((n) => { n.dataset.vseen = '1'; vnObserver.observe(n); }); }).observe(document.body, { childList: true, subtree: true });
+
+// photos & GIFs: one shows on its own, several become an album grid; tap to open the gallery
+function albumHTML(imgs) {
+  if (!imgs.length) return '';
+  const n = imgs.length, shown = imgs.slice(0, 4);
+  return `<div class="album n${Math.min(n, 4)}" data-album="${esc(JSON.stringify(imgs.map((a) => ({ url: a.url, name: a.name }))))}">${shown.map((a, i) => `<button type="button" class="album-item" data-album-i="${i}" title="${esc(a.name)}">
+    <img src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy">${i === 3 && n > 4 ? `<span class="album-more">+${n - 4}</span>` : ''}</button>`).join('')}</div>`;
+}
+document.addEventListener('click', (e) => {
+  const it = e.target.closest('.album-item'); if (!it) return;
+  e.stopPropagation();
+  let items = [];
+  try { items = JSON.parse(it.closest('.album').dataset.album); } catch (_) { items = []; }
+  gallery(items, Number(it.dataset.albumI));
+}, true);
+function gallery(items, start = 0) {
+  let i = start;
+  const box = document.createElement('div');
+  box.className = 'lightbox gallery';
+  const draw = () => {
+    const it = items[i];
+    box.innerHTML = `<img src="${esc(it.url)}" alt="${esc(it.name)}">
+      ${items.length > 1 ? `<button type="button" class="gal-nav prev" data-g="-1" aria-label="Previous">‹</button><button type="button" class="gal-nav next" data-g="1" aria-label="Next">›</button>` : ''}
+      <div class="lb-bar"><span>${items.length > 1 ? `${i + 1} of ${items.length} · ` : ''}${esc(it.name || '')}</span>
+      <a class="btn sm ghost" href="${esc(it.url.replace('?inline=1', ''))}${it.url.includes('/api/chat/') ? '?download=1' : ''}">Download</a><button class="btn sm" type="button" data-lb-close>Close</button></div>`;
+  };
+  const close = () => { box.remove(); document.removeEventListener('keydown', key, true); };
+  const key = (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); close(); }
+    else if (e.key === 'ArrowRight' && items.length > 1) { i = (i + 1) % items.length; draw(); }
+    else if (e.key === 'ArrowLeft' && items.length > 1) { i = (i - 1 + items.length) % items.length; draw(); }
+  };
+  box.addEventListener('click', (e) => {
+    const nav = e.target.closest('[data-g]');
+    if (nav) { i = (i + Number(nav.dataset.g) + items.length) % items.length; draw(); return; }
+    if (e.target === box || e.target.closest('[data-lb-close]')) close();
+  });
+  let sx = null;   // swipe on phones
+  box.addEventListener('touchstart', (e) => { sx = e.touches[0].clientX; }, { passive: true });
+  box.addEventListener('touchend', (e) => { if (sx == null || items.length < 2) return; const dx = e.changedTouches[0].clientX - sx; if (Math.abs(dx) > 50) { i = (i + (dx < 0 ? 1 : -1) + items.length) % items.length; draw(); } sx = null; });
+  document.addEventListener('keydown', key, true);
+  draw(); document.body.appendChild(box);
+}
 // a Google Meet link in a message becomes a Join card
 function meetHTML(text) {
   const m = /https:\/\/meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}/i.exec(text || '');
@@ -3060,7 +3142,7 @@ function chatMsgHTML(m, prev, opts = {}) {
       ${m.deleted ? `<div class="cmsg-body deleted">${I.x.replace('width="18" height="18"', 'width="12" height="12"')}${unsentText(m)}</div>`
         : `${m.text ? `<div class="cmsg-body">${chatTextHTML(m, opts.myGid)}${m.edited ? ' <span class="cmsg-edited">(edited)</span>' : ''}</div>` : ''}
       ${m.card_text ? `<div class="cmsg-card">${esc(m.card_text)}</div>` : ''}
-      ${imgs.length ? `<div class="c-imgs ${imgs.length === 1 ? 'one' : ''}">${imgs.map((a) => `<button type="button" class="c-img" data-chat-img="${esc(a.url)}" title="${esc(a.name)}"><img src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy"></button>`).join('')}</div>` : ''}
+      ${albumHTML(imgs)}
       ${audios.map((a) => voiceHTML(a)).join('')}
       ${meetHTML(m.text)}
       ${files.length ? `<div class="cmsg-files">${files.map((a) => `<a class="cmsg-file" href="${esc(a.url)}${a.drive ? '' : '?download=1'}" target="_blank" rel="noopener">${I.clip.replace('width="18" height="18"', 'width="14" height="14"')}<span>${esc(a.name)}</span></a>`).join('')}</div>` : ''}`}
@@ -3150,10 +3232,12 @@ function chatComposerHTML(id, placeholder) {
   return `<div class="ccomp" id="${id}">
     <div class="c-tray" hidden></div>
     <div class="ccomp-box"><textarea class="input" rows="1" placeholder="${esc(placeholder)}"></textarea><div class="mention-pop hidden"></div>
+      <button type="button" class="icon-btn ccomp-more" title="Attach, GIF, photo, voice">${I.plus}</button>
+      <span class="ccomp-tools">
       <label class="icon-btn" title="Attach files (or paste / drop them)">${I.clip}<input type="file" multiple hidden></label>
       <button type="button" class="icon-btn ccomp-gif" title="Send a GIF">GIF</button>
       <button type="button" class="icon-btn ccomp-cam" title="Take a photo">${I.camera}</button>
-      <button type="button" class="icon-btn ccomp-mic" title="Record a voice note">${I.mic}</button>
+      <button type="button" class="icon-btn ccomp-mic" title="Record a voice note">${I.mic}</button></span>
       <button type="button" class="btn sm ccomp-send" title="Send (Enter)">${I.send}</button></div>
     <div class="ccomp-rec" hidden><span class="rec-dot"></span><span class="rec-time">0:00</span><span class="rec-bars">${'<i></i>'.repeat(24)}</span>
       <button type="button" class="icon-btn rec-cancel" title="Discard">${I.trash}</button>
@@ -3165,7 +3249,14 @@ function chatComposerHTML(id, placeholder) {
 function bindChatComposer(root, spaceId, send) {
   const ta = $('textarea', root), tray = $('.c-tray', root), pop = $('.mention-pop', root), btn = $('.ccomp-send', root);
   let files = [], picked = {}, matches = [], idx = 0, start = -1;
-  const grow = () => { ta.style.height = 'auto'; ta.style.height = `${Math.min(ta.scrollHeight, 180)}px`; };
+  const grow = () => {   // grows to two lines, then scrolls inside; the extra buttons tuck away while you type
+    ta.style.height = 'auto';
+    const line = parseFloat(getComputedStyle(ta).lineHeight) || 19, pad = parseFloat(getComputedStyle(ta).paddingTop) * 2 || 14;
+    ta.style.height = `${Math.min(ta.scrollHeight, line * 2 + pad)}px`;
+    ta.style.overflowY = ta.scrollHeight > line * 2 + pad + 2 ? 'auto' : 'hidden';
+    root.classList.toggle('typing', !!ta.value.trim()); root.classList.remove('tools-open');
+  };
+  $('.ccomp-more', root).onclick = () => root.classList.toggle('tools-open');
   const drawTray = () => {
     tray.hidden = !files.length;
     tray.innerHTML = files.map((f, i) => f.url ? `<span class="c-thumb" title="${esc(f.file.name)}"><img src="${f.url}" alt=""><button type="button" data-unattach="${i}" aria-label="Remove">${I.x.replace('width="18" height="18"', 'width="11" height="11"')}</button></span>`
@@ -3536,7 +3627,7 @@ function newChatModal(kind, onCreated) {
 // ============================================================ huddles: live voice calls in the hub (see huddles.py)
 // Audio goes browser-to-browser (WebRTC). The newest person to join calls everyone already there, so two
 // browsers never call each other at the same time. Signals travel through the hub with a 1-second check-in.
-const HUD = { list: [], cur: null, stream: null, pcs: new Map(), audios: new Map(), pendingIce: new Map(), since: 0, timer: null,
+const HUD = { screen: null, screenSenders: new Map(), list: [], cur: null, stream: null, pcs: new Map(), audios: new Map(), pendingIce: new Map(), since: 0, timer: null,
   muted: false, ice: [{ urls: ['stun:stun.l.google.com:19302'] }], levels: new Map(), dismissed: new Set(), ringing: new Map(), failed: new Set() };
 const huddleFor = (spaceId) => HUD.list.find((h) => h.space_id === Number(spaceId));
 const inHuddle = (userId) => HUD.list.some((h) => h.participants.some((p) => p.id === userId));
@@ -3620,6 +3711,8 @@ async function leaveHuddle(silent) {
   HUD.pcs.forEach((pc) => pc.close()); HUD.pcs.clear();
   HUD.audios.forEach((a) => a.remove()); HUD.audios.clear(); HUD.pendingIce.clear(); HUD.levels.clear();
   HUD.stream?.getTracks().forEach((t) => t.stop()); HUD.stream = null; HUD.cur = null;
+  HUD.screen?.getTracks().forEach((t) => t.stop()); HUD.screen = null; HUD.screenSenders.clear();
+  $$('.hud-screen').forEach((n) => n.remove());
   $('#hud-bar')?.remove();
   if (!silent) { playTone('leave', true); await api('POST', `/api/huddles/${h.id}/leave`, {}).catch(() => {}); }
   refreshHuddles();
@@ -3634,6 +3727,7 @@ function makePeer(uid, initiator) {
   HUD.stream.getTracks().forEach((t) => pc.addTrack(t, HUD.stream));
   pc.onicecandidate = (e) => { if (e.candidate) sendSignal(uid, 'ice', e.candidate.toJSON()); };
   pc.ontrack = (e) => {
+    if (e.track.kind === 'video') { showScreen(uid, new MediaStream([e.track])); e.track.onended = () => hideScreen(uid); return; }
     let a = HUD.audios.get(uid);
     if (!a) { a = document.createElement('audio'); a.autoplay = true; a.playsInline = true; a.dataset.hudPeer = uid; document.body.appendChild(a); HUD.audios.set(uid, a); }
     a.srcObject = e.streams[0]; a.play().catch(() => toast('Click anywhere to hear the huddle', 'err'));
@@ -3652,9 +3746,22 @@ function makePeer(uid, initiator) {
   }
   return pc;
 }
+async function renegotiate(uid) {
+  const pc = HUD.pcs.get(uid); if (!pc || pc.signalingState !== 'stable') return;
+  const o = await pc.createOffer(); await pc.setLocalDescription(o);
+  sendSignal(uid, 'reoffer', pc.localDescription.toJSON());
+}
 async function onSignal(s) {
   const uid = s.from;
   try {
+    if (s.type === 'reoffer') {   // they started/stopped sharing a screen
+      const pc = HUD.pcs.get(uid); if (!pc) return;
+      await pc.setRemoteDescription(s.data);
+      const ans = await pc.createAnswer(); await pc.setLocalDescription(ans);
+      sendSignal(uid, 'reanswer', pc.localDescription.toJSON());
+      return;
+    }
+    if (s.type === 'reanswer') { const pc = HUD.pcs.get(uid); if (pc && pc.signalingState === 'have-local-offer') await pc.setRemoteDescription(s.data); return; }
     if (s.type === 'offer') {
       const pc = makePeer(uid, false);
       await pc.setRemoteDescription(s.data);
@@ -3662,6 +3769,7 @@ async function onSignal(s) {
       HUD.pendingIce.delete(uid);
       const ans = await pc.createAnswer(); await pc.setLocalDescription(ans);
       sendSignal(uid, 'answer', pc.localDescription.toJSON());
+      if (HUD.screen) setTimeout(() => shareTo(uid), 1200);   // someone joined while I'm sharing: send them my screen too
     } else if (s.type === 'answer') {
       const pc = HUD.pcs.get(uid); if (pc && pc.signalingState === 'have-local-offer') await pc.setRemoteDescription(s.data);
       for (const c of HUD.pendingIce.get(uid) || []) await pc?.addIceCandidate(c).catch(() => {});
@@ -3671,6 +3779,7 @@ async function onSignal(s) {
       if (pc && pc.remoteDescription) await pc.addIceCandidate(s.data).catch(() => {});
       else { if (!HUD.pendingIce.has(uid)) HUD.pendingIce.set(uid, []); HUD.pendingIce.get(uid).push(s.data); }
     } else if (s.type === 'leave') {
+      hideScreen(uid);
       HUD.pcs.get(uid)?.close(); HUD.pcs.delete(uid); HUD.audios.get(uid)?.remove(); HUD.audios.delete(uid); HUD.levels.delete(uid);
       playTone('leave', true);
     } else if (s.type === 'join') playTone('join', true);
@@ -3684,9 +3793,10 @@ async function pollHuddle() {
   if (HUD.cur !== h) return;
   if (r.ended) { toast('The huddle ended'); leaveHuddle(true); return; }
   for (const s of r.signals) { HUD.since = Math.max(HUD.since, s.seq); await onSignal(s); }
-  const before = JSON.stringify(HUD.cur.participants.map((p) => [p.id, p.muted]));
+  const before = JSON.stringify(HUD.cur.participants.map((p) => [p.id, p.muted, p.sharing]));
   HUD.cur = r.huddle;
-  if (JSON.stringify(HUD.cur.participants.map((p) => [p.id, p.muted])) !== before) drawHuddleBar();
+  HUD.cur.participants.forEach((p) => { if (!p.sharing && !p.is_me) hideScreen(p.id); });
+  if (JSON.stringify(HUD.cur.participants.map((p) => [p.id, p.muted, p.sharing])) !== before) drawHuddleBar();
 }
 
 // ---- who's talking (green ring)
@@ -3720,10 +3830,11 @@ function drawHuddleBar() {
   if (!foot && bar.parentElement && bar.parentElement !== document.body) bar.remove();
   if (foot && bar.nextElementSibling !== foot) foot.before(bar); else if (!foot && !bar.isConnected) document.body.appendChild(bar);
   bar.innerHTML = `<span class="hud-live">${I.headset}</span>
-    <span class="hud-info"><b>${esc(h.space_title || 'Huddle')}</b><small>Huddle · <span data-hud-clock></span> · ${h.participants.length} ${h.participants.length === 1 ? 'person' : 'people'}</small></span>
+    <span class="hud-info"><b>${esc(h.space_title || 'Huddle')}</b><small>${HUD.screen ? '<span class="hud-sharing">● Sharing your screen</span>' : `Huddle · <span data-hud-clock></span> · ${h.participants.length} ${h.participants.length === 1 ? 'person' : 'people'}`}</small></span>
     ${huddleAvatars(h, 6)}
     <span class="hud-btns">
       <button type="button" class="hud-btn ${HUD.muted ? 'off' : ''}" data-hud-mute title="${HUD.muted ? 'Unmute' : 'Mute'}">${HUD.muted ? I.micOff : I.mic}</button>
+      <button type="button" class="hud-btn ${HUD.screen ? 'on' : ''}" data-hud-share title="${HUD.screen ? 'Stop sharing your screen' : 'Share your screen'}">${I.monitor}</button>
       <button type="button" class="hud-btn" data-hud-invite title="Invite people">${I.userPlus}</button>
       <button type="button" class="hud-btn" data-hud-open title="Open the chat">${I.chat}</button>
       <button type="button" class="hud-btn leave" data-hud-leave title="Leave huddle">${I.phoneOff}</button></span>`;
@@ -3748,7 +3859,62 @@ document.addEventListener('click', async (e) => {
   }
   if (e.target.closest('[data-hud-open]')) { location.hash = `#/chat/${HUD.cur.space_id}`; return; }
   if (e.target.closest('[data-hud-invite]')) huddleInvite(e.target.closest('[data-hud-invite]'));
+  if (e.target.closest('[data-hud-share]')) { if (HUD.screen) stopShare(); else startShare(); }
 });
+// ---- screen share: one person at a time; everyone in the huddle sees it in a viewer
+async function startShare() {
+  const h = HUD.cur; if (!h) return;
+  const other = h.participants.find((p) => p.sharing && !p.is_me);
+  if (other) { toast(`${other.name.split(' ')[0]} is already sharing — ask them to stop first`, 'err'); return; }
+  if (!navigator.mediaDevices?.getDisplayMedia) { toast('Screen sharing needs a desktop browser (Chrome, Edge or Safari)', 'err'); return; }
+  let screen;
+  try { screen = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 24 } }, audio: false }); }
+  catch (_) { return; }   // they cancelled the picker
+  try { await api('PUT', `/api/huddles/${h.id}/me`, { sharing: true }); }
+  catch (err) { screen.getTracks().forEach((t) => t.stop()); toast(err.message, 'err'); return; }
+  HUD.screen = screen;
+  screen.getVideoTracks()[0].onended = () => stopShare();   // the browser's own "Stop sharing" button
+  HUD.pcs.forEach((_pc, uid) => shareTo(uid));
+  showScreen('me', screen);
+  drawHuddleBar();
+}
+function shareTo(uid) {
+  const pc = HUD.pcs.get(uid); if (!pc || !HUD.screen || HUD.screenSenders.has(uid)) return;
+  HUD.screenSenders.set(uid, pc.addTrack(HUD.screen.getVideoTracks()[0], HUD.screen));
+  renegotiate(uid);
+}
+async function stopShare() {
+  if (!HUD.screen) return;
+  HUD.screenSenders.forEach((sender, uid) => { const pc = HUD.pcs.get(uid); try { pc?.removeTrack(sender); } catch (_) { /* closed */ } renegotiate(uid); });
+  HUD.screenSenders.clear();
+  HUD.screen.getTracks().forEach((t) => t.stop()); HUD.screen = null;
+  hideScreen('me');
+  if (HUD.cur) api('PUT', `/api/huddles/${HUD.cur.id}/me`, { sharing: false }).catch(() => {});
+  drawHuddleBar();
+}
+function showScreen(uid, stream) {
+  const id = `hud-screen-${uid}`;
+  let box = document.getElementById(id);
+  const who = uid === 'me' ? 'You are' : `${esc((HUD.cur?.participants.find((p) => p.id === uid)?.name || 'Someone').split(' ')[0])} is`;
+  if (!box) {
+    box = document.createElement('div'); box.id = id; box.className = `hud-screen ${uid === 'me' ? 'mine small' : ''}`;
+    box.innerHTML = `<div class="hs-head"><span>${I.monitor} ${who} sharing ${uid === 'me' ? 'your' : 'their'} screen</span>
+      <button type="button" class="hs-btn" data-hs-size title="Bigger / smaller">⤢</button>
+      ${uid === 'me' ? '<button type="button" class="hs-btn stop" data-hs-stop>Stop sharing</button>' : '<button type="button" class="hs-btn" data-hs-full title="Full screen">⛶</button>'}
+      <button type="button" class="hs-btn" data-hs-min title="Minimize">–</button></div>
+      <video autoplay playsinline muted></video>`;
+    document.body.appendChild(box);
+    box.addEventListener('click', (e) => {
+      if (e.target.closest('[data-hs-size]')) box.classList.toggle('small');
+      if (e.target.closest('[data-hs-min]')) box.classList.toggle('min');
+      if (e.target.closest('[data-hs-stop]')) stopShare();
+      if (e.target.closest('[data-hs-full]')) $('video', box).requestFullscreen?.();
+    });
+  }
+  const v = $('video', box); v.srcObject = stream; v.play().catch(() => {});
+}
+function hideScreen(uid) { document.getElementById(`hud-screen-${uid}`)?.remove(); }
+
 function huddleInvite(anchor) {
   const h = HUD.cur; if (!h) return;
   const here = new Set(h.participants.map((p) => p.id));
@@ -3799,7 +3965,7 @@ async function chatPopup(sid, n, opts = {}) {
       ${chatComposerHTML(`cp-comp-${sid}`, 'Aa — type a message')}</div>`;
   chatPopsRoot().appendChild(el);
   const box = $('.cp-msgs', el);
-  let msgs = [], myGid = '', seen = [], more = true, loadingOlder = false;
+  let msgs = [], myGid = '', seen = [], more = true, loadingOlder = false, follow = true;
   const sameRun = (a, b) => a && b && a.sender.gid === b.sender.gid && !a.deleted && !b.deleted
     && new Date(b.create_time) - new Date(a.create_time) < 6 * 60000 && chatDay(a.create_time) === chatDay(b.create_time);
   const draw = (keep) => {
@@ -3812,17 +3978,16 @@ async function chatPopup(sid, n, opts = {}) {
       if (d !== day) { items.push({ key: `d:${d}`, html: `<div class="cp-day">${esc(d)}</div>` }); day = d; }
       const first = !sameRun(msgs[i - 1], m) || chatDay(msgs[i - 1].create_time) !== d;   // starts a run from this person
       const rx = (m.reactions || []).filter((x) => x.count);
-      const body = m.deleted ? `<i>${unsentText(m)}</i>`
-        : `${chatTextHTML(m, myGid) || ''}${m.attachments.filter((a) => a.is_image).map((a) => `<img src="${esc(a.url)}" alt="${esc(a.name)}" data-chat-img="${esc(a.url)}">`).join('')}`
-          + m.attachments.filter((a) => a.is_audio).map((a) => voiceHTML(a)).join('')
-          + m.attachments.filter((a) => !a.is_image && !a.is_audio).map((a) => `<a href="${esc(a.url)}" target="_blank" rel="noopener">📎 ${esc(a.name)}</a>`).join('')
-          + meetHTML(m.text);
+      // text goes in the bubble; photos, GIFs and voice notes stand on their own (no bubble around them)
+      const textHTML = m.deleted ? `<i>${unsentText(m)}</i>` : (chatTextHTML(m, myGid) || '')
+        + m.attachments.filter((a) => !a.is_image && !a.is_audio).map((a) => `<a href="${esc(a.url)}" target="_blank" rel="noopener">📎 ${esc(a.name)}</a>`).join('');
+      const media = m.deleted ? '' : albumHTML(m.attachments.filter((a) => a.is_image)) + m.attachments.filter((a) => a.is_audio).map((a) => voiceHTML(a)).join('') + meetHTML(m.text);
       const time = new Date(m.create_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
       items.push({ key: m.key || `m:${m.id}`, msg: true, html: `<div class="cp-msg ${m.sender.is_me ? 'me' : ''} ${first ? 'first' : 'cont'} ${m.pending ? 'pending' : ''} ${m.deleted ? 'unsent' : ''}" data-mid="${m.id}">
         ${m.sender.is_me ? '' : `<span class="cp-av-col">${first ? personAv(m.sender, 'sm') : ''}</span>`}
         <div class="cp-col">
           ${first ? `<span class="cp-who">${m.sender.is_me ? '' : `<b>${esc(m.sender.name)}</b>`}<time>${time}</time></span>` : ''}
-          <div class="cp-row"><div class="cp-bubble" title="${esc(time)}">${body}</div>
+          <div class="cp-row"><div class="cp-stack">${textHTML ? `<div class="cp-bubble" title="${esc(time)}">${textHTML}</div>` : ''}${media ? `<div class="cp-media">${media}</div>` : ''}</div>
             ${m.deleted || m.pending ? '' : `<button type="button" class="cp-react" data-react-add title="React">${I.smile}</button>`}</div>
           ${rx.length ? `<div class="cp-rx">${rx.map((x) => `<button type="button" class="${x.mine ? 'mine' : ''}" data-react="${esc(x.emoji)}">${esc(x.emoji)}${x.count > 1 ? ` ${x.count}` : ''}</button>`).join('')}</div>` : ''}
         </div></div>` });
@@ -3830,7 +3995,9 @@ async function chatPopup(sid, n, opts = {}) {
     });
     patchList(box, items, keep !== 'older' && !!box.dataset.painted);
     if (keep === 'older') box.scrollTop = box.scrollHeight - fromBottom;
-    else if (wasBottom || !box.dataset.painted || keep === 'bottom') box.scrollTop = box.scrollHeight;
+    else if (wasBottom || !box.dataset.painted || keep === 'bottom') { box.scrollTop = box.scrollHeight; follow = true; }
+    // photos load after they're placed: keep following the newest message while they do
+    $$('img', box).forEach((img) => { if (!img.complete && !img.dataset.f) { img.dataset.f = '1'; img.addEventListener('load', () => { if (follow) box.scrollTop = box.scrollHeight; }, { once: true }); } });
     box.dataset.painted = '1';
   };
   const mergeIn = (incoming) => {
@@ -3863,7 +4030,7 @@ async function chatPopup(sid, n, opts = {}) {
     } catch (err) { toast(err.message, 'err'); }
     loadingOlder = false; draw('older');
   };
-  box.addEventListener('scroll', () => { if (box.scrollTop < 60) loadOlder(); });
+  box.addEventListener('scroll', () => { follow = box.scrollHeight - box.scrollTop - box.clientHeight < 40; if (box.scrollTop < 60) loadOlder(); });
   const markRead = () => api('POST', `/api/chat/spaces/${sid}/read`, {}).then(pollNotifications).catch(() => {});
   p = { el, refresh, comp: null, timer: setInterval(() => { if (!document.hidden && !el.classList.contains('min')) refresh(); }, 5000) };
   chatPops.set(sid, p);
