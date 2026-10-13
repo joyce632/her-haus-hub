@@ -482,7 +482,7 @@ def _notify_message(sid, mid):
         gid = (H.q("SELECT google_id FROM google_accounts WHERE user_id=?", (uid,), one=True) or {}).get("google_id")
         if "users/all" in mentioned or (gid and f"users/{gid}" in mentioned):
             _notify(uid, "chat_mention", sender_uid, sender_name, sid, snippet)
-        elif sp["space_type"] == "DIRECT_MESSAGE":
+        elif sp["space_type"] in ("DIRECT_MESSAGE", "GROUP_CHAT"):   # DMs and group chats ping everyone in them
             _notify(uid, "chat_dm", sender_uid, sender_name, sid, snippet)
 
 

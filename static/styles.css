@@ -1162,7 +1162,7 @@ body::before {
 .cl-chev { display: inline-grid; place-items: center; width: 14px; transition: transform .18s var(--ease); }
 .cl-sec.closed .cl-chev { transform: rotate(-90deg); }
 .cl-sec-n { font-weight: 600; letter-spacing: 0; opacity: .7; }
-.cl-badge.sm { min-width: 18px; height: 18px; font-size: 10px; margin-left: auto; letter-spacing: 0; }
+.cl-badge.sm { min-width: 18px; height: 18px; font-size: 10px; margin-left: auto; letter-spacing: 0; text-transform: none; }
 .cl-sec.drop-on { background: rgba(27,75,168,.1); box-shadow: inset 0 0 0 1px rgba(27,75,168,.35); }
 .cl-drop-hint { margin: 2px 6px 6px; padding: 10px; border: 1px dashed rgba(12,46,96,.18); border-radius: 10px; font-size: 11.5px; color: var(--muted); text-align: center; }
 .cl-drop-hint.drop-on { border-color: var(--royal); background: rgba(27,75,168,.06); color: var(--royal); }
@@ -1170,11 +1170,13 @@ body::before {
 .cl-item.dragging { opacity: .45; }
 .cl-item.drop-on { box-shadow: inset 0 2px 0 var(--royal); }
 .cl-av { position: relative; }
-.cl-dot { display: none; position: absolute; top: -2px; right: -2px; width: 10px; height: 10px; border-radius: 50%; background: var(--red); border: 2px solid #fff; }
+.cl-dot { display: none; position: absolute; top: -6px; right: -8px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 99px; background: var(--red); border: 2px solid #fff;
+  color: #fff; font: 700 10px/14px var(--font); font-style: normal; text-align: center; }
 .cl-more { flex: none; width: 26px; height: 26px; border: 0; border-radius: 7px; background: none; color: var(--muted); font-size: 16px; line-height: 1; cursor: pointer; opacity: 0; transition: opacity .12s; }
 .cl-item:hover .cl-more, .cl-sec:hover .cl-more, .cl-more:focus-visible { opacity: 1; }
 .cl-more:hover { background: rgba(12,46,96,.08); color: var(--navy); }
-.cl-item:hover .cl-badge { display: none; }
+.cl-item .cl-more { order: 2; }
+.cl-item .cl-badge { order: 1; }
 .as-menu button.danger { color: var(--red); }
 .chat-wrap.side-mini { grid-template-columns: 68px minmax(0, 1fr); }
 .chat-wrap.side-mini.has-thread { grid-template-columns: 68px minmax(0, 1fr) 360px; }
@@ -1215,3 +1217,54 @@ body::before {
 @keyframes cmFade { from { opacity: 0; } to { opacity: 1; } }
 .cl-item { will-change: transform; }
 @media (prefers-reduced-motion: reduce) { .cm-fade { animation: none; } }
+
+/* ---------- pop-up chat boxes (Messenger style, bottom-right on every page) */
+#chat-pops { position: fixed; right: 24px; bottom: 0; z-index: 90; display: flex; flex-direction: row-reverse; align-items: flex-end; gap: 12px; pointer-events: none; }
+body:has(#chat-pops > .chat-pop) #toast-root { right: auto; left: 24px; }
+.chat-pop { pointer-events: auto; width: 330px; max-width: calc(100vw - 32px); height: 440px; max-height: calc(100vh - 90px); display: flex; flex-direction: column;
+  border-radius: 16px 16px 0 0; overflow: hidden; background: rgba(255, 255, 255, .97); border: 1px solid var(--line); border-bottom: 0;
+  box-shadow: 0 24px 60px -12px rgba(8, 31, 66, .38); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+  animation: cpIn .26s var(--ease) both; transition: height .22s var(--ease); }
+@keyframes cpIn { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
+.chat-pop.leaving { animation: cpOut .18s ease both; }
+@keyframes cpOut { to { opacity: 0; transform: translateY(24px); } }
+.chat-pop.bump { animation: cpBump .45s var(--ease); }
+@keyframes cpBump { 30% { transform: translateY(-8px); } }
+.chat-pop.min { height: 52px; }
+.chat-pop.min .cp-body { display: none; }
+.cp-head { display: flex; align-items: center; gap: 9px; padding: 9px 8px 9px 12px; color: #fff; cursor: pointer; flex: none;
+  background: linear-gradient(135deg, var(--royal, #1B4BA8), var(--navy) 70%); }
+.cp-av .avatar, .cp-av .space-av { width: 32px; height: 32px; border: 2px solid rgba(255,255,255,.5); }
+.cp-title { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.2; }
+.cp-title b { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cp-title small { font-size: 10.5px; opacity: .75; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cp-btn { width: 28px; height: 28px; border: 0; border-radius: 8px; background: none; color: #fff; display: grid; place-items: center; cursor: pointer; font-size: 16px; font-weight: 700; opacity: .85; }
+.cp-btn:hover { background: rgba(255,255,255,.16); opacity: 1; }
+.cp-btn svg { width: 15px; height: 15px; }
+.cp-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.cp-msgs { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 12px 6px; display: flex; flex-direction: column; gap: 6px; background: linear-gradient(#f7f9fc, #fff); scrollbar-width: thin; }
+.cp-msgs .cm-skel { padding: 4px 0; }
+.cp-msg { display: flex; flex-direction: column; align-items: flex-start; max-width: 85%; }
+.cp-msg.me { align-self: flex-end; align-items: flex-end; }
+.cp-msg.cm-in { animation: cmIn .28s var(--ease) both; }
+.cp-who { font-size: 10.5px; font-weight: 600; color: var(--muted); margin: 0 0 2px 10px; }
+.cp-bubble { padding: 8px 12px; border-radius: 16px 16px 16px 5px; background: #fff; border: 1px solid var(--line); font-size: 13px; line-height: 1.45; color: var(--ink);
+  overflow-wrap: anywhere; box-shadow: 0 1px 2px rgba(12,46,96,.05); }
+.cp-msg.me .cp-bubble { border-radius: 16px 16px 5px 16px; background: linear-gradient(135deg, var(--royal, #1B4BA8), var(--navy)); color: #fff; border-color: transparent; }
+.cp-msg.me .cp-bubble a { color: #dbe7ff; }
+.cp-msg.me .mention { background: rgba(255,255,255,.18); color: #fff; }
+.cp-msg.pending .cp-bubble { opacity: .55; }
+.cp-bubble img { display: block; max-width: 100%; max-height: 180px; margin-top: 6px; border-radius: 10px; cursor: zoom-in; }
+.cp-bubble a { display: block; margin-top: 4px; color: var(--royal); font-weight: 600; font-size: 12px; }
+.chat-pop .ccomp { padding: 8px 10px 10px; }
+.chat-pop .ccomp-hint { display: none; }
+.chat-pop .ccomp-box { border-radius: 20px; padding: 3px 4px 3px 12px; }
+.chat-pop .ccomp-box textarea { font-size: 13px; padding: 7px 0; }
+.chat-pop .ccomp-send { width: 34px; height: 32px; border-radius: 50%; }
+.chat-pop .c-thumb { width: 48px; height: 48px; }
+@media (max-width: 760px) {
+  #chat-pops { right: 8px; left: 8px; justify-content: flex-start; }
+  #chat-pops .chat-pop:not(:first-child) { display: none; }
+  .chat-pop { width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) { .chat-pop, .chat-pop.leaving, .chat-pop.bump { animation: none; } }

@@ -500,7 +500,6 @@ const chatNav = () => navLink('chat', I.chat, 'Chat', '<span class="nav-count" i
 function renderShell() {
   const execNav = [
     navLink('overview', I.chart, 'Overview'),
-    notifNav(),
     chatNav(),
     navLink('team', I.users, 'Team'),
     navLink('timesheets', I.clock, 'Timesheets & Payroll'),
@@ -513,7 +512,6 @@ function renderShell() {
   ];
   const empNav = [
     navLink('dashboard', I.home, 'My Dashboard'),
-    notifNav(),
     chatNav(),
     navLink('eod', I.doc, 'Submit EOD'),
     navLink('metrics', I.bars, 'My Task Metrics'),
@@ -1850,7 +1848,10 @@ async function pollNotifications() {
       const loudest = SOUND_PRIORITY.find((k) => kinds.includes(k));
       if (loudest) playTone(loudest);
       r.new.forEach(desktopAlert);
-      if (!document.hidden) { const [t, body] = alertPlain(r.new[r.new.length - 1]); toast(`${t}: ${body}`.slice(0, 140)); }
+      const chats = r.new.filter((x) => x.chat_space_id && x.kind.startsWith('chat_'));
+      [...new Set(chats.map((x) => x.chat_space_id))].forEach((sid) => chatPopup(sid, chats.filter((x) => x.chat_space_id === sid).pop()));
+      const others = r.new.filter((x) => !chats.includes(x));
+      if (!document.hidden && others.length) { const [t, body] = alertPlain(others[others.length - 1]); toast(`${t}: ${body}`.slice(0, 140)); }
     }
     const changed = r.unread !== floaterInbox.unread || (r.new || []).length;
     lastNotifId = Math.max(lastNotifId || 0, r.latest_id || 0);
@@ -1873,7 +1874,7 @@ function notifText(n) {
   if (n.kind === 'assigned') return n.actor_id ? `${who} assigned you ${task}` : `New recurring task for you: ${task}`;
   if (n.kind === 'deadline') return `${task} is due in 15 minutes`;
   if (n.kind === 'follow') return `${who} added you as a follower on ${task}`;
-  if (n.kind === 'chat_dm') return `${who} sent you a message in Google Chat`;
+  if (n.kind === 'chat_dm') return `${who} sent you a message${n.chat_title ? ` in <b>${esc(n.chat_title)}</b>` : ''}`;
   if (n.kind === 'chat_mention') return `${who} mentioned you in ${n.chat_title ? `<b>${esc(n.chat_title)}</b>` : 'Google Chat'}`;
   return task;
 }
@@ -3201,6 +3202,79 @@ async function chatSend(spaceId, { text, files }, thread) {
   return api('POST', `/api/chat/spaces/${spaceId}/messages`, { text, thread: thread || '' });
 }
 
+
+// ============================================================ chat pop-ups (a new DM / group message / mention, on any page)
+const chatPops = new Map();   // space id -> { el, timer, msgs }
+function chatPopsRoot() {
+  let root = $('#chat-pops');
+  if (!root) { root = document.createElement('div'); root.id = 'chat-pops'; document.body.appendChild(root); }
+  return root;
+}
+function closeChatPopup(sid) {
+  const p = chatPops.get(sid); if (!p) return;
+  clearInterval(p.timer); chatPops.delete(sid);
+  p.el.classList.add('leaving'); setTimeout(() => p.el.remove(), 180);
+}
+async function chatPopup(sid, n, opts = {}) {
+  sid = Number(sid);
+  // already looking at this conversation on the Chat page: nothing to pop up
+  if (!opts.manual && !document.hidden && location.hash.replace(/\?.*$/, '') === `#/chat/${sid}`) return;
+  let p = chatPops.get(sid);
+  if (p) { p.el.classList.remove('min'); p.el.classList.remove('bump'); void p.el.offsetWidth; p.el.classList.add('bump'); p.refresh(); if (opts.manual) p.comp?.focus(); return; }
+  if (chatPops.size >= 3) closeChatPopup(chatPops.keys().next().value);   // at most three at once: drop the oldest
+  const title = opts.title || (n && n.chat_title ? n.chat_title : (n && n.actor_name) || 'Google Chat');
+  const el = document.createElement('div');
+  el.className = 'chat-pop';
+  el.innerHTML = `<header class="cp-head">
+      <span class="cp-av">${opts.avatar || av(n && n.actor_name || title, n && n.actor_avatar)}</span>
+      <span class="cp-title"><b>${esc(title)}</b><small>${esc(opts.sub || (n && n.chat_title ? `${n.actor_name || ''} · Google Chat` : 'Google Chat'))}</small></span>
+      <button type="button" class="cp-btn" data-cp-open title="Open in Chat">${I.ext}</button>
+      <button type="button" class="cp-btn" data-cp-min title="Minimize">–</button>
+      <button type="button" class="cp-btn" data-cp-close title="Close">${I.x}</button></header>
+    <div class="cp-body"><div class="cp-msgs"><div class="cm-skel"><i></i><span><b></b><em></em></span></div></div>
+      ${chatComposerHTML(`cp-comp-${sid}`, 'Aa — type a message')}</div>`;
+  chatPopsRoot().appendChild(el);
+  const box = $('.cp-msgs', el);
+  let msgs = [], myGid = '';
+  const draw = () => {
+    const wasBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+    const shown = msgs.slice(-12);
+    patchList(box, shown.map((m, i) => ({ key: m.key || `m:${m.id}`, msg: true, html: `<div class="cp-msg ${m.sender.is_me ? 'me' : ''} ${m.pending ? 'pending' : ''}">
+      ${m.sender.is_me || (i && shown[i - 1].sender.gid === m.sender.gid) ? '' : `<span class="cp-who">${esc(m.sender.name.split(' ')[0])}</span>`}
+      <div class="cp-bubble">${m.deleted ? '<i>Message deleted</i>' : chatTextHTML(m, myGid) || ''}${m.attachments.filter((a) => a.is_image).map((a) => `<img src="${esc(a.url)}" alt="${esc(a.name)}" data-chat-img="${esc(a.url)}">`).join('')}${m.attachments.filter((a) => !a.is_image).map((a) => `<a href="${esc(a.url)}" target="_blank" rel="noopener">📎 ${esc(a.name)}</a>`).join('')}</div></div>` })), true);
+    if (wasBottom || !box.dataset.painted) box.scrollTop = box.scrollHeight;
+    box.dataset.painted = '1';
+  };
+  const refresh = async () => {
+    try {
+      const r = await api('GET', `/api/chat/spaces/${sid}/messages?live=1&limit=15`);
+      // in threaded spaces, the newest activity may be a reply: show it too
+      msgs = r.messages;
+      if (!myGid) myGid = (msgs.find((m) => m.sender.is_me) || {}).sender?.gid || '';
+      draw();
+    } catch (err) { if (!msgs.length) box.innerHTML = `<div class="empty">${esc(err.message)}</div>`; }
+  };
+  const markRead = () => api('POST', `/api/chat/spaces/${sid}/read`, {}).then(pollNotifications).catch(() => {});
+  p = { el, refresh, comp: null, timer: setInterval(() => { if (!document.hidden && !el.classList.contains('min')) refresh(); }, 5000) };
+  chatPops.set(sid, p);
+  el.addEventListener('click', (e) => {
+    if (e.target.closest('[data-cp-close]')) { closeChatPopup(sid); return; }
+    if (e.target.closest('[data-cp-min]') || (e.target.closest('.cp-head') && el.classList.contains('min') && !e.target.closest('.cp-btn'))) { el.classList.toggle('min'); if (!el.classList.contains('min')) { refresh(); markRead(); } return; }
+    if (e.target.closest('[data-cp-open]')) { closeChatPopup(sid); location.hash = `#/chat/${sid}`; return; }
+    const img = e.target.closest('[data-chat-img]'); if (img) { lightbox(img.dataset.chatImg, img.alt, `${img.dataset.chatImg}?download=1`); return; }
+    if (e.target.closest('.cp-body')) markRead();
+  });
+  // full composer, like the Chat page: Enter to send, @mentions, paste or attach screenshots and files
+  p.comp = bindChatComposer($(`#cp-comp-${sid}`, el), sid, async (payload) => {
+    const pend = pendingMessage(sid, payload, '', myGid);
+    msgs = [...msgs, pend]; draw(); box.scrollTop = box.scrollHeight;
+    try { const m = await chatSend(sid, payload); m.key = pend.key; msgs = msgs.map((x) => (x === pend ? m : x)); draw(); markRead(); }
+    catch (err) { msgs = msgs.filter((x) => x !== pend); draw(); throw err; }
+  });
+  await refresh();
+  if (opts.manual) p.comp.focus();   // opened on purpose: ready to type (new-message pop-ups never steal the cursor)
+}
+
 async function pageChat(page, [sidParam], alive) {
   setTitle('Chat', 'Your Google Chat spaces and messages — synced both ways');
   const qp = new URLSearchParams(location.hash.split('?')[1] || '');
@@ -3264,7 +3338,7 @@ async function pageChat(page, [sidParam], alive) {
   };
   const isTeamSec = (id) => team.sections.some((x) => x.id === id);
   const itemHTML = (sp, sec) => `<a class="cl-item ${current && sp.id === current.id ? 'on' : ''} ${sp.unread ? 'unread' : ''}" href="#/chat/${sp.id}" draggable="true" data-space="${sp.id}" data-sec-of="${sec}" title="${esc(sp.title)}">
-      <span class="cl-av">${spaceAv(sp, 'sm')}${sp.unread ? '<i class="cl-dot"></i>' : ''}</span>
+      <span class="cl-av">${spaceAv(sp, 'sm')}${sp.unread ? `<i class="cl-dot">${sp.unread > 99 ? '99+' : sp.unread}</i>` : ''}</span>
       <span class="cl-main"><span class="cl-top"><b>${esc(sp.title)}</b><time>${sp.last_active ? chatClock(sp.last_active) : ''}</time></span>
         <span class="cl-prev">${sp.preview ? `${sp.preview.who ? `${esc(sp.preview.who)}: ` : ''}${esc(chatPlain(sp.preview.text))}` : '<i>No messages yet</i>'}</span></span>
       ${sp.unread ? `<span class="cl-badge">${sp.unread > 99 ? '99+' : sp.unread}</span>` : ''}
@@ -3296,7 +3370,7 @@ async function pageChat(page, [sidParam], alive) {
       const closed = !layout.mini && !!layout.collapsed[sec.id];   // the compact list always shows every chat
       const unread = list.reduce((n, x) => n + (x.unread || 0), 0);
       items.push({ key: `h:${sec.id}`, html: `<div class="cl-sec ${closed ? 'closed' : ''}" data-sec="${sec.id}">
-        <button type="button" class="cl-sec-btn" data-collapse="${sec.id}" ${sec.team ? 'title="Team section — set up by an executive for everyone"' : ''}><span class="cl-chev"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>${esc(sec.name)}${sec.team ? `<span class="cl-team-tag">${I.users.replace('width="18" height="18"', 'width="11" height="11"')}Team</span>` : ''}<span class="cl-sec-n">${list.length}</span>${closed && unread ? `<span class="cl-badge sm">${unread > 99 ? '99+' : unread}</span>` : ''}</button>
+        <button type="button" class="cl-sec-btn" data-collapse="${sec.id}" ${sec.team ? 'title="Team section — set up by an executive for everyone"' : ''}><span class="cl-chev"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>${esc(sec.name)}${sec.team ? `<span class="cl-team-tag">${I.users.replace('width="18" height="18"', 'width="11" height="11"')}Team</span>` : ''}${unread ? `<span class="cl-badge sm" title="${unread} unread">${unread > 99 ? '99+' : unread}</span>` : `<span class="cl-sec-n">${list.length}</span>`}</button>
         ${sec.custom || (sec.team && isExec()) ? `<button type="button" class="cl-more" data-sec-menu="${sec.id}" title="Section options" aria-label="Section options">⋯</button>` : ''}</div>` });
       if (closed) continue;
       if (!list.length) items.push({ key: `e:${sec.id}`, html: `<div class="cl-drop-hint" data-sec-drop="${sec.id}">${sec.team ? 'Drag spaces here — everyone in them will see this section' : 'Drag chats here'}</div>` });
@@ -3365,7 +3439,8 @@ async function pageChat(page, [sidParam], alive) {
     if (im) {
       e.preventDefault(); e.stopPropagation();
       const sid = Number(im.dataset.itemMenu), sp = spaces.find((x) => x.id === sid), sec = secOf(sp);
-      const entries = [sec === 'pinned' ? { text: 'Unpin', icon: '📌', run: () => moveTo(sid, sp.type === 'SPACE' ? 'spaces' : 'dms') } : { text: 'Pin to top', icon: '📌', run: () => moveTo(sid, 'pinned') }];
+      const entries = [{ text: 'Open as chat box', icon: '💬', run: () => chatPopup(sid, null, { manual: true, title: sp.title, sub: sp.type === 'SPACE' ? 'Space' : sp.type === 'GROUP_CHAT' ? 'Group chat' : 'Direct message', avatar: spaceAv(sp, 'sm') }) },
+        sec === 'pinned' ? { text: 'Unpin', icon: '📌', run: () => moveTo(sid, sp.type === 'SPACE' ? 'spaces' : 'dms') } : { text: 'Pin to top', icon: '📌', run: () => moveTo(sid, 'pinned') }];
       const others = layout.sections.filter((x) => x.id !== sec);
       entries.push({ label: isExec() ? 'My sections (just me)' : 'Move to section' }, ...others.map((x) => ({ text: x.name, icon: '›', run: () => moveTo(sid, x.id) })));
       entries.push({ text: 'New section…', icon: '+', run: () => newSection(sid) });
@@ -3477,6 +3552,7 @@ async function pageChat(page, [sidParam], alive) {
     const s = spaces.find((x) => x.id === sid);
     if (!s) { if (spaces.length) toast('That conversation isn’t available', 'err'); return; }
     if (current && msgs.length) convCache.set(current.id, { msgs, more, historyDone });
+    closeChatPopup(s.id);   // it's open in full now
     const cached = convCache.get(s.id);
     current = s; msgs = cached ? cached.msgs : []; more = cached ? cached.more : false; historyDone = cached ? cached.historyDone : true;
     thread = null; firstPaint = true; stick = true; threadEl.hidden = true; wrap.classList.add('has-open'); wrap.classList.remove('has-thread');
