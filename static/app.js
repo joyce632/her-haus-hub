@@ -201,6 +201,8 @@ const I = {
   user: svg('<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/>'),
   clock: svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
   check: svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>'),
+  mic: svg('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3M8.5 21h7"/>'),
+  video: svg('<rect x="3" y="6" width="13" height="12" rx="2.5"/><path d="M16 10.5l5-3v9l-5-3z"/>'),
   image: svg('<rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5-5-8 9"/>'),
   smile: svg('<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5s1.3 1.8 3.5 1.8 3.5-1.8 3.5-1.8"/><path d="M9 9.5h.01M15 9.5h.01" stroke-width="2.6"/>'),
   doc: svg('<path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4M9 12h6M9 16h6"/>'),
@@ -2987,6 +2989,15 @@ function chatFmt(raw) {
     .replace(/\n/g, '<br>');
   return s.replace(/\u0000(\d+)\u0000/g, (_m, i) => codes[i]);
 }
+// a voice note: inline player
+const voiceHTML = (a) => `<div class="voice"><span class="voice-ic">${I.mic}</span><audio controls preload="metadata" src="${esc(a.url)}"></audio></div>`;
+// a Google Meet link in a message becomes a Join card
+function meetHTML(text) {
+  const m = /https:\/\/meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}/i.exec(text || '');
+  if (!m) return '';
+  return `<a class="meet-card" href="${esc(m[0])}" target="_blank" rel="noopener"><span class="meet-ic">${I.video}</span>
+    <span class="meet-main"><b>Google Meet huddle</b><small>${esc(m[0].replace('https://', ''))}</small></span><span class="meet-join">Join</span></a>`;
+}
 const unsentText = (m) => ((m.deleted_by || 'CREATOR') === 'CREATOR'
   ? `${m.sender.is_me ? 'You' : esc(m.sender.name.split(' ')[0])} unsent a message`
   : 'This message was removed by a space manager');
@@ -3020,7 +3031,8 @@ function chatTextHTML(m, myGid) {
 function chatMsgHTML(m, prev, opts = {}) {
   const grouped = prev && !opts.thread && prev.sender.gid === m.sender.gid && !prev.reply_count && !m.deleted
     && new Date(m.create_time) - new Date(prev.create_time) < 6 * 60000 && chatDay(prev.create_time) === chatDay(m.create_time);
-  const imgs = m.attachments.filter((a) => a.is_image && !a.drive), files = m.attachments.filter((a) => !a.is_image || a.drive);
+  const imgs = m.attachments.filter((a) => a.is_image && !a.drive), audios = m.attachments.filter((a) => a.is_audio && !a.drive);
+  const files = m.attachments.filter((a) => (!a.is_image && !a.is_audio) || a.drive);
   const order = (e) => { const i = REACTION_EMOJI.indexOf(e); return i < 0 ? 99 : i; };
   const rx = [...m.reactions].sort((a, b) => order(a.emoji) - order(b.emoji));
   const full = new Date(m.create_time).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
@@ -3032,6 +3044,8 @@ function chatMsgHTML(m, prev, opts = {}) {
         : `${m.text ? `<div class="cmsg-body">${chatTextHTML(m, opts.myGid)}${m.edited ? ' <span class="cmsg-edited">(edited)</span>' : ''}</div>` : ''}
       ${m.card_text ? `<div class="cmsg-card">${esc(m.card_text)}</div>` : ''}
       ${imgs.length ? `<div class="c-imgs ${imgs.length === 1 ? 'one' : ''}">${imgs.map((a) => `<button type="button" class="c-img" data-chat-img="${esc(a.url)}" title="${esc(a.name)}"><img src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy"></button>`).join('')}</div>` : ''}
+      ${audios.map((a) => voiceHTML(a)).join('')}
+      ${meetHTML(m.text)}
       ${files.length ? `<div class="cmsg-files">${files.map((a) => `<a class="cmsg-file" href="${esc(a.url)}${a.drive ? '' : '?download=1'}" target="_blank" rel="noopener">${I.clip.replace('width="18" height="18"', 'width="14" height="14"')}<span>${esc(a.name)}</span></a>`).join('')}</div>` : ''}`}
       ${rx.length ? `<div class="rx-row">${rx.map((r) => `<button type="button" class="rx ${r.mine ? 'mine' : ''}" data-react="${esc(r.emoji)}"><span class="rx-e">${esc(r.emoji)}</span><span>${r.count}</span></button>`).join('')}<button type="button" class="rx rx-add" data-react-add title="Add reaction">${I.smile}<span>+</span></button></div>` : ''}
       ${m.reply_count && !opts.thread ? `<button type="button" class="cmsg-replies" data-thread="${esc(m.thread)}">${I.chat.replace('width="18" height="18"', 'width="14" height="14"')}${m.reply_count} ${m.reply_count === 1 ? 'reply' : 'replies'}<span>· last ${timeAgo(m.last_reply.replace(/\.\d+Z$/, 'Z'))}</span></button>` : ''}
@@ -3120,7 +3134,11 @@ function chatComposerHTML(id, placeholder) {
     <div class="c-tray" hidden></div>
     <div class="ccomp-box"><textarea class="input" rows="1" placeholder="${esc(placeholder)}"></textarea><div class="mention-pop hidden"></div>
       <label class="icon-btn" title="Attach files (or paste / drop them)">${I.clip}<input type="file" multiple hidden></label>
+      <button type="button" class="icon-btn ccomp-mic" title="Record a voice note">${I.mic}</button>
       <button type="button" class="btn sm ccomp-send" title="Send (Enter)">${I.send}</button></div>
+    <div class="ccomp-rec" hidden><span class="rec-dot"></span><span class="rec-time">0:00</span><span class="rec-bars">${'<i></i>'.repeat(24)}</span>
+      <button type="button" class="icon-btn rec-cancel" title="Discard">${I.trash}</button>
+      <button type="button" class="btn sm rec-send" title="Send voice note">${I.send}</button></div>
     <div class="ccomp-hint">Enter to send · Shift + Enter for a new line · @ to mention</div>
   </div>`;
 }
@@ -3186,11 +3204,52 @@ function bindChatComposer(root, spaceId, send) {
     files = []; picked = {}; ta.value = ''; drawTray(); grow(); ta.focus();
     try {
       await send({ text, display, files: sent.files.map((f) => f.file), previews: sent.files });
-      sent.files.forEach((f) => f.url && setTimeout(() => URL.revokeObjectURL(f.url), 10000));
+      sent.files.forEach((f) => f.url && setTimeout(() => URL.revokeObjectURL(f.url), 60000));
     } catch (err) {
       toast(err.message, 'err');
       if (!ta.value) { ta.value = display; files = sent.files; picked = sent.picked; drawTray(); grow(); }
     }
+  };
+  // ---- voice notes: tap the mic, talk, then send (or discard)
+  const rec = $('.ccomp-rec', root), box = $('.ccomp-box', root);
+  let recorder = null, chunks = [], recStart = 0, recTimer = null, stream = null, analyser = null;
+  const stopStream = () => { stream?.getTracks().forEach((t) => t.stop()); stream = null; clearInterval(recTimer); analyser = null; };
+  const showRec = (on) => { rec.hidden = !on; box.hidden = on; };
+  $('.ccomp-mic', root).onclick = async () => {
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { toast('Voice notes need a newer browser (Chrome, Edge or Safari)', 'err'); return; }
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    catch (_) { toast('Allow microphone access in your browser to record a voice note', 'err'); return; }
+    const type = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'].find((t) => MediaRecorder.isTypeSupported(t)) || '';
+    recorder = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
+    chunks = []; recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+    recorder.start(250); recStart = Date.now(); showRec(true);
+    try {   // little live level bars
+      const ctx = new (window.AudioContext || window.webkitAudioContext)(); const src = ctx.createMediaStreamSource(stream);
+      analyser = ctx.createAnalyser(); analyser.fftSize = 64; src.connect(analyser);
+    } catch (_) { analyser = null; }
+    const bars = $$('.rec-bars i', rec), data = new Uint8Array(32);
+    recTimer = setInterval(() => {
+      const secs = Math.floor((Date.now() - recStart) / 1000);
+      $('.rec-time', rec).textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+      if (analyser) { analyser.getByteFrequencyData(data); bars.forEach((b, i) => { b.style.height = `${4 + (data[i % 32] / 255) * 18}px`; }); }
+      if (secs >= 300) $('.rec-send', rec).click();   // five-minute limit
+    }, 120);
+  };
+  const finish = () => new Promise((resolve) => {
+    if (!recorder || recorder.state === 'inactive') return resolve(null);
+    recorder.onstop = () => resolve(new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }));
+    recorder.stop();
+  });
+  $('.rec-cancel', rec).onclick = async () => { await finish(); stopStream(); recorder = null; showRec(false); ta.focus(); };
+  $('.rec-send', rec).onclick = async () => {
+    const secs = Math.max(1, Math.round((Date.now() - recStart) / 1000));
+    const blob = await finish(); stopStream(); recorder = null; showRec(false);
+    if (!blob || blob.size < 800) { toast('That voice note was too short', 'err'); return; }
+    const ext = blob.type.includes('mp4') ? 'm4a' : blob.type.includes('ogg') ? 'ogg' : 'webm';
+    const file = new File([blob], `Voice note (${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}).${ext}`, { type: blob.type.split(';')[0] });
+    const preview = { file, url: URL.createObjectURL(file) };
+    try { await send({ text: '', display: '', files: [file], previews: [preview] }); setTimeout(() => URL.revokeObjectURL(preview.url), 60000); }
+    catch (err) { toast(err.message, 'err'); }
   };
   ta.addEventListener('keydown', (e) => {
     if (!pop.classList.contains('hidden') && matches.length) {
@@ -3203,11 +3262,23 @@ function bindChatComposer(root, spaceId, send) {
   btn.onclick = doSend;
   return { focus: () => ta.focus() };
 }
+// Start a Google Meet huddle for a chat: the Join link is posted in the chat, and the meeting opens for you.
+async function startHuddle(sid) {
+  const win = window.open('', '_blank');   // open the tab now (browsers block it after a wait), fill it in a moment
+  if (win) win.document.write('<p style="font:15px system-ui;padding:24px;color:#0C2E60">Starting your Google Meet huddle…</p>');
+  try {
+    const r = await api('POST', `/api/chat/spaces/${sid}/huddle`, {});
+    if (win) { win.opener = null; win.location.href = r.meeting_uri; } else window.open(r.meeting_uri, '_blank', 'noopener');
+    toast(r.posted ? 'Huddle started — the Join link is in the chat' : 'Meeting started (couldn’t post the link in the chat)', r.posted ? 'ok' : 'err');
+    return r;
+  } catch (err) { win?.close(); toast(err.message, 'err'); return null; }
+}
 let pendingSeq = 0;
 function pendingMessage(spaceId, { display, previews }, thread, myGid) {
   return { id: -(++pendingSeq), key: `p:${Date.now()}:${pendingSeq}`, pending: true, space_id: spaceId, thread: thread || '', thread_reply: !!thread,
     sender: { gid: myGid, name: S.me.name, avatar_file_id: S.me.avatar_file_id, is_me: true }, text: display || '', annotations: [],
-    attachments: (previews || []).map((f, i) => ({ index: i, name: f.file.name, type: f.file.type, is_image: !!f.url, url: f.url || '#', drive: false })),
+    attachments: (previews || []).map((f, i) => ({ index: i, name: f.file.name, type: f.file.type, is_image: f.file.type.startsWith('image/') && !!f.url,
+      is_audio: f.file.type.startsWith('audio/'), url: f.url || '#', drive: false })),
     reactions: [], create_time: new Date().toISOString().replace(/\.(\d{3})Z$/, '.$1000Z'), edited: false, deleted: false, reply_count: 0, can_edit: false };
 }
 async function chatSend(spaceId, { text, files }, thread) {
@@ -3245,6 +3316,7 @@ async function chatPopup(sid, n, opts = {}) {
   el.innerHTML = `<header class="cp-head">
       <span class="cp-av">${opts.avatar || av(n && n.actor_name || title, n && n.actor_avatar)}</span>
       <span class="cp-title"><b>${esc(title)}</b><small>${esc(opts.sub || (n && n.chat_title ? `${n.actor_name || ''} · Google Chat` : 'Google Chat'))}</small></span>
+      <button type="button" class="cp-btn" data-cp-huddle title="Start a Google Meet huddle">${I.video}</button>
       <button type="button" class="cp-btn" data-cp-open title="Open in Chat">${I.ext}</button>
       <button type="button" class="cp-btn" data-cp-min title="Minimize">–</button>
       <button type="button" class="cp-btn" data-cp-close title="Close">${I.x}</button></header>
@@ -3252,34 +3324,71 @@ async function chatPopup(sid, n, opts = {}) {
       ${chatComposerHTML(`cp-comp-${sid}`, 'Aa — type a message')}</div>`;
   chatPopsRoot().appendChild(el);
   const box = $('.cp-msgs', el);
-  let msgs = [], myGid = '', seen = [];
-  const draw = () => {
-    const wasBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
-    const shown = msgs.slice(-12);
-    const seenAt = seenMap(shown, seen);
-    const items = [];
-    shown.forEach((m, i) => {
+  let msgs = [], myGid = '', seen = [], more = true, loadingOlder = false;
+  const sameRun = (a, b) => a && b && a.sender.gid === b.sender.gid && !a.deleted && !b.deleted
+    && new Date(b.create_time) - new Date(a.create_time) < 6 * 60000 && chatDay(a.create_time) === chatDay(b.create_time);
+  const draw = (keep) => {
+    const wasBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40, fromBottom = box.scrollHeight - box.scrollTop;
+    const seenAt = seenMap(msgs, seen);
+    const items = [{ key: 'top', html: `<div class="cp-top">${loadingOlder ? '<span class="cm-spin"></span> Loading earlier messages…' : more ? '<button type="button" class="linkbtn" data-cp-older>Load earlier messages</button>' : 'Beginning of the conversation'}</div>` }];
+    let day = '';
+    msgs.forEach((m, i) => {
+      const d = chatDay(m.create_time);
+      if (d !== day) { items.push({ key: `d:${d}`, html: `<div class="cp-day">${esc(d)}</div>` }); day = d; }
+      const first = !sameRun(msgs[i - 1], m) || chatDay(msgs[i - 1].create_time) !== d;   // starts a run from this person
       const rx = (m.reactions || []).filter((x) => x.count);
-      items.push({ key: m.key || `m:${m.id}`, msg: true, html: `<div class="cp-msg ${m.sender.is_me ? 'me' : ''} ${m.pending ? 'pending' : ''} ${m.deleted ? 'unsent' : ''}" data-mid="${m.id}">
-      ${m.sender.is_me || (i && shown[i - 1].sender.gid === m.sender.gid) ? '' : `<span class="cp-who">${esc(m.sender.name.split(' ')[0])}</span>`}
-      <div class="cp-row"><div class="cp-bubble">${m.deleted ? `<i>${unsentText(m)}</i>` : `${chatTextHTML(m, myGid) || ''}${m.attachments.filter((a) => a.is_image).map((a) => `<img src="${esc(a.url)}" alt="${esc(a.name)}" data-chat-img="${esc(a.url)}">`).join('')}${m.attachments.filter((a) => !a.is_image).map((a) => `<a href="${esc(a.url)}" target="_blank" rel="noopener">📎 ${esc(a.name)}</a>`).join('')}`}</div>
-        ${m.deleted || m.pending ? '' : `<button type="button" class="cp-react" data-react-add title="React">${I.smile}</button>`}</div>
-      ${rx.length ? `<div class="cp-rx">${rx.map((x) => `<button type="button" class="${x.mine ? 'mine' : ''}" data-react="${esc(x.emoji)}">${esc(x.emoji)}${x.count > 1 ? ` ${x.count}` : ''}</button>`).join('')}</div>` : ''}</div>` });
+      const body = m.deleted ? `<i>${unsentText(m)}</i>`
+        : `${chatTextHTML(m, myGid) || ''}${m.attachments.filter((a) => a.is_image).map((a) => `<img src="${esc(a.url)}" alt="${esc(a.name)}" data-chat-img="${esc(a.url)}">`).join('')}`
+          + m.attachments.filter((a) => a.is_audio).map((a) => voiceHTML(a)).join('')
+          + m.attachments.filter((a) => !a.is_image && !a.is_audio).map((a) => `<a href="${esc(a.url)}" target="_blank" rel="noopener">📎 ${esc(a.name)}</a>`).join('')
+          + meetHTML(m.text);
+      const time = new Date(m.create_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      items.push({ key: m.key || `m:${m.id}`, msg: true, html: `<div class="cp-msg ${m.sender.is_me ? 'me' : ''} ${first ? 'first' : 'cont'} ${m.pending ? 'pending' : ''} ${m.deleted ? 'unsent' : ''}" data-mid="${m.id}">
+        ${m.sender.is_me ? '' : `<span class="cp-av-col">${first ? personAv(m.sender, 'sm') : ''}</span>`}
+        <div class="cp-col">
+          ${first ? `<span class="cp-who">${m.sender.is_me ? '' : `<b>${esc(m.sender.name)}</b>`}<time>${time}</time></span>` : ''}
+          <div class="cp-row"><div class="cp-bubble" title="${esc(time)}">${body}</div>
+            ${m.deleted || m.pending ? '' : `<button type="button" class="cp-react" data-react-add title="React">${I.smile}</button>`}</div>
+          ${rx.length ? `<div class="cp-rx">${rx.map((x) => `<button type="button" class="${x.mine ? 'mine' : ''}" data-react="${esc(x.emoji)}">${esc(x.emoji)}${x.count > 1 ? ` ${x.count}` : ''}</button>`).join('')}</div>` : ''}
+        </div></div>` });
       if (seenAt.has(m.id)) items.push({ key: `seen:${m.id}`, html: seenHTML(seenAt.get(m.id)) });
     });
-    patchList(box, items, true);
-    if (wasBottom || !box.dataset.painted) box.scrollTop = box.scrollHeight;
+    patchList(box, items, keep !== 'older' && !!box.dataset.painted);
+    if (keep === 'older') box.scrollTop = box.scrollHeight - fromBottom;
+    else if (wasBottom || !box.dataset.painted || keep === 'bottom') box.scrollTop = box.scrollHeight;
     box.dataset.painted = '1';
+  };
+  const mergeIn = (incoming) => {
+    const byId = new Map(msgs.map((m) => [m.id, m]));
+    for (const m of incoming) {
+      const pend = m.sender.is_me && [...byId.values()].find((x) => x.pending && x.text === m.text);
+      if (pend) { m.key = pend.key; byId.delete(pend.id); }
+      const old = byId.get(m.id); if (old && old.key) m.key = old.key;
+      byId.set(m.id, m);
+    }
+    msgs = [...byId.values()].sort((a, b) => (a.create_time < b.create_time ? -1 : a.create_time > b.create_time ? 1 : a.id - b.id));
   };
   const refresh = async () => {
     try {
-      const r = await api('GET', `/api/chat/spaces/${sid}/messages?live=1&limit=15`);
-      // in threaded spaces, the newest activity may be a reply: show it too
-      msgs = r.messages; seen = r.seen || [];
+      const r = await api('GET', `/api/chat/spaces/${sid}/messages?live=1&limit=20`);
+      if (!msgs.length) more = r.more;
+      mergeIn(r.messages); seen = r.seen || [];
       if (!myGid) myGid = (msgs.find((m) => m.sender.is_me) || {}).sender?.gid || '';
       draw();
     } catch (err) { if (!msgs.length) box.innerHTML = `<div class="empty">${esc(err.message)}</div>`; }
   };
+  // scroll up for older messages, as far back as the history goes
+  const loadOlder = async () => {
+    if (loadingOlder || !more || !msgs.length) return;
+    loadingOlder = true; draw('older');
+    try {
+      const oldest = msgs.find((m) => !m.pending);
+      const r = await api('GET', `/api/chat/spaces/${sid}/messages?before=${encodeURIComponent(oldest.create_time)}&limit=30`);
+      mergeIn(r.messages); more = r.more && r.messages.length > 0;
+    } catch (err) { toast(err.message, 'err'); }
+    loadingOlder = false; draw('older');
+  };
+  box.addEventListener('scroll', () => { if (box.scrollTop < 60) loadOlder(); });
   const markRead = () => api('POST', `/api/chat/spaces/${sid}/read`, {}).then(pollNotifications).catch(() => {});
   p = { el, refresh, comp: null, timer: setInterval(() => { if (!document.hidden && !el.classList.contains('min')) refresh(); }, 5000) };
   chatPops.set(sid, p);
@@ -3287,6 +3396,8 @@ async function chatPopup(sid, n, opts = {}) {
     if (e.target.closest('[data-cp-close]')) { closeChatPopup(sid); return; }
     if (e.target.closest('[data-cp-min]') || (e.target.closest('.cp-head') && el.classList.contains('min') && !e.target.closest('.cp-btn'))) { el.classList.toggle('min'); if (!el.classList.contains('min')) { refresh(); markRead(); } return; }
     if (e.target.closest('[data-cp-open]')) { closeChatPopup(sid); location.hash = `#/chat/${sid}`; return; }
+    if (e.target.closest('[data-cp-huddle]')) { startHuddle(sid).then((r) => { if (r && r.message) { mergeIn([r.message]); draw('bottom'); } }); return; }
+    if (e.target.closest('[data-cp-older]')) { loadOlder(); return; }
     const img = e.target.closest('[data-chat-img]'); if (img) { lightbox(img.dataset.chatImg, img.alt, `${img.dataset.chatImg}?download=1`); return; }
     const rxb = e.target.closest('[data-react]'), add = e.target.closest('[data-react-add]');
     if (rxb || add) {
@@ -3303,8 +3414,8 @@ async function chatPopup(sid, n, opts = {}) {
   // full composer, like the Chat page: Enter to send, @mentions, paste or attach screenshots and files
   p.comp = bindChatComposer($(`#cp-comp-${sid}`, el), sid, async (payload) => {
     const pend = pendingMessage(sid, payload, '', myGid);
-    msgs = [...msgs, pend]; draw(); box.scrollTop = box.scrollHeight;
-    try { const m = await chatSend(sid, payload); m.key = pend.key; msgs = msgs.map((x) => (x === pend ? m : x)); draw(); markRead(); }
+    msgs = [...msgs, pend]; draw('bottom');
+    try { const m = await chatSend(sid, payload); m.key = pend.key; msgs = msgs.filter((x) => x !== pend && x.id !== m.id); mergeIn([m]); draw('bottom'); markRead(); }
     catch (err) { msgs = msgs.filter((x) => x !== pend); draw(); throw err; }
   });
   await refresh();
@@ -3341,7 +3452,7 @@ async function pageChat(page, [sidParam], alive) {
       <div class="chat-side-head"><input class="input" id="cs-search" placeholder="Search chats & messages" autocomplete="off">
         <button class="icon-btn cs-btn" id="cs-new-sec" title="New section">${I.plus}</button>
         <button class="icon-btn cs-btn" id="cs-mini" title="Collapse chat list">«</button></div>
-      ${st.seen_sync ? '' : `<a class="cs-notice" href="/api/google/connect">${I.eye.replace('width="18" height="18"', 'width="14" height="14"')}<span><b>Turn on “Seen” & read sync</b> — reconnect once so reads in Google Chat show here too.</span></a>`}
+      ${st.seen_sync && st.huddles ? '' : `<a class="cs-notice" href="/api/google/connect">${I.eye.replace('width="18" height="18"', 'width="14" height="14"')}<span><b>Turn on “Seen”, read sync & huddles</b> — reconnect once to allow them.</span></a>`}
       <div class="chat-list" id="chat-list"><div class="empty">Loading…</div></div>
       <div class="chat-side-foot"><span title="${esc(st.email || '')}">${I.chat.replace('width="18" height="18"', 'width="13" height="13"')} ${esc(st.email || '')}</span><button class="linkbtn" id="gc-disconnect">Disconnect</button></div>
     </aside>
@@ -3633,11 +3744,16 @@ async function pageChat(page, [sidParam], alive) {
         ${spaceAv(s, 'sm')}<div class="cm-title"><b>${esc(s.title)}</b><span>${s.type === 'SPACE' ? 'Space' : s.type === 'GROUP_CHAT' ? 'Group chat' : 'Direct message'}${s.client ? ` · <a href="#/board/${s.client.id}"><span class="client-dot" style="background:${esc(s.client.color)}"></span>${esc(s.client.name)}</a>` : ''}</span></div>
         <div class="cm-actions">
           ${isExec() && s.type !== 'DIRECT_MESSAGE' ? `<select class="input sm" id="cm-client" title="Link this chat to a client board"><option value="">Link to client…</option>${S.clients.map((c) => `<option value="${c.id}" ${s.client && s.client.id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>` : ''}
+          <button type="button" class="btn sm cm-huddle" id="cm-huddle" title="Start a Google Meet huddle in this chat">${I.video}<span>Huddle</span></button>
           <a class="btn sm ghost cm-open" href="${esc(s.web_link)}" target="_blank" rel="noopener" title="Open in Google Chat">${I.ext || '↗'}<span>Google Chat</span></a></div></header>
       <div class="cm-msgs-wrap"><div class="cm-msgs cm-fade" id="cm-msgs">${cached ? '' : '<div class="cm-skel"><i></i><span><b></b><em></em></span></div>'.repeat(5)}</div>
         <button type="button" class="cm-newpill" id="cm-newpill">↓ New messages</button></div>
       ${chatComposerHTML('cm-comp', `Message ${s.type === 'DIRECT_MESSAGE' ? s.title : s.title}`)}`;
     $('#cm-back').onclick = () => { wrap.classList.remove('has-open'); location.hash = '#/chat'; };
+    $('#cm-huddle', main).onclick = async () => {
+      const r = await startHuddle(s.id);
+      if (r && r.message && current === s) { msgs = merge(msgs, [r.message]); drawMsgs('bottom'); }
+    };
     const pill = $('#cm-newpill', main), mbox = $('#cm-msgs', main);
     pill.onclick = async () => {
       pill.classList.remove('show');

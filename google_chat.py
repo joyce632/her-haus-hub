@@ -38,12 +38,15 @@ REVOKE_URL = os.environ.get("GOOGLE_REVOKE_URL", "https://oauth2.googleapis.com/
 USERINFO_URL = os.environ.get("GOOGLE_USERINFO_URL", "https://openidconnect.googleapis.com/v1/userinfo")
 CHAT_API = os.environ.get("GOOGLE_CHAT_API", "https://chat.googleapis.com").rstrip("/")
 PEOPLE_API = os.environ.get("GOOGLE_PEOPLE_API", "https://people.googleapis.com").rstrip("/")
+MEET_API = os.environ.get("GOOGLE_MEET_API", "https://meet.googleapis.com").rstrip("/")
+AUDIO_TYPES = {"audio/webm", "audio/ogg", "audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/aac", "audio/wav", "audio/x-wav"}
 SCOPES = [
     "openid", "email", "profile",
     "https://www.googleapis.com/auth/chat.spaces.readonly",
     "https://www.googleapis.com/auth/chat.messages",            # read, send, edit, delete, react
     "https://www.googleapis.com/auth/chat.memberships.readonly",
     "https://www.googleapis.com/auth/chat.users.readstate",      # "seen" + unread status, both ways
+    "https://www.googleapis.com/auth/meetings.space.created",    # start Google Meet huddles from a chat
     "https://www.googleapis.com/auth/directory.readonly",       # teammates' names and photos
 ]
 SYNC_SECONDS = int(os.environ.get("GCHAT_SYNC_SECONDS", "15"))
@@ -785,6 +788,7 @@ def _messages_out(rows, uid):
             "sender": sender, "text": "" if r["deleted"] else r["text"], "card_text": r["card_text"],
             "annotations": json.loads(r["annotations"] or "[]"),
             "attachments": [{"index": i, "name": a["name"], "type": a["type"], "is_image": a["type"].startswith("image/"),
+                             "is_audio": a["type"].split(";")[0] in AUDIO_TYPES,
                              "url": f"/api/chat/attachments/{r['id']}/{i}", "drive": bool(a.get("drive"))} for i, a in enumerate(atts)],
             "reactions": [{**x, "mine": (r["id"], x["emoji"]) in mine} for x in json.loads(r["reactions"] or "[]") if x.get("count")],
             "create_time": r["create_time"],
@@ -815,7 +819,7 @@ def register(module):
         spaces = H.q("SELECT COUNT(*) n, SUM(CASE WHEN s.backfill_done=1 THEN 1 ELSE 0 END) done FROM chat_members m "
                      "JOIN chat_spaces s ON s.id=m.space_id WHERE m.user_id=?", (u["id"],), one=True)
         return jsonify(configured=configured(), connected=bool(a and a["refresh_token"]), email=a and a["email"],
-                       seen_sync=_has_readstate(u["id"]),
+                       seen_sync=_has_readstate(u["id"]), huddles="meetings.space.created" in ((a and a.get("scopes")) or ""),
                        last_sync=a and a["last_sync"], error=(a and a["sync_error"]) or "",
                        syncing=u["id"] in _status, spaces=spaces["n"] or 0, history_done=spaces["done"] or 0,
                        redirect_uri=_redirect_uri() if H.is_exec() else None)
@@ -1031,6 +1035,34 @@ def register(module):
         _member_or_404(row["space_id"])
         return u, row
 
+    @app.post("/api/chat/spaces/<int:sid>/huddle")
+    @lr
+    def chat_huddle(sid):
+        """Start a Google Meet for this chat: anyone at the company can join without knocking; the link is posted in the chat."""
+        u = H.current_user()
+        sp = _member_or_404(sid)
+        a = _account(u["id"])
+        if not a or "meetings.space.created" not in (a.get("scopes") or ""):
+            return H.bad("Reconnect Google Chat once to turn on huddles (the blue notice on the Chat page).", 409)
+        try:
+            meet = gapi(u["id"], "POST", "/v2/spaces", base=MEET_API, body={"config": {"accessType": "TRUSTED"}})
+        except NotConnected:
+            return H.bad("Connect Google Chat first", 409)
+        except GoogleError as e:
+            if e.status == 403:
+                return H.bad("Google Meet isn't enabled for the hub yet — an admin needs to turn on the Google Meet REST API.", 502)
+            return H.bad(f"Google Meet didn't start: {e}", 502)
+        uri = meet.get("meetingUri") or ""
+        topic = (H.body().get("topic") or "").strip()[:80]
+        text = f"📞 *{u['name']}* started a huddle{(' — ' + topic) if topic else ''}. <{uri}|Join the Google Meet>"
+        try:
+            m = gapi(u["id"], "POST", f"/v1/{sp['gname']}/messages", body={"text": text})
+            _ingest(sid, u["id"], [m], notify=True)
+        except GoogleError as e:
+            return jsonify(meeting_uri=uri, posted=False, error=str(e))
+        row = H.q("SELECT * FROM chat_messages WHERE gname=?", (m["name"],), one=True)
+        return jsonify(meeting_uri=uri, posted=True, message=_messages_out([row], u["id"])[0])
+
     @app.put("/api/chat/messages/<int:mid>")
     @lr
     def chat_edit(mid):
@@ -1109,7 +1141,7 @@ def register(module):
             H.abort(404)
         cache_dir = os.path.join(H.UPLOAD_DIR, "chat_cache")
         os.makedirs(cache_dir, exist_ok=True)
-        path = os.path.join(cache_dir, hashlib.sha256(a["resource"].encode()).hexdigest())
+        path = os.path.join(cache_dir, hashlib.sha256(f"{row['gname']}|{idx}|{a['resource']}".encode()).hexdigest())
         if not os.path.exists(path):
             try:
                 data, ctype = gapi(u["id"], "GET", f"/v1/media/{a['resource']}", params={"alt": "media"}, binary=True, timeout=90)
@@ -1118,9 +1150,9 @@ def register(module):
             with open(path + ".tmp", "wb") as fh:
                 fh.write(data)
             os.replace(path + ".tmp", path)
-        inline = a["type"] in H.SAFE_IMAGE_TYPES and request.args.get("download") != "1"
+        inline = (a["type"] in H.SAFE_IMAGE_TYPES or a["type"].split(";")[0] in AUDIO_TYPES) and request.args.get("download") != "1"
         resp = send_file(path, mimetype=a["type"] if inline else (a["type"] or "application/octet-stream"),
-                         as_attachment=not inline, download_name=a["name"])
+                         as_attachment=not inline, download_name=a["name"], conditional=True)   # conditional: lets audio seek
         resp.headers["Cache-Control"] = "private, max-age=86400"
         return resp
 

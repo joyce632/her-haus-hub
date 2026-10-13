@@ -64,11 +64,11 @@ you in the hub (bell, sound, floating window).
 @herhauscompany.com admin:
 
 1. **Create a project** (top bar › project picker › *New project*), e.g. "Her Haus Hub".
-2. **Turn on the APIs** — *APIs & Services › Library*: enable **Google Chat API** and **People API**.
+2. **Turn on the APIs** — *APIs & Services › Library*: enable **Google Chat API**, **People API** and **Google Meet REST API** (for huddles).
 3. **Consent screen** — *Google Auth Platform › Branding › Get started*: app name "Her Haus Hub", your support
    email, Audience **Internal**, contact email › *Create*.
 4. **Scopes** — *Google Auth Platform › Data Access › Add or remove scopes*, add:
-   `chat.spaces.readonly`, `chat.messages`, `chat.memberships.readonly`, `chat.users.readstate` and `directory.readonly`
+   `chat.spaces.readonly`, `chat.messages`, `chat.memberships.readonly`, `chat.users.readstate`, `directory.readonly` and `meetings.space.created`
    (all under `https://www.googleapis.com/auth/`) › *Update* › *Save*.
 5. **OAuth client** — *Google Auth Platform › Clients › Create client*: type **Web application**, name
    "Her Haus Hub", Authorized redirect URI **https://teamhub.herhauscompany.com/api/google/callback** › *Create*.
