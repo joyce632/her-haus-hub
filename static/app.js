@@ -33,12 +33,21 @@ async function api(method, url, data) {
   const opt = { method, headers: { 'X-HH': '1' }, credentials: 'same-origin', cache: 'no-store' };
   if (data instanceof FormData) opt.body = data;
   else if (data !== undefined) { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(data); }
+  // A request can get stuck on the old copy of the app while a new version is switching in (a minute after each
+  // deploy). So reads give up after 10 seconds — or on a 502/503/504 — and try again, reaching the new copy.
+  const timed = (ms) => { const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), ms); return fetch(url, { ...opt, signal: ctl.signal }).finally(() => clearTimeout(t)); };
   let r;
-  try { r = await fetch(url, opt); }
-  catch (err) {  // network blip (often while a page is reloading): retry reads once
-    if (method !== 'GET') throw new Error('Connection problem — please try again');
-    await new Promise((res) => setTimeout(res, 600));
-    r = await fetch(url, opt);
+  if (method === 'GET') {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        r = await timed(10000);
+        if (![502, 503, 504].includes(r.status) || attempt >= 3) break;
+      } catch (err) { if (attempt >= 3) throw new Error('Connection problem — please try again'); }
+      await new Promise((res) => setTimeout(res, 600 * (attempt + 1)));
+    }
+  } else {
+    try { r = await timed(data instanceof FormData ? 180000 : 30000); }   // uploads get longer; writes never repeat themselves
+    catch (_) { throw new Error('Connection problem — please try again'); }
   }
   checkVersion(r);
   let j = null;
