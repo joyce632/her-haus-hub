@@ -21,13 +21,64 @@ _seq = [0]
 STALE_SECONDS = 25   # a participant whose browser stops checking in this long is dropped
 
 
+_turn_cache = {"servers": [], "until": 0}
+
+
+def _cloudflare_turn():
+    """Short-lived TURN credentials from Cloudflare (free tier). Relays audio when a direct connection is blocked
+    (shared/carrier-grade internet, strict office firewalls). Cached for a few hours."""
+    key_id, token = os.environ.get("CLOUDFLARE_TURN_KEY_ID"), os.environ.get("CLOUDFLARE_TURN_API_TOKEN")
+    if not key_id or not token:
+        return []
+    if _turn_cache["until"] > time.time():
+        return _turn_cache["servers"]
+    import urllib.request
+    base = os.environ.get("CLOUDFLARE_TURN_API", "https://rtc.live.cloudflare.com").rstrip("/")
+    try:
+        req = urllib.request.Request(f"{base}/v1/turn/keys/{key_id}/credentials/generate-ice-servers",
+                                     data=json.dumps({"ttl": 43200}).encode(), method="POST",
+                                     headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=8, context=H._ssl_ctx) as r:
+            body = json.loads(r.read() or b"{}")
+        servers = body.get("iceServers") or []
+        if isinstance(servers, dict):
+            servers = [servers]
+        _turn_cache.update(servers=servers, until=time.time() + 6 * 3600)
+        return servers
+    except Exception as e:   # keep huddles working on direct connections even if the relay can't be reached
+        print(f"[huddle] couldn't get TURN credentials: {e!r}", flush=True)
+        _turn_cache.update(servers=[], until=time.time() + 300)
+        return []
+
+
 def ice_servers():
-    """STUN by default; set HUDDLE_ICE_SERVERS (JSON) to add a TURN relay for strict networks."""
+    """STUN always; plus a TURN relay from Cloudflare (CLOUDFLARE_TURN_KEY_ID / CLOUDFLARE_TURN_API_TOKEN)
+    and/or any servers in HUDDLE_ICE_SERVERS (JSON)."""
     try:
         extra = json.loads(os.environ.get("HUDDLE_ICE_SERVERS") or "[]")
     except ValueError:
         extra = []
-    return [{"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"]}] + extra
+    return [{"urls": ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"]}] + _cloudflare_turn() + extra
+
+
+# ---------------------------------------------------------------- presence & typing (in memory, like huddles)
+LAST_SEEN = {}    # uid -> last time their browser talked to the hub
+TYPING = {}       # space id -> {uid: when they last typed}
+
+
+def presence_for(uid):
+    """Who's online (seen in the last 70s) and who's typing in the chats this person is in."""
+    now = time.time()
+    online = {u: int(now - t) for u, t in LAST_SEEN.items() if now - t < 6 * 3600}
+    mine = {r["space_id"] for r in H.q("SELECT space_id FROM chat_members WHERE user_id=?", (uid,))}
+    typing = {}
+    for sid, who in list(TYPING.items()):
+        live = [u for u, t in who.items() if now - t < 6 and u != uid]
+        if live and sid in mine:
+            typing[sid] = live
+        if not any(now - t < 30 for t in who.values()):
+            TYPING.pop(sid, None)
+    return {"seen": online, "typing": typing}
 
 
 def _user(uid):
@@ -115,10 +166,30 @@ def register(module):
             H.abort(404)
         return h
 
+    @app.before_request
+    def _mark_seen():
+        uid = H.session.get("uid") if hasattr(H, "session") else None
+        if uid:
+            LAST_SEEN[uid] = time.time()
+
     @app.get("/api/huddles")
     @lr
     def huddles_list():
-        return jsonify(huddles=visible_huddles(H.current_user()["id"]), ice=ice_servers())
+        uid = H.current_user()["id"]
+        return jsonify(huddles=visible_huddles(uid), ice=ice_servers(), presence=presence_for(uid))
+
+    @app.post("/api/chat/spaces/<int:sid>/typing")
+    @lr
+    def chat_typing(sid):
+        u = H.current_user()
+        if not H.q("SELECT 1 FROM chat_members WHERE space_id=? AND user_id=?", (sid, u["id"]), one=True):
+            H.abort(404)
+        who = TYPING.setdefault(sid, {})
+        if H.body().get("stop"):
+            who.pop(u["id"], None)
+        else:
+            who[u["id"]] = time.time()
+        return jsonify(ok=True)
 
     @app.post("/api/huddles/start")
     @lr

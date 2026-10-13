@@ -95,8 +95,10 @@ Disconnecting (bottom of the chat list) stops syncing for that person; it never 
 "Huddle in progress · Join" bar and a headset on the space; in DMs and group chats the others get a ringing Join / Decline
 card. Anyone in a huddle can invite more teammates (they're rung too). The huddle bar sits in the sidebar while you work.
 
-Audio goes directly between browsers (WebRTC). Most networks connect fine; if someone on a very strict network
-can't be heard, add a TURN relay as `HUDDLE_ICE_SERVERS` on Render, e.g.
+Audio goes directly between browsers (WebRTC) when it can. Shared/carrier-grade internet (common with PH ISPs) and
+strict firewalls block that, so set up the free Cloudflare TURN relay: Cloudflare dashboard › *Realtime* › *TURN Server* ›
+*Create*, then put its **Turn Token ID** and **API Token** on Render as `CLOUDFLARE_TURN_KEY_ID` and
+`CLOUDFLARE_TURN_API_TOKEN`. (Any other TURN service can go in `HUDDLE_ICE_SERVERS` instead, e.g.
 `[{"urls":"turn:relay.example.com:3478","username":"…","credential":"…"}]`.
 
 ## How pay is calculated

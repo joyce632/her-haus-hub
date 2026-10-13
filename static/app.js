@@ -3242,8 +3242,8 @@ function askText(title, label, value = '', okLabel = 'Save') {
     setTimeout(() => $('input', el).select(), 30);
   });
 }
-function chatComposerHTML(id, placeholder) {
-  return `<div class="ccomp" id="${id}">
+function chatComposerHTML(id, placeholder, maxLines = 2) {
+  return `<div class="ccomp" id="${id}" data-lines="${maxLines}">
     <div class="c-tray" hidden></div>
     <div class="ccomp-box"><textarea class="input" rows="1" placeholder="${esc(placeholder)}"></textarea><div class="mention-pop hidden"></div>
       <button type="button" class="icon-btn ccomp-more" title="Attach, GIF, photo, voice">${I.plus}</button>
@@ -3266,11 +3266,20 @@ function bindChatComposer(root, spaceId, send) {
   const grow = () => {   // grows to two lines, then scrolls inside; the extra buttons tuck away while you type
     ta.style.height = 'auto';
     const line = parseFloat(getComputedStyle(ta).lineHeight) || 19, pad = parseFloat(getComputedStyle(ta).paddingTop) * 2 || 14;
-    ta.style.height = `${Math.min(ta.scrollHeight, line * 2 + pad)}px`;
-    ta.style.overflowY = ta.scrollHeight > line * 2 + pad + 2 ? 'auto' : 'hidden';
+    const lines = Number(root.dataset.lines) || 2;   // the Chat page grows with the message; chat boxes stay compact
+    ta.style.height = `${Math.min(ta.scrollHeight, line * lines + pad)}px`;
+    ta.style.overflowY = ta.scrollHeight > line * lines + pad + 2 ? 'auto' : 'hidden';
     root.classList.toggle('typing', !!ta.value.trim()); root.classList.remove('tools-open');
   };
   $('.ccomp-more', root).onclick = () => root.classList.toggle('tools-open');
+  let typingSent = 0;
+  const signalTyping = (stop) => {
+    if (!spaceId) return;
+    if (stop) { if (typingSent) { typingSent = 0; api('POST', `/api/chat/spaces/${spaceId}/typing`, { stop: true }).catch(() => {}); } return; }
+    if (Date.now() - typingSent < 2500) return;
+    typingSent = Date.now(); api('POST', `/api/chat/spaces/${spaceId}/typing`, {}).catch(() => {});
+  };
+  ta.addEventListener('input', () => signalTyping(!ta.value.trim()));
   const drawTray = () => {
     tray.hidden = !files.length;
     tray.innerHTML = files.map((f, i) => f.url ? `<span class="c-thumb" title="${esc(f.file.name)}"><img src="${f.url}" alt=""><button type="button" data-unattach="${i}" aria-label="Remove">${I.x.replace('width="18" height="18"', 'width="11" height="11"')}</button></span>`
@@ -3323,6 +3332,7 @@ function bindChatComposer(root, spaceId, send) {
     if (!display && !files.length) return;
     let text = display;
     for (const [label, gid] of Object.entries(picked).sort((a, b) => b[0].length - a[0].length)) text = text.split(label).join(`<${gid}>`);
+    signalTyping(true);
     // clear the box right away (the message shows instantly as "sending"); put it back if Google refuses it
     const sent = { files, picked };
     files = []; picked = {}; ta.value = ''; drawTray(); grow(); ta.focus();
@@ -3643,6 +3653,25 @@ function newChatModal(kind, onCreated) {
 // browsers never call each other at the same time. Signals travel through the hub with a 1-second check-in.
 const HUD = { stage: null, screen: null, screenSenders: new Map(), list: [], cur: null, stream: null, pcs: new Map(), audios: new Map(), pendingIce: new Map(), since: 0, timer: null,
   muted: false, ice: [{ urls: ['stun:stun.l.google.com:19302'] }], levels: new Map(), dismissed: new Set(), ringing: new Map(), failed: new Set() };
+// ---- presence: who's online (active in the hub in the last minute) and who's typing
+const seenAgo = (userId) => (HUD.presence && userId != null ? HUD.presence.seen[userId] : undefined);
+const isOnline = (userId) => { const t = seenAgo(userId); return t !== undefined && t < 70; };
+function activeText(userId) {
+  const t = seenAgo(userId); if (t === undefined) return '';
+  if (t < 70) return 'Active now';
+  const m = Math.round(t / 60); return m < 60 ? `Active ${m}m ago` : `Active ${Math.round(m / 60)}h ago`;
+}
+const typersIn = (spaceId) => ((HUD.presence && HUD.presence.typing[spaceId]) || []).map((uid) => S.users.find((u) => u.id === uid)).filter(Boolean);
+function typingText(spaceId) {
+  const t = typersIn(spaceId); if (!t.length) return '';
+  const names = t.map((u) => u.name.split(' ')[0]);
+  return names.length === 1 ? `${names[0]} is typing` : names.length === 2 ? `${names[0]} and ${names[1]} are typing` : 'Several people are typing';
+}
+const onlineDot = (userId) => (isOnline(userId) ? '<i class="on-dot" title="Online"></i>' : '');
+const typingDots = '<span class="tdots"><i></i><i></i><i></i></span>';
+// spaces list shared by the Chat page and the chat boxes (who a DM is with, their photo)
+let CHAT_SPACES = null;
+async function chatSpacesCached() { if (!CHAT_SPACES) { try { CHAT_SPACES = await api('GET', '/api/chat/spaces'); } catch (_) { CHAT_SPACES = []; } } return CHAT_SPACES; }
 const huddleFor = (spaceId) => HUD.list.find((h) => h.space_id === Number(spaceId));
 const inHuddle = (userId) => HUD.list.some((h) => h.participants.some((p) => p.id === userId));
 const headsetBadge = () => `<span class="hs-badge" title="In a huddle">${I.headset}</span>`;
@@ -3654,14 +3683,14 @@ async function refreshHuddles() {
   if (!S.me) return;
   try {
     const r = await api('GET', '/api/huddles');
-    HUD.list = r.huddles; if (r.ice) HUD.ice = r.ice;
+    HUD.list = r.huddles; if (r.ice) HUD.ice = r.ice; if (r.presence) HUD.presence = r.presence;
   } catch (_) { return; }
   // ring for invitations we haven't answered
   HUD.list.filter((h) => h.invited_me && !HUD.dismissed.has(h.id) && !(HUD.cur && HUD.cur.id === h.id)).forEach(showHuddleRing);
   [...HUD.ringing.keys()].forEach((hid) => { const h = HUD.list.find((x) => x.id === hid); if (!h || !h.invited_me) stopRing(hid); });
   document.dispatchEvent(new CustomEvent('hh-huddles'));
 }
-setInterval(() => { if (!document.hidden) refreshHuddles(); }, 4000);
+setInterval(() => { if (!document.hidden) refreshHuddles(); }, 3000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshHuddles(); });
 
 // ---- ringing invite (top-right card + ring tone)
@@ -3747,11 +3776,26 @@ function makePeer(uid, initiator) {
     a.srcObject = e.streams[0]; a.play().catch(() => toast('Click anywhere to hear the huddle', 'err'));
     watchLevel(uid, e.streams[0]);
   };
-  pc.onconnectionstatechange = () => {
-    if (pc.connectionState === 'failed' && !HUD.failed.has(uid)) {
-      HUD.failed.add(uid);
-      const p = HUD.cur?.participants.find((x) => x.id === uid);
-      toast(`Couldn't connect audio with ${p ? p.name.split(' ')[0] : 'a teammate'} — their network may be blocking calls`, 'err');
+  pc.onconnectionstatechange = async () => {
+    if (pc.connectionState === 'connected') HUD.failed.delete(uid);
+    if (pc.connectionState === 'failed') {
+      const tries = (pc._restarts || 0);
+      if (tries < 2) {   // try a fresh route first (one side starts it, so both don't at once)
+        pc._restarts = tries + 1;
+        if (S.me.id < uid) {
+          try { const o = await pc.createOffer({ iceRestart: true }); await pc.setLocalDescription(o); sendSignal(uid, 'reoffer', pc.localDescription.toJSON()); } catch (_) { /* closed */ }
+        }
+      } else if (!HUD.failed.has(uid)) {
+        HUD.failed.add(uid);
+        const p = HUD.cur?.participants.find((x) => x.id === uid);
+        const relay = HUD.ice.some((s) => [].concat(s.urls).some((u) => String(u).startsWith('turn')));
+        toast(`Couldn't connect audio with ${p ? p.name.split(' ')[0] : 'a teammate'}${relay ? ' — check your internet connection' : ' — a call relay needs to be set up for your network'}`, 'err');
+        try {   // tell the server what routes were possible, to help fix it
+          const st = await pc.getStats(); const kinds = new Set();
+          st.forEach((r) => { if (r.type === 'local-candidate' || r.type === 'remote-candidate') kinds.add(`${r.type.split('-')[0]}:${r.candidateType}`); });
+          reportError(new Error(`huddle audio failed with user ${uid}; routes=${[...kinds].join(',') || 'none'}; relay=${relay}`), 'huddle');
+        } catch (_) { /* nothing more to report */ }
+      }
     }
     drawHuddleBar();
   };
@@ -4015,6 +4059,22 @@ async function chatPopup(sid, n, opts = {}) {
       ${chatComposerHTML(`cp-comp-${sid}`, 'Aa — type a message')}</div>`;
   chatPopsRoot().appendChild(el);
   const box = $('.cp-msgs', el);
+  let space = null, baseSub = $('.cp-title small', el).textContent;
+  const updateHead = () => {
+    const partner = space && space.partner;
+    const uid = partner && partner.user_id;
+    if (space) {
+      $('.cp-av', el).innerHTML = `${space.type === 'DIRECT_MESSAGE' && partner ? personAv(partner, 'sm') : spaceAv(space, 'sm')}${uid ? onlineDot(uid) : ''}`;
+      $('.cp-title b', el).textContent = space.title;
+      if (!opts.sub) baseSub = space.type === 'DIRECT_MESSAGE' ? 'Direct message' : space.type === 'GROUP_CHAT' ? 'Group chat' : 'Space';
+    }
+    const typing = typingText(sid), small = $('.cp-title small', el);
+    small.classList.toggle('typing', !!typing);
+    small.textContent = typing ? (space && space.type === 'DIRECT_MESSAGE' ? 'typing…' : `${typing}…`) : (uid && activeText(uid)) || baseSub;
+  };
+  chatSpacesCached().then((list) => { space = list.find((x) => x.id === sid) || null; if (!space) { CHAT_SPACES = null; chatSpacesCached().then((l2) => { space = l2.find((x) => x.id === sid) || null; updateHead(); }); } updateHead(); });
+  const onPresence = () => { if (!el.isConnected) { document.removeEventListener('hh-huddles', onPresence); return; } updateHead(); if (box.dataset.painted) draw(); };
+  document.addEventListener('hh-huddles', onPresence);
   let msgs = [], myGid = '', seen = [], more = true, loadingOlder = false, follow = true;
   const sameRun = (a, b) => a && b && a.sender.gid === b.sender.gid && !a.deleted && !b.deleted
     && new Date(b.create_time) - new Date(a.create_time) < 6 * 60000 && chatDay(a.create_time) === chatDay(b.create_time);
@@ -4043,6 +4103,8 @@ async function chatPopup(sid, n, opts = {}) {
         </div></div>` });
       if (seenAt.has(m.id)) items.push({ key: `seen:${m.id}`, html: seenHTML(seenAt.get(m.id)) });
     });
+    const typers = typersIn(sid);
+    if (typers.length) items.push({ key: 'typing', msg: true, html: `<div class="cp-msg first cp-typing"><span class="cp-av-col">${av(typers[0].name, typers[0].avatar_file_id, 'sm')}</span><div class="cp-col"><div class="cp-bubble">${typingDots}</div></div></div>` });
     patchList(box, items, keep !== 'older' && !!box.dataset.painted);
     if (keep === 'older') box.scrollTop = box.scrollHeight - fromBottom;
     else if (wasBottom || !box.dataset.painted || keep === 'bottom') { box.scrollTop = box.scrollHeight; follow = true; }
@@ -4179,9 +4241,9 @@ async function pageChat(page, [sidParam], alive) {
   };
   const isTeamSec = (id) => team.sections.some((x) => x.id === id);
   const itemHTML = (sp, sec) => `<a class="cl-item ${current && sp.id === current.id ? 'on' : ''} ${sp.unread ? 'unread' : ''}" href="#/chat/${sp.id}" draggable="true" data-space="${sp.id}" data-sec-of="${sec}" title="${esc(sp.title)}">
-      <span class="cl-av">${spaceAv(sp, 'sm')}${sp.partner && sp.partner.user_id && inHuddle(sp.partner.user_id) ? headsetBadge() : ''}${sp.unread ? `<i class="cl-dot">${sp.unread > 99 ? '99+' : sp.unread}</i>` : ''}</span>
+      <span class="cl-av">${spaceAv(sp, 'sm')}${sp.partner && sp.partner.user_id ? (inHuddle(sp.partner.user_id) ? headsetBadge() : onlineDot(sp.partner.user_id)) : ''}${sp.unread ? `<i class="cl-dot">${sp.unread > 99 ? '99+' : sp.unread}</i>` : ''}</span>
       <span class="cl-main"><span class="cl-top"><b>${esc(sp.title)}</b>${huddleFor(sp.id) ? `<span class="cl-hud" title="Huddle in progress">${I.headset}${huddleFor(sp.id).participants.length}</span>` : ''}<time>${sp.last_active ? chatClock(sp.last_active) : ''}</time></span>
-        <span class="cl-prev">${sp.preview ? (sp.preview.unsent ? `<i>${esc(sp.preview.who || 'Someone')} ${esc(sp.preview.text)}</i>` : `${sp.preview.who ? `${esc(sp.preview.who)}: ` : ''}${esc(chatPlain(sp.preview.text))}`) : '<i>No messages yet</i>'}</span></span>
+        <span class="cl-prev">${typingText(sp.id) ? `<em class="cl-typing">${esc(typingText(sp.id))}…</em>` : sp.preview ? (sp.preview.unsent ? `<i>${esc(sp.preview.who || 'Someone')} ${esc(sp.preview.text)}</i>` : `${sp.preview.who ? `${esc(sp.preview.who)}: ` : ''}${esc(chatPlain(sp.preview.text))}`) : '<i>No messages yet</i>'}</span></span>
       ${sp.unread ? `<span class="cl-badge">${sp.unread > 99 ? '99+' : sp.unread}</span>` : ''}
       <button type="button" class="cl-more" data-item-menu="${sp.id}" title="Organize" aria-label="Organize">⋯</button></a>`;
   const drawList = () => {
@@ -4369,7 +4431,7 @@ async function pageChat(page, [sidParam], alive) {
   };
   $('#cs-mini').onclick = () => { layout.mini = !layout.mini; applyMini(); drawList(); saveLayout(); };
   const loadSpaces = async () => {
-    try { spaces = await api('GET', '/api/chat/spaces'); } catch (_) { return; }
+    try { spaces = await api('GET', '/api/chat/spaces'); CHAT_SPACES = spaces; } catch (_) { return; }
     if (!alive()) return;
     if (current) current = spaces.find((s) => s.id === current.id) || current;
     drawList();
@@ -4447,7 +4509,8 @@ async function pageChat(page, [sidParam], alive) {
       <div class="hud-banner" id="hud-banner" hidden></div>
       <div class="cm-msgs-wrap"><div class="cm-msgs cm-fade" id="cm-msgs">${cached ? '' : '<div class="cm-skel"><i></i><span><b></b><em></em></span></div>'.repeat(5)}</div>
         <button type="button" class="cm-newpill" id="cm-newpill">↓ New messages</button></div>
-      ${chatComposerHTML('cm-comp', `Message ${s.type === 'DIRECT_MESSAGE' ? s.title : s.title}`)}`;
+      <div class="cm-typing" id="cm-typing" hidden></div>
+      ${chatComposerHTML('cm-comp', `Message ${s.title}`, 10)}`;
     $('#cm-back').onclick = () => { wrap.classList.remove('has-open'); location.hash = '#/chat'; };
     $('#cm-settings', main).onclick = () => spaceSettings(s.id, async (what) => {
       await loadSpaces();
@@ -4518,7 +4581,7 @@ async function pageChat(page, [sidParam], alive) {
   async function openThread(name) {
     thread = name; threadEl.hidden = false; wrap.classList.add('has-thread');
     threadEl.innerHTML = `<header class="ct-head"><b>Thread</b><span class="muted small">${esc(current.title)}</span><button class="icon-btn" id="ct-close" aria-label="Close thread">${I.x}</button></header>
-      <div class="ct-msgs" id="ct-msgs"><div class="empty">Loading…</div></div>${chatComposerHTML('ct-comp', 'Reply in thread')}`;
+      <div class="ct-msgs" id="ct-msgs"><div class="empty">Loading…</div></div>${chatComposerHTML('ct-comp', 'Reply in thread', 6)}`;
     $('#ct-close').onclick = () => { thread = null; threadEl.hidden = true; wrap.classList.remove('has-thread'); };
     bindChatComposer($('#ct-comp', threadEl), current.id, async (payload) => {
       const p = pendingMessage(current.id, payload, name, myGid);
@@ -4613,8 +4676,26 @@ async function pageChat(page, [sidParam], alive) {
   document.addEventListener('visibilitychange', () => { if (!document.hidden && alive()) { ticks = 2; tick(); markRead(); } });
 
   // live huddles: header button, "join" banner, headset badges in the list
+  function drawPresence() {
+    if (!current) return;
+    const sub = $('.cm-title span', main), tline = $('#cm-typing', main);
+    const partner = current.partner && current.partner.user_id;
+    if (sub) {
+      if (!sub.dataset.base) sub.dataset.base = sub.innerHTML;
+      const typing = typingText(current.id);
+      sub.innerHTML = typing ? `<em class="cm-typing-sub">${esc(current.type === 'DIRECT_MESSAGE' ? 'typing' : typing)}…</em>`
+        : partner && activeText(partner) ? `<span class="${isOnline(partner) ? 'is-on' : ''}">${isOnline(partner) ? '<i class="on-dot"></i>' : ''}${esc(activeText(partner))}</span>`
+        : sub.dataset.base;
+    }
+    if (tline) {
+      const who = typersIn(current.id);
+      tline.hidden = !who.length;
+      if (who.length) tline.innerHTML = `${who.slice(0, 3).map((u) => av(u.name, u.avatar_file_id, 'xs')).join('')}${typingDots}<span>${esc(typingText(current.id))}…</span>`;
+    }
+  }
   function drawHuddleUI() {
     if (!alive()) return;
+    drawPresence();
     const btn = $('#cm-huddle', main), banner = $('#hud-banner', main);
     if (current && btn) {
       const h = huddleFor(current.id), mine = HUD.cur && HUD.cur.space_id === current.id;

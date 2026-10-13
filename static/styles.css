@@ -1620,3 +1620,24 @@ body:has(#hud-bar) #chat-pops { bottom: 0; }
 .gif-grid { grid-auto-rows: max-content; }
 .gif-item { display: block; height: auto !important; }
 .gif-item img { display: block; width: 100%; height: auto !important; max-height: none; }
+
+/* presence & typing */
+.on-dot { position: absolute; right: -1px; bottom: -1px; width: 11px; height: 11px; border-radius: 50%; background: #22c55e; border: 2px solid #fff; display: block; font-style: normal; }
+.cp-av { position: relative; display: inline-block; }
+.cp-head .on-dot { border-color: #123a7a; width: 12px; height: 12px; }
+.cp-head .cp-av .avatar { width: 34px; height: 34px; }
+.cp-title small.typing { color: #86efac; opacity: 1; font-weight: 600; }
+.cl-typing, .cm-typing-sub { color: #16a34a; font-style: normal; font-weight: 600; }
+.cm-title .is-on { display: inline-flex; align-items: center; gap: 5px; color: #15803d; font-weight: 600; }
+.cm-title .is-on .on-dot { position: static; width: 8px; height: 8px; border: 0; }
+.cm-typing { display: flex; align-items: center; gap: 6px; padding: 4px 20px 0; font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.cm-typing[hidden] { display: none; }
+.cm-typing .avatar { width: 18px; height: 18px; font-size: 8px; margin-right: -4px; border: 1.5px solid #fff; }
+.tdots { display: inline-flex; align-items: center; gap: 3px; padding: 0 2px; }
+.tdots i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .35; animation: tdot 1.2s infinite ease-in-out; }
+.tdots i:nth-child(2) { animation-delay: .15s; } .tdots i:nth-child(3) { animation-delay: .3s; }
+@keyframes tdot { 0%, 60%, 100% { opacity: .3; transform: none; } 30% { opacity: 1; transform: translateY(-3px); } }
+.cp-typing .cp-bubble { padding: 10px 14px; color: var(--muted); }
+/* the Chat page box grows with your message */
+#cm-comp .ccomp-box { align-items: flex-end; }
+#cm-comp .ccomp-box textarea { max-height: none; }
