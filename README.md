@@ -68,7 +68,7 @@ you in the hub (bell, sound, floating window).
 3. **Consent screen** — *Google Auth Platform › Branding › Get started*: app name "Her Haus Hub", your support
    email, Audience **Internal**, contact email › *Create*.
 4. **Scopes** — *Google Auth Platform › Data Access › Add or remove scopes*, add:
-   `chat.spaces.readonly`, `chat.messages`, `chat.memberships.readonly` and `directory.readonly`
+   `chat.spaces.readonly`, `chat.messages`, `chat.memberships.readonly`, `chat.users.readstate` and `directory.readonly`
    (all under `https://www.googleapis.com/auth/`) › *Update* › *Save*.
 5. **OAuth client** — *Google Auth Platform › Clients › Create client*: type **Web application**, name
    "Her Haus Hub", Authorized redirect URI **https://teamhub.herhauscompany.com/api/google/callback** › *Create*.

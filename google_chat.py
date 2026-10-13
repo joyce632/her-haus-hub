@@ -43,6 +43,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/chat.spaces.readonly",
     "https://www.googleapis.com/auth/chat.messages",            # read, send, edit, delete, react
     "https://www.googleapis.com/auth/chat.memberships.readonly",
+    "https://www.googleapis.com/auth/chat.users.readstate",      # "seen" + unread status, both ways
     "https://www.googleapis.com/auth/directory.readonly",       # teammates' names and photos
 ]
 SYNC_SECONDS = int(os.environ.get("GCHAT_SYNC_SECONDS", "15"))
@@ -72,6 +73,10 @@ CREATE TABLE IF NOT EXISTS chat_my_reactions(message_id INTEGER NOT NULL, user_i
 CREATE TABLE IF NOT EXISTS chat_layout(user_id INTEGER PRIMARY KEY, data TEXT DEFAULT '{}', updated_at TEXT);
 """
 SCHEMA_PG = (SCHEMA_SQLITE.replace("id INTEGER PRIMARY KEY, gname", "id SERIAL PRIMARY KEY, gname"))
+# columns added after the first release (app.init_db / PG migrations apply these)
+SQLITE_COLUMNS = [("chat_messages", "deleted_by", "TEXT DEFAULT ''"), ("google_accounts", "scopes", "TEXT DEFAULT ''"),
+                  ("chat_reads", "read_real", "INTEGER DEFAULT 0")]
+PG_MIGRATIONS = [f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {c} {d}" for t, c, d in SQLITE_COLUMNS]
 TABLES = ["google_accounts", "chat_spaces", "chat_members", "chat_messages", "chat_people", "chat_reads", "chat_my_reactions", "chat_layout"]
 NO_ID_TABLES = {"google_accounts", "chat_members", "chat_people", "chat_reads", "chat_my_reactions", "chat_layout"}
 
@@ -425,6 +430,7 @@ def _message_fields(m):
         "text": m.get("text") or "", "annotations": json.dumps(annotations), "attachments": json.dumps(attachments),
         "reactions": json.dumps(reactions), "card_text": card, "create_time": norm_time(m.get("createTime")) or now_norm(),
         "update_time": norm_time(m.get("lastUpdateTime")), "deleted": 1 if m.get("deleteTime") else 0,
+        "deleted_by": ((m.get("deletionMetadata") or {}).get("deletionType") or "CREATOR") if m.get("deleteTime") else "",
     }
 
 
@@ -433,6 +439,11 @@ def _store(sid, m):
     f = _message_fields(m)
     row = H.q("SELECT id FROM chat_messages WHERE gname=?", (m["name"],), one=True)
     if row:
+        if f["deleted"]:   # Google may drop the content (and sender) of deleted messages: keep where and by whom it was sent
+            keep = ["create_time", "thread_name", "thread_reply"] + ([] if m.get("sender") else ["sender_gid", "sender_type", "sender_name"])
+            for k in keep:
+                f.pop(k, None)
+            f["attachments"] = "[]"
         H.ex("UPDATE chat_messages SET " + ",".join(f"{k}=?" for k in f) + " WHERE id=?", (*f.values(), row["id"]))
         return None
     H.ex("INSERT OR IGNORE INTO chat_messages(gname,space_id," + ",".join(f) + ") VALUES(" + ",".join("?" * (len(f) + 2)) + ")",
@@ -560,6 +571,62 @@ def refresh_in_background(sid, uid):
     threading.Thread(target=run, daemon=True).start()
 
 
+# ---------------------------------------------------------------- read state ("seen")
+def _has_readstate(uid):
+    a = _account(uid)
+    return bool(a and "chat.users.readstate" in (a.get("scopes") or ""))
+
+
+def _set_read(sid, uid, stamp, real=True):
+    """Move someone's read mark forward (never back)."""
+    cur = H.q("SELECT last_read FROM chat_reads WHERE space_id=? AND user_id=?", (sid, uid), one=True)
+    if not cur:
+        H.ex("INSERT OR IGNORE INTO chat_reads(space_id,user_id,last_read,read_real) VALUES(?,?,?,?)", (sid, uid, stamp, 1 if real else 0))
+    elif not cur["last_read"] or stamp > cur["last_read"]:
+        H.ex("UPDATE chat_reads SET last_read=?, read_real=? WHERE space_id=? AND user_id=?", (stamp, 1 if real else 0, sid, uid))
+    elif real:
+        H.ex("UPDATE chat_reads SET read_real=1 WHERE space_id=? AND user_id=?", (sid, uid))
+
+
+def sync_read_state(uid, sids):
+    """Pick up what someone has read in Google Chat itself (clears hub unread counts, feeds "Seen")."""
+    if not _has_readstate(uid):
+        return
+    for sid in sids[:25]:
+        sp = H.q("SELECT gname FROM chat_spaces WHERE id=?", (sid,), one=True)
+        try:
+            r = gapi(uid, "GET", f"/v1/users/me/{sp['gname']}/spaceReadState")
+        except GoogleError as e:
+            if e.status == 403:   # permission not granted after all: stop asking until they reconnect
+                H.ex("UPDATE google_accounts SET scopes=REPLACE(scopes, 'chat.users.readstate', '') WHERE user_id=?", (uid,))
+                return
+            continue
+        if r.get("lastReadTime"):
+            _set_read(sid, uid, norm_time(r["lastReadTime"]))
+
+
+def push_read_state(uid, sid):
+    """Reading in the hub marks the space read in Google Chat too."""
+    if not _has_readstate(uid):
+        return
+    sp = H.q("SELECT gname FROM chat_spaces WHERE id=?", (sid,), one=True)
+
+    def run():
+        try:
+            gapi(uid, "PATCH", f"/v1/users/me/{sp['gname']}/spaceReadState", params={"updateMask": "lastReadTime"},
+                 body={"lastReadTime": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")})
+        except (GoogleError, NotConnected) as e:
+            print(f"[gchat] mark read in Google for user {uid}: {e}", flush=True)
+    threading.Thread(target=run, daemon=True).start()
+
+
+def seen_by(sid, me):
+    """Teammates' read marks in this space (hub reads + Google Chat reads), for the little "Seen" avatars."""
+    rows = H.q("SELECT r.user_id, r.last_read, u.name, u.avatar_file_id FROM chat_reads r JOIN chat_members m ON m.space_id=r.space_id AND m.user_id=r.user_id "
+               "JOIN users u ON u.id=r.user_id WHERE r.space_id=? AND r.user_id!=? AND r.read_real=1 AND u.active=1", (sid, me))
+    return [{"user_id": r["user_id"], "name": r["name"], "avatar_file_id": r["avatar_file_id"], "last_read": r["last_read"]} for r in rows]
+
+
 # ---------------------------------------------------------------- background sync
 _status = {}   # uid -> "syncing" while a first import runs
 
@@ -580,6 +647,9 @@ def sync_user(uid):
     for sp in rows:
         if not sp["synced_through"] or (sp["last_active"] and sp["last_active"] > sp["synced_through"]):
             sync_space_messages(sp["id"], uid)
+    unread = [sid for sid, n in unread_counts(uid).items() if n]
+    if unread:
+        sync_read_state(uid, unread)
     # A little older history each round, most recently active spaces first.
     pending = sorted([sp for sp in rows if not sp["backfill_done"]], key=lambda s: s["last_active"] or "", reverse=True)[:3]
     for sp in pending:
@@ -719,7 +789,7 @@ def _messages_out(rows, uid):
             "reactions": [{**x, "mine": (r["id"], x["emoji"]) in mine} for x in json.loads(r["reactions"] or "[]") if x.get("count")],
             "create_time": r["create_time"],
             "edited": bool(r["update_time"] and r["update_time"][:19] > r["create_time"][:19]),
-            "deleted": bool(r["deleted"]), "reply_count": n, "last_reply": last,
+            "deleted": bool(r["deleted"]), "deleted_by": r.get("deleted_by") or "", "reply_count": n, "last_reply": last,
             "can_edit": sender["is_me"] and not r["deleted"],
         })
     return out
@@ -745,6 +815,7 @@ def register(module):
         spaces = H.q("SELECT COUNT(*) n, SUM(CASE WHEN s.backfill_done=1 THEN 1 ELSE 0 END) done FROM chat_members m "
                      "JOIN chat_spaces s ON s.id=m.space_id WHERE m.user_id=?", (u["id"],), one=True)
         return jsonify(configured=configured(), connected=bool(a and a["refresh_token"]), email=a and a["email"],
+                       seen_sync=_has_readstate(u["id"]),
                        last_sync=a and a["last_sync"], error=(a and a["sync_error"]) or "",
                        syncing=u["id"] in _status, spaces=spaces["n"] or 0, history_done=spaces["done"] or 0,
                        redirect_uri=_redirect_uri() if H.is_exec() else None)
@@ -788,7 +859,8 @@ def register(module):
             return redirect("/#/chat?error=" + urllib.parse.quote("Google didn't grant ongoing access — please try again"))
         row = {"google_id": info.get("sub", ""), "email": info.get("email", ""), "name": info.get("name", ""),
                "refresh_token": _enc(tok["refresh_token"]), "access_token": _enc(tok["access_token"]),
-               "token_expires": time.time() + int(tok.get("expires_in", 3600)), "connected_at": H.iso(H.now_utc())}
+               "token_expires": time.time() + int(tok.get("expires_in", 3600)), "connected_at": H.iso(H.now_utc()),
+               "scopes": tok.get("scope") or ""}
         if _account(u["id"]):
             H.ex("UPDATE google_accounts SET " + ",".join(f"{k}=?" for k in row) + ", sync_error='' WHERE user_id=?", (*row.values(), u["id"]))
         else:
@@ -823,7 +895,7 @@ def register(module):
         ids = [s["id"] for s in spaces]
         marks = ",".join("?" * len(ids))
         last = {r["space_id"]: r for r in H.q(
-            f"SELECT m.* FROM chat_messages m JOIN (SELECT space_id, MAX(create_time) t FROM chat_messages WHERE deleted=0 AND space_id IN ({marks}) "
+            f"SELECT m.* FROM chat_messages m JOIN (SELECT space_id, MAX(create_time) t FROM chat_messages WHERE space_id IN ({marks}) "
             f"GROUP BY space_id) x ON x.space_id=m.space_id AND x.t=m.create_time", ids)}
         gids = [r["sender_gid"] for r in last.values()]
         for s in spaces:
@@ -838,8 +910,9 @@ def register(module):
             preview = None
             if lm:
                 who = "You" if lm["sender_gid"] == my_gid else (people.get(lm["sender_gid"]) or {}).get("name", lm["sender_name"] or "")
-                body_text = lm["text"] or lm["card_text"] or ("📎 Attachment" if lm["attachments"] != "[]" else "")
-                preview = {"who": (who or "").split(" ")[0], "text": body_text[:140], "time": lm["create_time"]}
+                body_text = (("unsent a message" if (lm.get("deleted_by") or "CREATOR") == "CREATOR" else "message removed") if lm["deleted"]
+                             else lm["text"] or lm["card_text"] or ("📎 Attachment" if lm["attachments"] != "[]" else ""))
+                preview = {"who": (who or "").split(" ")[0], "text": body_text[:140], "time": lm["create_time"], "unsent": bool(lm["deleted"])}
             out.append({"id": s["id"], "title": _space_title(s, my_gid, people), "type": s["space_type"],
                         "last_active": (lm and lm["create_time"]) or s["last_active"], "unread": unread.get(s["id"], 0), "preview": preview,
                         "partner": _person_out(partner, people, my_gid) if partner else None,
@@ -857,6 +930,20 @@ def register(module):
             refresh_in_background(sid, u["id"])
         thread = request.args.get("thread")
         before = request.args.get("before")   # create_time of the oldest message shown
+        around = request.args.get("around")   # a message id to jump to (from search)
+        if around and around.isdigit():
+            target = H.q("SELECT * FROM chat_messages WHERE id=? AND space_id=?", (int(around), sid), one=True)
+            if not target:
+                H.abort(404)
+            anchor = target
+            if target["thread_reply"]:
+                anchor = H.q("SELECT * FROM chat_messages WHERE space_id=? AND thread_name=? AND thread_reply=0", (sid, target["thread_name"]), one=True) or target
+            older = H.q("SELECT * FROM chat_messages WHERE space_id=? AND thread_reply=0 AND create_time<=? ORDER BY create_time DESC LIMIT 25", (sid, anchor["create_time"]))
+            newer = H.q("SELECT * FROM chat_messages WHERE space_id=? AND thread_reply=0 AND create_time>? ORDER BY create_time LIMIT 26", (sid, anchor["create_time"]))
+            rows = list(reversed(older)) + newer[:25]
+            return jsonify(messages=_messages_out(rows, u["id"]), more=True, history_done=bool(sp["backfill_done"]),
+                           windowed=len(newer) > 25, target=target["id"], target_thread=target["thread_name"] if target["thread_reply"] else None,
+                           seen=seen_by(sid, u["id"]))
         limit = min(int(request.args.get("limit") or PAGE), 200)
         if thread:
             rows = H.q("SELECT * FROM chat_messages WHERE space_id=? AND thread_name=? ORDER BY create_time", (sid, thread))
@@ -868,16 +955,15 @@ def register(module):
         rows = H.q("SELECT * FROM chat_messages WHERE " + " AND ".join(where) + f" ORDER BY create_time DESC LIMIT {limit + 1}", args)
         more = len(rows) > limit or not sp["backfill_done"]
         rows = list(reversed(rows[:limit]))
-        return jsonify(messages=_messages_out(rows, u["id"]), more=more, history_done=bool(sp["backfill_done"]))
+        return jsonify(messages=_messages_out(rows, u["id"]), more=more, history_done=bool(sp["backfill_done"]), seen=seen_by(sid, u["id"]))
 
     @app.post("/api/chat/spaces/<int:sid>/read")
     @lr
     def chat_read(sid):
         u = H.current_user()
         _member_or_404(sid)
-        stamp = now_norm()
-        if H.db().execute("UPDATE chat_reads SET last_read=? WHERE space_id=? AND user_id=?", (stamp, sid, u["id"])).rowcount == 0:
-            H.ex("INSERT OR IGNORE INTO chat_reads(space_id,user_id,last_read) VALUES(?,?,?)", (sid, u["id"], stamp))
+        _set_read(sid, u["id"], now_norm())
+        push_read_state(u["id"], sid)
         H.ex("UPDATE notifications SET read_at=? WHERE user_id=? AND chat_space_id=? AND read_at IS NULL", (H.iso(H.now_utc()), u["id"], sid))
         return jsonify(ok=True)
 
@@ -972,7 +1058,7 @@ def register(module):
         except GoogleError as e:
             if e.status != 404:
                 return H.bad(f"Google Chat didn't accept that: {e}", 502)
-        H.ex("UPDATE chat_messages SET deleted=1, text='' WHERE id=?", (mid,))
+        H.ex("UPDATE chat_messages SET deleted=1, text='', attachments='[]', deleted_by='CREATOR' WHERE id=?", (mid,))
         return jsonify(ok=True)
 
     @app.post("/api/chat/messages/<int:mid>/reactions")
@@ -1052,6 +1138,34 @@ def register(module):
         u = H.current_user()
         rows = H.q("SELECT s.id FROM chat_spaces s JOIN chat_members m ON m.space_id=s.id AND m.user_id=? WHERE s.client_id=?", (u["id"], cid))
         return jsonify([r["id"] for r in rows])
+
+    @app.get("/api/chat/search")
+    @lr
+    def chat_search():
+        """Find messages by keyword across all your chats (history included)."""
+        u = H.current_user()
+        qtext = (request.args.get("q") or "").strip()
+        if len(qtext) < 2:
+            return jsonify([])
+        like = "%" + qtext.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        where, args = ["m.deleted=0", "m.text LIKE ? ESCAPE '\\'"], [u["id"], like]
+        if (request.args.get("space") or "").isdigit():
+            where.append("m.space_id=?")
+            args.append(int(request.args["space"]))
+        rows = H.q("SELECT m.* FROM chat_messages m JOIN chat_members cm ON cm.space_id=m.space_id AND cm.user_id=? WHERE "
+                   + " AND ".join(where) + " ORDER BY m.create_time DESC LIMIT 60", args)
+        my_gid = _my_gid(u["id"])
+        spaces = {s["id"]: s for s in H.q(f"SELECT * FROM chat_spaces WHERE id IN ({','.join('?' * len({r['space_id'] for r in rows}) or '0')})",
+                                           sorted({r["space_id"] for r in rows}))} if rows else {}
+        gids = [r["sender_gid"] for r in rows] + [g for sp in spaces.values() for g in json.loads(sp["members_json"] or "[]")]
+        people = _people_map(gids)
+        out = []
+        for r in rows:
+            sp = spaces[r["space_id"]]
+            out.append({"id": r["id"], "space_id": r["space_id"], "space_title": _space_title(sp, my_gid, people), "space_type": sp["space_type"],
+                        "sender": _person_out(r["sender_gid"], people, my_gid, r["sender_name"]), "text": r["text"],
+                        "create_time": r["create_time"], "thread_reply": bool(r["thread_reply"])})
+        return jsonify(out)
 
     @app.get("/api/chat/layout")
     @lr

@@ -2987,6 +2987,21 @@ function chatFmt(raw) {
     .replace(/\n/g, '<br>');
   return s.replace(/\u0000(\d+)\u0000/g, (_m, i) => codes[i]);
 }
+const unsentText = (m) => ((m.deleted_by || 'CREATOR') === 'CREATOR'
+  ? `${m.sender.is_me ? 'You' : esc(m.sender.name.split(' ')[0])} unsent a message`
+  : 'This message was removed by a space manager');
+// "Seen" avatars: under the newest message each teammate has read (hub or Google Chat)
+function seenMap(msgs, seen) {
+  const map = new Map();
+  const real = msgs.filter((m) => !m.pending);
+  for (const p of seen || []) {
+    let target = null;
+    for (const m of real) { if (m.create_time <= p.last_read) target = m; else break; }
+    if (target && target.sender.user_id !== p.user_id) { if (!map.has(target.id)) map.set(target.id, []); map.get(target.id).push(p); }
+  }
+  return map;
+}
+const seenHTML = (list) => `<div class="cseen" title="Seen by ${esc(list.map((p) => p.name).join(', '))}">${list.slice(0, 6).map((p) => av(p.name, p.avatar_file_id, 'xs')).join('')}${list.length > 6 ? `<span>+${list.length - 6}</span>` : ''}</div>`;
 // Plain-text version for previews: drop formatting marks, show link labels.
 const chatPlain = (s) => (s || '').replace(/<(https?:\/\/[^|\s>]+)\|([^>]+)>/g, '$2').replace(/<users\/[^>]+>/g, '@')
   .replace(/(^|[\s(])([*_~])(?=\S)([^*_~\n]*?\S)\2(?=$|[\s.,!?:;)])/g, '$1$3').replace(/```|`/g, '');
@@ -3013,7 +3028,7 @@ function chatMsgHTML(m, prev, opts = {}) {
     <div class="cmsg-av">${grouped ? `<time class="cmsg-hover-time" title="${esc(full)}">${new Date(m.create_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time>` : personAv(m.sender)}</div>
     <div class="cmsg-main">
       ${grouped ? '' : `<div class="cmsg-head"><b>${esc(m.sender.name)}</b>${m.sender.is_bot ? '<span class="bot-tag">App</span>' : ''}<time title="${esc(full)}">${chatClock(m.create_time)}${chatClock(m.create_time).includes(':') ? '' : `, ${new Date(m.create_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`}</time></div>`}
-      ${m.deleted ? '<div class="cmsg-body deleted">Message deleted</div>'
+      ${m.deleted ? `<div class="cmsg-body deleted">${I.x.replace('width="18" height="18"', 'width="12" height="12"')}${unsentText(m)}</div>`
         : `${m.text ? `<div class="cmsg-body">${chatTextHTML(m, opts.myGid)}${m.edited ? ' <span class="cmsg-edited">(edited)</span>' : ''}</div>` : ''}
       ${m.card_text ? `<div class="cmsg-card">${esc(m.card_text)}</div>` : ''}
       ${imgs.length ? `<div class="c-imgs ${imgs.length === 1 ? 'one' : ''}">${imgs.map((a) => `<button type="button" class="c-img" data-chat-img="${esc(a.url)}" title="${esc(a.name)}"><img src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy"></button>`).join('')}</div>` : ''}
@@ -3036,6 +3051,8 @@ function chatItems(msgs, opts) {
     const d = chatDay(m.create_time);
     if (d !== day && !opts.thread) { out.push({ key: `d:${d}`, html: `<div class="cday"><span>${esc(d)}</span></div>` }); day = d; prev = null; }
     out.push({ key: m.key || `m:${m.id}`, html: chatMsgHTML(m, prev, opts), msg: true }); prev = m;
+    const seenHere = opts.seen && opts.seen.get(m.id);
+    if (seenHere) out.push({ key: `seen:${m.id}`, html: seenHTML(seenHere) });
   }
   return out;
 }
@@ -3235,13 +3252,22 @@ async function chatPopup(sid, n, opts = {}) {
       ${chatComposerHTML(`cp-comp-${sid}`, 'Aa — type a message')}</div>`;
   chatPopsRoot().appendChild(el);
   const box = $('.cp-msgs', el);
-  let msgs = [], myGid = '';
+  let msgs = [], myGid = '', seen = [];
   const draw = () => {
     const wasBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
     const shown = msgs.slice(-12);
-    patchList(box, shown.map((m, i) => ({ key: m.key || `m:${m.id}`, msg: true, html: `<div class="cp-msg ${m.sender.is_me ? 'me' : ''} ${m.pending ? 'pending' : ''}">
+    const seenAt = seenMap(shown, seen);
+    const items = [];
+    shown.forEach((m, i) => {
+      const rx = (m.reactions || []).filter((x) => x.count);
+      items.push({ key: m.key || `m:${m.id}`, msg: true, html: `<div class="cp-msg ${m.sender.is_me ? 'me' : ''} ${m.pending ? 'pending' : ''} ${m.deleted ? 'unsent' : ''}" data-mid="${m.id}">
       ${m.sender.is_me || (i && shown[i - 1].sender.gid === m.sender.gid) ? '' : `<span class="cp-who">${esc(m.sender.name.split(' ')[0])}</span>`}
-      <div class="cp-bubble">${m.deleted ? '<i>Message deleted</i>' : chatTextHTML(m, myGid) || ''}${m.attachments.filter((a) => a.is_image).map((a) => `<img src="${esc(a.url)}" alt="${esc(a.name)}" data-chat-img="${esc(a.url)}">`).join('')}${m.attachments.filter((a) => !a.is_image).map((a) => `<a href="${esc(a.url)}" target="_blank" rel="noopener">📎 ${esc(a.name)}</a>`).join('')}</div></div>` })), true);
+      <div class="cp-row"><div class="cp-bubble">${m.deleted ? `<i>${unsentText(m)}</i>` : `${chatTextHTML(m, myGid) || ''}${m.attachments.filter((a) => a.is_image).map((a) => `<img src="${esc(a.url)}" alt="${esc(a.name)}" data-chat-img="${esc(a.url)}">`).join('')}${m.attachments.filter((a) => !a.is_image).map((a) => `<a href="${esc(a.url)}" target="_blank" rel="noopener">📎 ${esc(a.name)}</a>`).join('')}`}</div>
+        ${m.deleted || m.pending ? '' : `<button type="button" class="cp-react" data-react-add title="React">${I.smile}</button>`}</div>
+      ${rx.length ? `<div class="cp-rx">${rx.map((x) => `<button type="button" class="${x.mine ? 'mine' : ''}" data-react="${esc(x.emoji)}">${esc(x.emoji)}${x.count > 1 ? ` ${x.count}` : ''}</button>`).join('')}</div>` : ''}</div>` });
+      if (seenAt.has(m.id)) items.push({ key: `seen:${m.id}`, html: seenHTML(seenAt.get(m.id)) });
+    });
+    patchList(box, items, true);
     if (wasBottom || !box.dataset.painted) box.scrollTop = box.scrollHeight;
     box.dataset.painted = '1';
   };
@@ -3249,7 +3275,7 @@ async function chatPopup(sid, n, opts = {}) {
     try {
       const r = await api('GET', `/api/chat/spaces/${sid}/messages?live=1&limit=15`);
       // in threaded spaces, the newest activity may be a reply: show it too
-      msgs = r.messages;
+      msgs = r.messages; seen = r.seen || [];
       if (!myGid) myGid = (msgs.find((m) => m.sender.is_me) || {}).sender?.gid || '';
       draw();
     } catch (err) { if (!msgs.length) box.innerHTML = `<div class="empty">${esc(err.message)}</div>`; }
@@ -3262,6 +3288,16 @@ async function chatPopup(sid, n, opts = {}) {
     if (e.target.closest('[data-cp-min]') || (e.target.closest('.cp-head') && el.classList.contains('min') && !e.target.closest('.cp-btn'))) { el.classList.toggle('min'); if (!el.classList.contains('min')) { refresh(); markRead(); } return; }
     if (e.target.closest('[data-cp-open]')) { closeChatPopup(sid); location.hash = `#/chat/${sid}`; return; }
     const img = e.target.closest('[data-chat-img]'); if (img) { lightbox(img.dataset.chatImg, img.alt, `${img.dataset.chatImg}?download=1`); return; }
+    const rxb = e.target.closest('[data-react]'), add = e.target.closest('[data-react-add]');
+    if (rxb || add) {
+      const mid = Number(e.target.closest('[data-mid]').dataset.mid);
+      const react = async (emoji) => {
+        try { const u = await api('POST', `/api/chat/messages/${mid}/reactions`, { emoji }); msgs = msgs.map((x) => (x.id === mid ? { ...u, key: x.key } : x)); draw(); }
+        catch (err) { toast(err.message, 'err'); }
+      };
+      if (rxb) react(rxb.dataset.react); else emojiPicker(add, react);
+      return;
+    }
     if (e.target.closest('.cp-body')) markRead();
   });
   // full composer, like the Chat page: Enter to send, @mentions, paste or attach screenshots and files
@@ -3302,9 +3338,10 @@ async function pageChat(page, [sidParam], alive) {
   page.classList.add('page-chat');
   page.innerHTML = `<div class="chat-wrap" id="chat-wrap">
     <aside class="chat-side">
-      <div class="chat-side-head"><input class="input" id="cs-search" placeholder="Search chats" autocomplete="off">
+      <div class="chat-side-head"><input class="input" id="cs-search" placeholder="Search chats & messages" autocomplete="off">
         <button class="icon-btn cs-btn" id="cs-new-sec" title="New section">${I.plus}</button>
         <button class="icon-btn cs-btn" id="cs-mini" title="Collapse chat list">«</button></div>
+      ${st.seen_sync ? '' : `<a class="cs-notice" href="/api/google/connect">${I.eye.replace('width="18" height="18"', 'width="14" height="14"')}<span><b>Turn on “Seen” & read sync</b> — reconnect once so reads in Google Chat show here too.</span></a>`}
       <div class="chat-list" id="chat-list"><div class="empty">Loading…</div></div>
       <div class="chat-side-foot"><span title="${esc(st.email || '')}">${I.chat.replace('width="18" height="18"', 'width="13" height="13"')} ${esc(st.email || '')}</span><button class="linkbtn" id="gc-disconnect">Disconnect</button></div>
     </aside>
@@ -3315,6 +3352,7 @@ async function pageChat(page, [sidParam], alive) {
   const convCache = new Map();   // space id -> { msgs, more, historyDone } so switching back is instant
   let spaces = [], current = null, msgs = [], more = false, historyDone = true, loadingOlder = false, thread = null, threadMsgs = [];
   let myGid = '', search = '', firstPaint = true, stick = true;   // stick: keep the view on the newest message
+  let seen = [], windowed = false, pendingJump = null, searchHits = [], searchTimer = null, searchSeq = 0;
   let layout = { sections: [], place: {}, order: {}, collapsed: {}, mini: false };
   try { layout = { ...layout, ...(await api('GET', '/api/chat/layout')) }; } catch (_) { /* defaults */ }
   // team sections: set up by executives, the same for everyone (each person sees the spaces they're in)
@@ -3340,7 +3378,7 @@ async function pageChat(page, [sidParam], alive) {
   const itemHTML = (sp, sec) => `<a class="cl-item ${current && sp.id === current.id ? 'on' : ''} ${sp.unread ? 'unread' : ''}" href="#/chat/${sp.id}" draggable="true" data-space="${sp.id}" data-sec-of="${sec}" title="${esc(sp.title)}">
       <span class="cl-av">${spaceAv(sp, 'sm')}${sp.unread ? `<i class="cl-dot">${sp.unread > 99 ? '99+' : sp.unread}</i>` : ''}</span>
       <span class="cl-main"><span class="cl-top"><b>${esc(sp.title)}</b><time>${sp.last_active ? chatClock(sp.last_active) : ''}</time></span>
-        <span class="cl-prev">${sp.preview ? `${sp.preview.who ? `${esc(sp.preview.who)}: ` : ''}${esc(chatPlain(sp.preview.text))}` : '<i>No messages yet</i>'}</span></span>
+        <span class="cl-prev">${sp.preview ? (sp.preview.unsent ? `<i>${esc(sp.preview.who || 'Someone')} ${esc(sp.preview.text)}</i>` : `${sp.preview.who ? `${esc(sp.preview.who)}: ` : ''}${esc(chatPlain(sp.preview.text))}`) : '<i>No messages yet</i>'}</span></span>
       ${sp.unread ? `<span class="cl-badge">${sp.unread > 99 ? '99+' : sp.unread}</span>` : ''}
       <button type="button" class="cl-more" data-item-menu="${sp.id}" title="Organize" aria-label="Organize">⋯</button></a>`;
   const drawList = () => {
@@ -3349,9 +3387,20 @@ async function pageChat(page, [sidParam], alive) {
       listEl.innerHTML = `<div class="empty">${st.syncing || !st.last_sync ? 'Bringing in your spaces…' : 'No Google Chat spaces found for this account.'}</div>`;
       return;
     }
-    if (f) {   // searching: one flat list
+    if (f) {   // searching: matching chats, then matching messages from the whole history
       const hits = spaces.filter((x) => x.title.toLowerCase().includes(f));
-      patchList(listEl, hits.length ? hits.map((x) => ({ key: `s:${x.id}`, html: itemHTML(x, secOf(x)) })) : [{ key: 'none', html: '<div class="empty">No matches</div>' }]);
+      const items = hits.map((x) => ({ key: `s:${x.id}`, html: itemHTML(x, secOf(x)) }));
+      if (f.length >= 2) {
+        items.push({ key: 'h:msgs', html: `<div class="cl-sec"><span class="cl-sec-btn" style="cursor:default">Messages${searchHits.loading ? ' <span class="cm-spin"></span>' : searchHits.length ? `<span class="cl-sec-n">${searchHits.length}${searchHits.length >= 60 ? '+' : ''}</span>` : ''}</span></div>` });
+        const rx = new RegExp(`(${escRe(search.trim())})`, 'ig');
+        const mark = (t) => esc(t).replace(rx, '<mark>$1</mark>');
+        const snip = (t) => { const i = t.toLowerCase().indexOf(f); return i > 60 ? `…${t.slice(i - 40)}` : t; };
+        searchHits.forEach((h) => items.push({ key: `q:${h.id}`, html: `<button type="button" class="cs-hit" data-hit-space="${h.space_id}" data-hit-id="${h.id}">
+          ${personAv(h.sender, 'xs')}<span class="cs-hit-main"><span class="cs-hit-top"><b>${esc(h.sender.name)}</b><span>in ${esc(h.space_title)}${h.thread_reply ? ' · thread' : ''}</span><time>${chatClock(h.create_time)}</time></span>
+          <span class="cs-hit-text">${mark(chatPlain(snip(h.text)).slice(0, 160))}</span></span></button>` }));
+        if (!searchHits.loading && !searchHits.length) items.push({ key: 'q:none', html: '<div class="cl-drop-hint">No messages found</div>' });
+      } else if (!hits.length) items.push({ key: 'none', html: '<div class="empty">No matches</div>' });
+      patchList(listEl, items);
       return;
     }
     const secs = [{ id: 'pinned', name: 'Pinned', manual: true }, { id: 'dms', name: 'Direct messages' },
@@ -3433,6 +3482,13 @@ async function pageChat(page, [sidParam], alive) {
     m.addEventListener('click', (e) => { const b = e.target.closest('[data-i]'); if (b) { closeAssigneeMenu(); entries[Number(b.dataset.i)].run(); } });
   };
   listEl.addEventListener('click', async (e) => {
+    const hit = e.target.closest('[data-hit-id]');
+    if (hit) {
+      const sid = Number(hit.dataset.hitSpace), mid = Number(hit.dataset.hitId);
+      if (current && current.id === sid) jumpTo(mid);
+      else { pendingJump = { sid, mid }; location.hash = `#/chat/${sid}`; }
+      return;
+    }
     const col = e.target.closest('[data-collapse]');
     if (col) { e.preventDefault(); const id = col.dataset.collapse; layout.collapsed[id] = !layout.collapsed[id]; saveLayout(); drawList(); return; }
     const im = e.target.closest('[data-item-menu]');
@@ -3511,7 +3567,22 @@ async function pageChat(page, [sidParam], alive) {
     drawList();
     if (!current && sidParam) openSpace(Number(sidParam));
   };
-  $('#cs-search').oninput = (e) => { search = e.target.value; drawList(); };
+  $('#cs-search').oninput = (e) => {
+    search = e.target.value;
+    const qv = search.trim();
+    clearTimeout(searchTimer);
+    if (qv.length >= 2) {
+      searchHits = Object.assign([], { loading: true });
+      const seq = ++searchSeq;
+      searchTimer = setTimeout(async () => {
+        const r = await api('GET', `/api/chat/search?q=${encodeURIComponent(qv)}`).catch(() => []);
+        if (seq !== searchSeq) return;   // a newer search is on its way
+        searchHits = r; drawList();
+      }, 280);
+    } else searchHits = [];
+    drawList();
+  };
+  $('#cs-search').onkeydown = (e) => { if (e.key === 'Escape') { e.target.value = ''; e.target.dispatchEvent(new Event('input')); } };
   $('#gc-disconnect').onclick = async () => {
     if (!await confirmModal('Disconnect your Google account? Your Google Chat is not affected — the hub just stops syncing it for you.', { okLabel: 'Disconnect' })) return;
     await api('POST', '/api/google/disconnect', {}); route();
@@ -3525,7 +3596,7 @@ async function pageChat(page, [sidParam], alive) {
     const wasBottom = stick || atBottom(box), fromBottom = box.scrollHeight - box.scrollTop;
     const top = more ? `<div class="cm-top">${loadingOlder ? '<span class="cm-spin"></span> Loading older messages…' : historyDone ? '<button class="linkbtn" data-older>Load older messages</button>' : 'Older history is still importing from Google Chat…'}</div>`
       : `<div class="cm-top start">${spaceAv(current, 'lg')}<b>${esc(current.title)}</b><span>This is the beginning of the conversation.</span></div>`;
-    const added = patchList(box, [{ key: 'top', html: top }, ...chatItems(msgs, { myGid })], !firstPaint && keep !== 'older');
+    const added = patchList(box, [{ key: 'top', html: top }, ...chatItems(msgs, { myGid, seen: windowed ? null : seenMap(msgs, seen) })], !firstPaint && keep !== 'older' && keep !== 'jump');
     if (keep === 'older') box.scrollTop = box.scrollHeight - fromBottom;
     else if (keep === 'bottom' || wasBottom) scrollBottom(box, !firstPaint);
     else if (added) $('#cm-newpill', main)?.classList.add('show');
@@ -3568,7 +3639,13 @@ async function pageChat(page, [sidParam], alive) {
       ${chatComposerHTML('cm-comp', `Message ${s.type === 'DIRECT_MESSAGE' ? s.title : s.title}`)}`;
     $('#cm-back').onclick = () => { wrap.classList.remove('has-open'); location.hash = '#/chat'; };
     const pill = $('#cm-newpill', main), mbox = $('#cm-msgs', main);
-    pill.onclick = () => { scrollBottom(mbox, true); pill.classList.remove('show'); };
+    pill.onclick = async () => {
+      pill.classList.remove('show');
+      if (!windowed) { scrollBottom(mbox, true); return; }
+      // we were looking at an older stretch (from search): load the latest messages again
+      const r = await api('GET', `/api/chat/spaces/${s.id}/messages?live=1`); if (current !== s) return;
+      windowed = false; pill.textContent = '↓ New messages'; msgs = r.messages; more = r.more; seen = r.seen || []; firstPaint = true; stick = true; drawMsgs('bottom');
+    };
     mbox.addEventListener('scroll', () => { stick = atBottom(mbox); if (stick) pill.classList.remove('show'); });
     if ($('#cm-client')) $('#cm-client').onchange = async (e) => {
       try { await api('PUT', `/api/chat/spaces/${s.id}/client`, { client_id: e.target.value || null }); toast(e.target.value ? 'Linked — the client board now has a Chat button' : 'Unlinked', 'ok'); loadSpaces(); } catch (err) { toast(err.message, 'err'); }
@@ -3585,12 +3662,32 @@ async function pageChat(page, [sidParam], alive) {
       loadSpaces();
     });
     comp.focus();
+    windowed = false;
+    if (pendingJump && pendingJump.sid === s.id) { const j = pendingJump; pendingJump = null; await jumpTo(j.mid); markRead(); return; }
     if (cached) drawMsgs('bottom');   // show what we had instantly, then freshen it
     const r = await api('GET', `/api/chat/spaces/${s.id}/messages?live=1`);
     if (!alive() || current !== s) return;
-    msgs = cached ? merge(msgs, r.messages) : r.messages; more = cached ? more : r.more; historyDone = r.history_done !== false;
+    msgs = cached ? merge(msgs, r.messages) : r.messages; more = cached ? more : r.more; historyDone = r.history_done !== false; seen = r.seen || [];
     myGid = (msgs.find((m) => m.sender.is_me) || {}).sender?.gid || myGid;
     drawMsgs('bottom'); markRead();
+  }
+  // Show the stretch of conversation around one message (from search), and flash it.
+  async function jumpTo(mid) {
+    const s = current;
+    const r = await api('GET', `/api/chat/spaces/${s.id}/messages?around=${mid}`).catch((err) => { toast(err.message, 'err'); return null; });
+    if (!r || current !== s) return;
+    msgs = r.messages; more = r.more; historyDone = r.history_done !== false; seen = r.seen || []; windowed = r.windowed;
+    stick = false; firstPaint = true; drawMsgs('jump');
+    const pill = $('#cm-newpill', main);
+    if (windowed) { pill.textContent = '↓ Jump to latest'; pill.classList.add('show'); }
+    const box = msgBox();
+    const node = $(`[data-mid="${r.target_thread ? (msgs.find((m) => m.thread === r.target_thread) || {}).id : r.target}"]`, box);
+    if (node) { node.scrollIntoView({ block: 'center' }); node.classList.add('cm-flash'); setTimeout(() => node.classList.remove('cm-flash'), 2200); }
+    if (r.target_thread) {
+      await openThread(r.target_thread);
+      const tn = $(`#ct-msgs [data-mid="${r.target}"]`, threadEl);
+      if (tn) { tn.scrollIntoView({ block: 'center' }); tn.classList.add('cm-flash'); setTimeout(() => tn.classList.remove('cm-flash'), 2200); }
+    }
   }
   const loadOlder = async () => {
     if (loadingOlder || !more || !msgs.length || !historyDone) return;
@@ -3680,9 +3777,10 @@ async function pageChat(page, [sidParam], alive) {
     if (current) {
       const s = current;
       const r = await api('GET', `/api/chat/spaces/${s.id}/messages?live=1`).catch(() => null);
-      if (r && current === s && !$('.cm-edit', main)) {
+      if (r && current === s && !windowed && !$('.cm-edit', main)) {
         const before = msgs.length ? msgs[msgs.length - 1].id : 0;
-        const changed = JSON.stringify(r.messages) !== JSON.stringify(msgs.slice(-r.messages.length));
+        const changed = JSON.stringify(r.messages) !== JSON.stringify(msgs.slice(-r.messages.length)) || JSON.stringify(r.seen) !== JSON.stringify(seen);
+        seen = r.seen || [];
         msgs = merge(msgs, r.messages);
         if (!myGid) myGid = (msgs.find((m) => m.sender.is_me) || {}).sender?.gid || '';
         if (changed) { drawMsgs(); if (msgs.length && msgs[msgs.length - 1].id !== before) markRead(); }

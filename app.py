@@ -255,6 +255,7 @@ PG_TABLES = ["users", "clients", "time_entries", "breaks", "tasks", "task_links"
 PG_MIGRATIONS = ["ALTER TABLE tasks ADD COLUMN IF NOT EXISTS deadline_reminded TEXT",
                  "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS actor_label TEXT",
                  "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS chat_space_id INTEGER"]
+PG_MIGRATIONS += gchat.PG_MIGRATIONS
 _NO_ID_TABLES = {"settings", "task_followers", "comment_reactions"} | gchat.NO_ID_TABLES
 # Google Chat sync tables (see google_chat.py)
 SCHEMA += gchat.SCHEMA_SQLITE
@@ -507,6 +508,8 @@ def init_db():
     _add_column(conn, "tasks", "deadline_reminded", "TEXT")   # which deadline the 15-minute reminder was sent for
     _add_column(conn, "notifications", "actor_label", "TEXT")      # sender name for Google Chat alerts
     _add_column(conn, "notifications", "chat_space_id", "INTEGER")
+    for table, col, decl in gchat.SQLITE_COLUMNS:   # Google Chat columns added after the first release
+        _add_column(conn, table, col, decl)
     for col in ("block_date", "block_start", "block_end"):   # optional time block set by the assignee
         _add_column(conn, "tasks", col, "TEXT")
     # Task notes were replaced by comments: move any existing notes into a comment so nothing is lost.
