@@ -1615,3 +1615,5 @@ body:has(#hud-bar) #chat-pops { bottom: 0; }
 /* chat boxes: no names — just the picture at the start of a run, and Seen */
 .cp-av-col { padding-top: 0; align-self: flex-start; }
 .cp-msg.first { margin-top: 8px; }
+.gif-item { height: auto; aspect-ratio: auto; }
+.gif-item img { width: 100%; height: auto; object-fit: cover; }
