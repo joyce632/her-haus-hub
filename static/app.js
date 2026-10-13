@@ -635,6 +635,9 @@ async function route() {
     history.replaceState(null, '', `#/${pathPart}`);
   }
   let key = parts[0];
+  // Already on the Chat page: just switch conversations, don't rebuild the page.
+  if (key === 'chat' && S.chatNav && $('#chat-wrap') && !queryPart) { markActiveNav(); S.chatNav(parts[1]); return; }
+  S.chatNav = null;
   const def = execView() ? 'overview' : 'dashboard';
   if (!ROUTES[key] || (ROUTES[key].exec && !isExec())) { key = def; history.replaceState(null, '', `#/${def}`); }
   if (ROUTES[key].exec && !execView()) { S.view = 'exec'; renderShell(); }
@@ -3005,7 +3008,7 @@ function chatMsgHTML(m, prev, opts = {}) {
   const order = (e) => { const i = REACTION_EMOJI.indexOf(e); return i < 0 ? 99 : i; };
   const rx = [...m.reactions].sort((a, b) => order(a.emoji) - order(b.emoji));
   const full = new Date(m.create_time).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
-  return `<div class="cmsg ${grouped ? 'cont' : ''}" data-mid="${m.id}">
+  return `<div class="cmsg ${grouped ? 'cont' : ''} ${m.pending ? 'pending' : ''}" data-mid="${m.id}">
     <div class="cmsg-av">${grouped ? `<time class="cmsg-hover-time" title="${esc(full)}">${new Date(m.create_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time>` : personAv(m.sender)}</div>
     <div class="cmsg-main">
       ${grouped ? '' : `<div class="cmsg-head"><b>${esc(m.sender.name)}</b>${m.sender.is_bot ? '<span class="bot-tag">App</span>' : ''}<time title="${esc(full)}">${chatClock(m.create_time)}${chatClock(m.create_time).includes(':') ? '' : `, ${new Date(m.create_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`}</time></div>`}
@@ -3017,7 +3020,8 @@ function chatMsgHTML(m, prev, opts = {}) {
       ${rx.length ? `<div class="rx-row">${rx.map((r) => `<button type="button" class="rx ${r.mine ? 'mine' : ''}" data-react="${esc(r.emoji)}"><span class="rx-e">${esc(r.emoji)}</span><span>${r.count}</span></button>`).join('')}<button type="button" class="rx rx-add" data-react-add title="Add reaction">${I.smile}<span>+</span></button></div>` : ''}
       ${m.reply_count && !opts.thread ? `<button type="button" class="cmsg-replies" data-thread="${esc(m.thread)}">${I.chat.replace('width="18" height="18"', 'width="14" height="14"')}${m.reply_count} ${m.reply_count === 1 ? 'reply' : 'replies'}<span>· last ${timeAgo(m.last_reply.replace(/\.\d+Z$/, 'Z'))}</span></button>` : ''}
     </div>
-    ${m.deleted ? '' : `<div class="cmsg-tools">
+    ${m.pending ? '<div class="cmsg-sending">Sending…</div>' : ''}
+    ${m.deleted || m.pending ? '' : `<div class="cmsg-tools">
       <button type="button" data-react-add title="Add reaction">${I.smile}</button>
       ${opts.thread ? '' : `<button type="button" data-thread="${esc(m.thread)}" title="Reply in thread">${I.chat}</button>`}
       ${m.can_edit ? `<button type="button" data-cm-edit title="Edit">${I.edit || '✎'}</button><button type="button" data-cm-del title="Delete">${I.trash || '🗑'}</button>` : ''}
@@ -3030,14 +3034,27 @@ function chatItems(msgs, opts) {
   for (const m of msgs) {
     const d = chatDay(m.create_time);
     if (d !== day && !opts.thread) { out.push({ key: `d:${d}`, html: `<div class="cday"><span>${esc(d)}</span></div>` }); day = d; prev = null; }
-    out.push({ key: `m:${m.id}`, html: chatMsgHTML(m, prev, opts), msg: true }); prev = m;
+    out.push({ key: m.key || `m:${m.id}`, html: chatMsgHTML(m, prev, opts), msg: true }); prev = m;
   }
   return out;
 }
-// Make box's children match items (by key): keep unchanged nodes, replace changed ones, add new ones (animated).
-function patchList(box, items, animate) {
+// Update element a in place so it matches b — unchanged parts (and loaded images) are left alone.
+function morph(a, b) {
+  if (a.nodeType !== b.nodeType || a.nodeName !== b.nodeName) { a.replaceWith(b); return b; }
+  if (a.nodeType !== 1) { if (a.nodeValue !== b.nodeValue) a.nodeValue = b.nodeValue; return a; }
+  for (const { name } of [...a.attributes]) if (!b.hasAttribute(name)) a.removeAttribute(name);
+  for (const { name, value } of [...b.attributes]) if (a.getAttribute(name) !== value) a.setAttribute(name, value);
+  const ac = [...a.childNodes], bc = [...b.childNodes];
+  bc.forEach((n, i) => { if (i < ac.length) morph(ac[i], n); else a.appendChild(n); });
+  for (let i = bc.length; i < ac.length; i++) ac[i].remove();
+  return a;
+}
+// Make box's children match items (by key): keep unchanged nodes, morph changed ones, add new ones (animated).
+// With flip, items that move glide to their new spot instead of jumping.
+function patchList(box, items, animate, flip) {
   const old = new Map();
   [...box.children].forEach((n) => { if (n.dataset.key) old.set(n.dataset.key, n); else n.remove(); });
+  const before = flip ? new Map([...old].map(([k, n]) => [k, n.getBoundingClientRect().top])) : null;
   let ref = box.firstElementChild, added = 0;
   const tpl = document.createElement('template');
   for (const it of items) {
@@ -3045,15 +3062,27 @@ function patchList(box, items, animate) {
     if (!node || node._h !== it.html) {
       tpl.innerHTML = it.html.trim();
       const fresh = tpl.content.firstElementChild;
-      fresh.dataset.key = it.key; fresh._h = it.html;
-      if (node) { const wasRef = node === ref; node.replaceWith(fresh); if (wasRef) ref = fresh; }
-      else if (animate && it.msg) { fresh.classList.add('cm-in'); added++; }
-      node = fresh;
+      fresh.dataset.key = it.key;
+      if (node) {
+        const keepIn = node.classList.contains('cm-in');   // don't restart a slide-in that's already played
+        const wasRef = node === ref; node = morph(node, fresh); if (wasRef) ref = node;
+        if (keepIn) node.classList.add('cm-in');
+      } else { node = fresh; if (animate && it.msg) { node.classList.add('cm-in'); added++; } }
+      node._h = it.html; node.dataset.key = it.key;
     }
     old.delete(it.key);
     if (node === ref) ref = ref.nextElementSibling; else box.insertBefore(node, ref);
   }
   old.forEach((n) => n.remove());
+  if (before) {
+    [...box.children].forEach((n) => {
+      const was = before.get(n.dataset.key); if (was == null) return;
+      const dy = was - n.getBoundingClientRect().top;
+      if (Math.abs(dy) < 1) return;
+      n.style.transition = 'none'; n.style.transform = `translateY(${dy}px)`;
+      requestAnimationFrame(() => { n.style.transition = 'transform .28s cubic-bezier(.2,.8,.2,1)'; n.style.transform = ''; });
+    });
+  }
   return added;
 }
 function askText(title, label, value = '', okLabel = 'Save') {
@@ -3130,14 +3159,20 @@ function bindChatComposer(root, spaceId, send) {
   ta.addEventListener('input', () => { idx = 0; update(); grow(); });
   ta.addEventListener('blur', () => setTimeout(closePop, 150));
   const doSend = async () => {
-    let text = ta.value.trim();
-    if (!text && !files.length) return;
+    const display = ta.value.trim();
+    if (!display && !files.length) return;
+    let text = display;
     for (const [label, gid] of Object.entries(picked).sort((a, b) => b[0].length - a[0].length)) text = text.split(label).join(`<${gid}>`);
-    btn.disabled = true;
+    // clear the box right away (the message shows instantly as "sending"); put it back if Google refuses it
+    const sent = { files, picked };
+    files = []; picked = {}; ta.value = ''; drawTray(); grow(); ta.focus();
     try {
-      await send({ text, files: files.map((f) => f.file) });
-      files.forEach((f) => f.url && URL.revokeObjectURL(f.url)); files = []; picked = {}; ta.value = ''; drawTray(); grow();
-    } catch (err) { toast(err.message, 'err'); } finally { btn.disabled = false; ta.focus(); }
+      await send({ text, display, files: sent.files.map((f) => f.file), previews: sent.files });
+      sent.files.forEach((f) => f.url && setTimeout(() => URL.revokeObjectURL(f.url), 10000));
+    } catch (err) {
+      toast(err.message, 'err');
+      if (!ta.value) { ta.value = display; files = sent.files; picked = sent.picked; drawTray(); grow(); }
+    }
   };
   ta.addEventListener('keydown', (e) => {
     if (!pop.classList.contains('hidden') && matches.length) {
@@ -3149,6 +3184,13 @@ function bindChatComposer(root, spaceId, send) {
   });
   btn.onclick = doSend;
   return { focus: () => ta.focus() };
+}
+let pendingSeq = 0;
+function pendingMessage(spaceId, { display, previews }, thread, myGid) {
+  return { id: -(++pendingSeq), key: `p:${Date.now()}:${pendingSeq}`, pending: true, space_id: spaceId, thread: thread || '', thread_reply: !!thread,
+    sender: { gid: myGid, name: S.me.name, avatar_file_id: S.me.avatar_file_id, is_me: true }, text: display || '', annotations: [],
+    attachments: (previews || []).map((f, i) => ({ index: i, name: f.file.name, type: f.file.type, is_image: !!f.url, url: f.url || '#', drive: false })),
+    reactions: [], create_time: new Date().toISOString().replace(/\.(\d{3})Z$/, '.$1000Z'), edited: false, deleted: false, reply_count: 0, can_edit: false };
 }
 async function chatSend(spaceId, { text, files }, thread) {
   if (files.length) {
@@ -3196,10 +3238,16 @@ async function pageChat(page, [sidParam], alive) {
     <aside class="chat-thread" id="chat-thread" hidden></aside>
   </div>`;
   const wrap = $('#chat-wrap'), listEl = $('#chat-list'), main = $('#chat-main'), threadEl = $('#chat-thread');
+  const convCache = new Map();   // space id -> { msgs, more, historyDone } so switching back is instant
   let spaces = [], current = null, msgs = [], more = false, historyDone = true, loadingOlder = false, thread = null, threadMsgs = [];
   let myGid = '', search = '', firstPaint = true, stick = true;   // stick: keep the view on the newest message
   let layout = { sections: [], place: {}, order: {}, collapsed: {}, mini: false };
   try { layout = { ...layout, ...(await api('GET', '/api/chat/layout')) }; } catch (_) { /* defaults */ }
+  // team sections: set up by executives, the same for everyone (each person sees the spaces they're in)
+  let team = { sections: [], place: {}, order: {} };
+  const loadTeam = async () => { try { team = { sections: [], place: {}, order: {}, ...(await api('GET', '/api/chat/team-layout')) }; } catch (_) { /* keep */ } };
+  await loadTeam();
+  const saveTeam = async () => { try { team = await api('PUT', '/api/chat/team-layout', team); } catch (err) { toast(err.message, 'err'); } };
   let saveTimer = null;
   const saveLayout = () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => api('PUT', '/api/chat/layout', layout).catch(() => {}), 400); };
   const applyMini = () => { wrap.classList.toggle('side-mini', !!layout.mini); const b = $('#cs-mini'); if (b) { b.textContent = layout.mini ? '»' : '«'; b.title = layout.mini ? 'Expand chat list' : 'Collapse chat list'; } };
@@ -3208,10 +3256,13 @@ async function pageChat(page, [sidParam], alive) {
   fit(); window.addEventListener('resize', fit);
 
   const secOf = (sp) => {
-    const p = layout.place[sp.id];
+    const p = layout.place[sp.id];   // your own arrangement wins…
     if (p === 'pinned' || layout.sections.some((x) => x.id === p)) return p;
+    const t = team.place[sp.id];     // …then the team's
+    if (team.sections.some((x) => x.id === t)) return t;
     return sp.type === 'SPACE' ? 'spaces' : 'dms';
   };
+  const isTeamSec = (id) => team.sections.some((x) => x.id === id);
   const itemHTML = (sp, sec) => `<a class="cl-item ${current && sp.id === current.id ? 'on' : ''} ${sp.unread ? 'unread' : ''}" href="#/chat/${sp.id}" draggable="true" data-space="${sp.id}" data-sec-of="${sec}" title="${esc(sp.title)}">
       <span class="cl-av">${spaceAv(sp, 'sm')}${sp.unread ? '<i class="cl-dot"></i>' : ''}</span>
       <span class="cl-main"><span class="cl-top"><b>${esc(sp.title)}</b><time>${sp.last_active ? chatClock(sp.last_active) : ''}</time></span>
@@ -3229,30 +3280,46 @@ async function pageChat(page, [sidParam], alive) {
       patchList(listEl, hits.length ? hits.map((x) => ({ key: `s:${x.id}`, html: itemHTML(x, secOf(x)) })) : [{ key: 'none', html: '<div class="empty">No matches</div>' }]);
       return;
     }
-    const secs = [{ id: 'pinned', name: 'Pinned', manual: true }, ...layout.sections.map((x) => ({ ...x, manual: true, custom: true })),
-      { id: 'spaces', name: 'Spaces' }, { id: 'dms', name: 'Direct messages' }];
+    const secs = [{ id: 'pinned', name: 'Pinned', manual: true }, { id: 'dms', name: 'Direct messages' },
+      ...team.sections.map((x) => ({ ...x, manual: true, team: true })),
+      ...layout.sections.map((x) => ({ ...x, manual: true, custom: true })), { id: 'spaces', name: 'Spaces' }];
     const items = [];
     for (const sec of secs) {
       let list = spaces.filter((x) => secOf(x) === sec.id);
+      if (sec.team && !list.length && !isExec()) continue;   // team sections you have no spaces in stay hidden
       if (sec.manual) {
-        const ord = layout.order[sec.id] || [];
+        const ord = (sec.team ? team.order : layout.order)[sec.id] || [];
         const pos = (x) => { const i = ord.indexOf(x.id); return i < 0 ? 1e6 : i; };
         list = list.map((x, i) => [x, i]).sort((a, b) => pos(a[0]) - pos(b[0]) || a[1] - b[1]).map((x) => x[0]);
       }
-      if (!list.length && !sec.custom) continue;
+      if (!list.length && !sec.custom && !sec.team) continue;
       const closed = !layout.mini && !!layout.collapsed[sec.id];   // the compact list always shows every chat
       const unread = list.reduce((n, x) => n + (x.unread || 0), 0);
       items.push({ key: `h:${sec.id}`, html: `<div class="cl-sec ${closed ? 'closed' : ''}" data-sec="${sec.id}">
-        <button type="button" class="cl-sec-btn" data-collapse="${sec.id}"><span class="cl-chev"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>${esc(sec.name)}<span class="cl-sec-n">${list.length}</span>${closed && unread ? `<span class="cl-badge sm">${unread > 99 ? '99+' : unread}</span>` : ''}</button>
-        ${sec.custom ? `<button type="button" class="cl-more" data-sec-menu="${sec.id}" title="Section options" aria-label="Section options">⋯</button>` : ''}</div>` });
+        <button type="button" class="cl-sec-btn" data-collapse="${sec.id}" ${sec.team ? 'title="Team section — set up by an executive for everyone"' : ''}><span class="cl-chev"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>${esc(sec.name)}${sec.team ? `<span class="cl-team-tag">${I.users.replace('width="18" height="18"', 'width="11" height="11"')}Team</span>` : ''}<span class="cl-sec-n">${list.length}</span>${closed && unread ? `<span class="cl-badge sm">${unread > 99 ? '99+' : unread}</span>` : ''}</button>
+        ${sec.custom || (sec.team && isExec()) ? `<button type="button" class="cl-more" data-sec-menu="${sec.id}" title="Section options" aria-label="Section options">⋯</button>` : ''}</div>` });
       if (closed) continue;
-      if (!list.length) items.push({ key: `e:${sec.id}`, html: `<div class="cl-drop-hint" data-sec-drop="${sec.id}">Drag chats here</div>` });
+      if (!list.length) items.push({ key: `e:${sec.id}`, html: `<div class="cl-drop-hint" data-sec-drop="${sec.id}">${sec.team ? 'Drag spaces here — everyone in them will see this section' : 'Drag chats here'}</div>` });
       list.forEach((x) => items.push({ key: `s:${x.id}`, html: itemHTML(x, sec.id) }));
     }
-    patchList(listEl, items);
+    patchList(listEl, items, false, true);
   };
   // organizing: menus, drag & drop, collapse
+  const moveToTeam = (sid, sec, before) => {
+    if (!isExec()) { toast('Only executives can arrange team sections', 'err'); return; }
+    Object.values(team.order).forEach((arr) => { const i = arr.indexOf(sid); if (i >= 0) arr.splice(i, 1); });
+    if (sec) {
+      team.place[sid] = sec;
+      const ord = team.order[sec] || (team.order[sec] = []);
+      spaces.filter((x) => team.place[x.id] === sec && x.id !== sid).forEach((x) => { if (!ord.includes(x.id)) ord.push(x.id); });
+      const i = before ? ord.indexOf(before) : -1;
+      if (i >= 0) ord.splice(i, 0, sid); else ord.push(sid);
+    } else delete team.place[sid];
+    if (layout.place[sid] && layout.place[sid] !== 'pinned') { delete layout.place[sid]; saveLayout(); }   // so it shows in the team section
+    drawList(); saveTeam();
+  };
   const moveTo = (sid, sec, before) => {
+    if (isTeamSec(sec)) { moveToTeam(sid, sec, before); return; }
     Object.values(layout.order).forEach((arr) => { const i = arr.indexOf(sid); if (i >= 0) arr.splice(i, 1); });
     if (sec === 'spaces' || sec === 'dms') delete layout.place[sid];
     else {
@@ -3264,6 +3331,14 @@ async function pageChat(page, [sidParam], alive) {
       if (i >= 0) ord.splice(i, 0, sid); else ord.push(sid);
     }
     saveLayout(); drawList();
+  };
+  const newTeamSection = async (thenMove) => {
+    const name = await askText('New team section', 'Section name (everyone in its spaces will see it)', '', 'Create');
+    if (!name) return;
+    const id = `t${Date.now().toString(36)}`;
+    team.sections.push({ id, name });
+    if (thenMove) moveToTeam(thenMove, id); else { drawList(); saveTeam(); }
+    toast(`Team section “${name}” created${thenMove ? '' : ' — drag spaces into it'}`, 'ok');
   };
   const newSection = async (thenMove) => {
     const name = await askText('New section', 'Section name', '', 'Create');
@@ -3292,13 +3367,32 @@ async function pageChat(page, [sidParam], alive) {
       const sid = Number(im.dataset.itemMenu), sp = spaces.find((x) => x.id === sid), sec = secOf(sp);
       const entries = [sec === 'pinned' ? { text: 'Unpin', icon: '📌', run: () => moveTo(sid, sp.type === 'SPACE' ? 'spaces' : 'dms') } : { text: 'Pin to top', icon: '📌', run: () => moveTo(sid, 'pinned') }];
       const others = layout.sections.filter((x) => x.id !== sec);
-      if (others.length) entries.push({ label: 'Move to section' }, ...others.map((x) => ({ text: x.name, icon: '›', run: () => moveTo(sid, x.id) })));
+      entries.push({ label: isExec() ? 'My sections (just me)' : 'Move to section' }, ...others.map((x) => ({ text: x.name, icon: '›', run: () => moveTo(sid, x.id) })));
       entries.push({ text: 'New section…', icon: '+', run: () => newSection(sid) });
+      if (isExec() && sp.type === 'SPACE') {
+        const tOthers = team.sections.filter((x) => x.id !== team.place[sid]);
+        entries.push({ label: 'Team sections (everyone)' }, ...tOthers.map((x) => ({ text: x.name, icon: '👥', run: () => moveToTeam(sid, x.id) })));
+        entries.push({ text: 'New team section…', icon: '+', run: () => newTeamSection(sid) });
+        if (team.place[sid]) entries.push({ text: 'Remove from team section', icon: '↩', run: () => moveToTeam(sid, null) });
+      }
       if (sec !== 'spaces' && sec !== 'dms' && sec !== 'pinned') entries.push({ text: `Back to ${sp.type === 'SPACE' ? 'Spaces' : 'Direct messages'}`, icon: '↩', run: () => moveTo(sid, sp.type === 'SPACE' ? 'spaces' : 'dms') });
       popMenu(im, entries);
       return;
     }
     const sm = e.target.closest('[data-sec-menu]');
+    if (sm && isTeamSec(sm.dataset.secMenu)) {
+      const id = sm.dataset.secMenu, sec = team.sections.find((x) => x.id === id);
+      popMenu(sm, [
+        { text: 'Rename team section', icon: '✎', run: async () => { const n = await askText('Rename team section', 'Section name', sec.name); if (n) { sec.name = n; drawList(); saveTeam(); } } },
+        { text: 'Delete team section', icon: '🗑', danger: true, run: async () => {
+          if (!await confirmModal(`Delete the team section “${sec.name}” for everyone? Its spaces go back to Spaces.`, { okLabel: 'Delete for everyone' })) return;
+          team.sections = team.sections.filter((x) => x.id !== id);
+          Object.keys(team.place).forEach((k) => { if (team.place[k] === id) delete team.place[k]; });
+          delete team.order[id]; drawList(); saveTeam();
+        } },
+      ]);
+      return;
+    }
     if (sm) {
       const id = sm.dataset.secMenu, sec = layout.sections.find((x) => x.id === id);
       popMenu(sm, [
@@ -3329,7 +3423,11 @@ async function pageChat(page, [sidParam], alive) {
     if (t.dataset.space) { const target = Number(t.dataset.space); if (target !== sid) moveTo(sid, t.dataset.secOf, target); }
     else moveTo(sid, t.dataset.sec || t.dataset.secDrop);
   });
-  $('#cs-new-sec').onclick = () => newSection();
+  $('#cs-new-sec').onclick = (e) => {
+    if (!isExec()) { newSection(); return; }
+    popMenu(e.currentTarget, [{ text: 'New section (just me)', icon: '+', run: () => newSection() },
+      { text: 'New team section (everyone)', icon: '👥', run: () => newTeamSection() }]);
+  };
   $('#cs-mini').onclick = () => { layout.mini = !layout.mini; applyMini(); drawList(); saveLayout(); };
   const loadSpaces = async () => {
     try { spaces = await api('GET', '/api/chat/spaces'); } catch (_) { return; }
@@ -3360,9 +3458,17 @@ async function pageChat(page, [sidParam], alive) {
     $$('img', box).forEach((img) => { if (!img.complete) img.addEventListener('load', () => { if (stick) box.scrollTop = box.scrollHeight; }, { once: true }); });
     firstPaint = false;
   };
+  const keyFor = new Map();   // real message id -> the key its "sending…" placeholder used (so it swaps in place)
   const merge = (list, incoming) => {
     const byId = new Map(list.map((m) => [m.id, m]));
-    incoming.forEach((m) => byId.set(m.id, m));
+    for (const m of incoming) {
+      if (!keyFor.has(m.id) && m.sender && m.sender.is_me) {   // the server copy of something we're still "sending"
+        const p = [...byId.values()].find((x) => x.pending && x.text === m.text && (!x.thread || x.thread === m.thread));
+        if (p) { keyFor.set(m.id, p.key); byId.delete(p.id); }
+      }
+      if (keyFor.has(m.id)) m.key = keyFor.get(m.id);
+      byId.set(m.id, m);
+    }
     return [...byId.values()].sort((a, b) => (a.create_time < b.create_time ? -1 : a.create_time > b.create_time ? 1 : a.id - b.id));
   };
   const markRead = () => { if (current && !document.hidden) api('POST', `/api/chat/spaces/${current.id}/read`, {}).then(() => { const s = spaces.find((x) => x.id === current.id); if (s && s.unread) { s.unread = 0; drawList(); } pollNotifications(); }).catch(() => {}); };
@@ -3370,7 +3476,10 @@ async function pageChat(page, [sidParam], alive) {
   async function openSpace(sid) {
     const s = spaces.find((x) => x.id === sid);
     if (!s) { if (spaces.length) toast('That conversation isn’t available', 'err'); return; }
-    current = s; msgs = []; thread = null; firstPaint = true; stick = true; threadEl.hidden = true; wrap.classList.add('has-open'); wrap.classList.remove('has-thread');
+    if (current && msgs.length) convCache.set(current.id, { msgs, more, historyDone });
+    const cached = convCache.get(s.id);
+    current = s; msgs = cached ? cached.msgs : []; more = cached ? cached.more : false; historyDone = cached ? cached.historyDone : true;
+    thread = null; firstPaint = true; stick = true; threadEl.hidden = true; wrap.classList.add('has-open'); wrap.classList.remove('has-thread');
     drawList();
     main.innerHTML = `<header class="cm-head">
         <button class="icon-btn cm-back" id="cm-back" aria-label="Back to chats">‹</button>
@@ -3378,7 +3487,7 @@ async function pageChat(page, [sidParam], alive) {
         <div class="cm-actions">
           ${isExec() && s.type !== 'DIRECT_MESSAGE' ? `<select class="input sm" id="cm-client" title="Link this chat to a client board"><option value="">Link to client…</option>${S.clients.map((c) => `<option value="${c.id}" ${s.client && s.client.id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>` : ''}
           <a class="btn sm ghost cm-open" href="${esc(s.web_link)}" target="_blank" rel="noopener" title="Open in Google Chat">${I.ext || '↗'}<span>Google Chat</span></a></div></header>
-      <div class="cm-msgs-wrap"><div class="cm-msgs" id="cm-msgs">${'<div class="cm-skel"><i></i><span><b></b><em></em></span></div>'.repeat(5)}</div>
+      <div class="cm-msgs-wrap"><div class="cm-msgs cm-fade" id="cm-msgs">${cached ? '' : '<div class="cm-skel"><i></i><span><b></b><em></em></span></div>'.repeat(5)}</div>
         <button type="button" class="cm-newpill" id="cm-newpill">↓ New messages</button></div>
       ${chatComposerHTML('cm-comp', `Message ${s.type === 'DIRECT_MESSAGE' ? s.title : s.title}`)}`;
     $('#cm-back').onclick = () => { wrap.classList.remove('has-open'); location.hash = '#/chat'; };
@@ -3389,12 +3498,21 @@ async function pageChat(page, [sidParam], alive) {
       try { await api('PUT', `/api/chat/spaces/${s.id}/client`, { client_id: e.target.value || null }); toast(e.target.value ? 'Linked — the client board now has a Chat button' : 'Unlinked', 'ok'); loadSpaces(); } catch (err) { toast(err.message, 'err'); }
     };
     const comp = bindChatComposer($('#cm-comp', main), s.id, async (payload) => {
-      const m = await chatSend(s.id, payload); msgs = merge(msgs, [m]); drawMsgs('bottom'); loadSpaces();
+      const p = pendingMessage(s.id, payload, '', myGid);
+      msgs = merge(msgs, [p]); drawMsgs('bottom');
+      let m;
+      try { m = await chatSend(s.id, payload); }
+      catch (err) { msgs = msgs.filter((x) => x !== p); if (current === s) drawMsgs(); throw err; }
+      if (!keyFor.has(m.id)) keyFor.set(m.id, p.key);
+      msgs = merge(msgs.filter((x) => x !== p), [m]);
+      if (current === s) drawMsgs('bottom');
+      loadSpaces();
     });
     comp.focus();
+    if (cached) drawMsgs('bottom');   // show what we had instantly, then freshen it
     const r = await api('GET', `/api/chat/spaces/${s.id}/messages?live=1`);
     if (!alive() || current !== s) return;
-    msgs = r.messages; more = r.more; historyDone = r.history_done !== false;
+    msgs = cached ? merge(msgs, r.messages) : r.messages; more = cached ? more : r.more; historyDone = r.history_done !== false;
     myGid = (msgs.find((m) => m.sender.is_me) || {}).sender?.gid || myGid;
     drawMsgs('bottom'); markRead();
   }
@@ -3412,7 +3530,13 @@ async function pageChat(page, [sidParam], alive) {
       <div class="ct-msgs" id="ct-msgs"><div class="empty">Loading…</div></div>${chatComposerHTML('ct-comp', 'Reply in thread')}`;
     $('#ct-close').onclick = () => { thread = null; threadEl.hidden = true; wrap.classList.remove('has-thread'); };
     bindChatComposer($('#ct-comp', threadEl), current.id, async (payload) => {
-      const m = await chatSend(current.id, payload, name); threadMsgs = merge(threadMsgs, [m]); drawThread(true);
+      const p = pendingMessage(current.id, payload, name, myGid);
+      threadMsgs = merge(threadMsgs, [p]); drawThread(true);
+      let m;
+      try { m = await chatSend(current.id, payload, name); }
+      catch (err) { threadMsgs = threadMsgs.filter((x) => x !== p); drawThread(); throw err; }
+      if (!keyFor.has(m.id)) keyFor.set(m.id, p.key);
+      threadMsgs = merge(threadMsgs.filter((x) => x !== p), [m]); drawThread(true);
       const top = msgs.find((x) => x.thread === name && !x.thread_reply); if (top) { top.reply_count += 1; top.last_reply = m.create_time; drawMsgs(); }
     }).focus();
     await loadThread(true);
@@ -3490,11 +3614,19 @@ async function pageChat(page, [sidParam], alive) {
       if (thread && !$('.cm-edit', threadEl)) loadThread(false);
     }
     if (ticks % 3 === 0) loadSpaces();
+    if (ticks % 15 === 0) { await loadTeam(); drawList(); }
   };
   const timer = setInterval(tick, 4000);
   // coming back to the tab: catch up right away instead of waiting for the next check
   document.addEventListener('visibilitychange', () => { if (!document.hidden && alive()) { ticks = 2; tick(); markRead(); } });
 
+  S.chatNav = (sid) => {   // switching conversations within the page (see route())
+    if (!alive()) return;
+    if (sid) { if (!current || current.id !== Number(sid)) openSpace(Number(sid)); return; }
+    if (current && msgs.length) convCache.set(current.id, { msgs, more, historyDone });
+    current = null; thread = null; threadEl.hidden = true; wrap.classList.remove('has-open', 'has-thread'); drawList();
+    main.innerHTML = `<div class="cm-empty cm-fade">${I.chat}<b>Pick a conversation</b><span>Your Google Chat spaces and direct messages are on the left.</span></div>`;
+  };
   await loadSpaces();
   if (sidParam && spaces.length) openSpace(Number(sidParam));
   else if (!sidParam) main.innerHTML = `<div class="cm-empty">${I.chat}<b>Pick a conversation</b><span>Your Google Chat spaces and direct messages are on the left.</span></div>`;

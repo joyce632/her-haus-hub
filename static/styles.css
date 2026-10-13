@@ -1204,3 +1204,14 @@ body::before {
 @keyframes skel { to { background-position: -200% 0; } }
 .cm-spin { display: inline-block; width: 12px; height: 12px; border-radius: 50%; border: 2px solid rgba(12,46,96,.2); border-top-color: var(--navy); animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
 @media (prefers-reduced-motion: reduce) { .cmsg.cm-in, .cm-newpill { animation: none; transition: none; } }
+/* chat: sending state, team sections, smooth switching */
+.cmsg.pending .cmsg-body, .cmsg.pending .c-imgs, .cmsg.pending .cmsg-files { opacity: .55; transition: opacity .25s; }
+.cmsg-sending { grid-column: 2; font-size: 10.5px; color: var(--muted); margin-top: 2px; }
+.cmsg .cmsg-body, .cmsg .c-imgs { transition: opacity .25s; }
+.cl-team-tag { display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px; border-radius: 99px; background: rgba(27,75,168,.1); color: var(--royal, #1B4BA8);
+  font-size: 9.5px; letter-spacing: .04em; text-transform: none; font-weight: 700; }
+.cl-team-tag svg { width: 11px; height: 11px; }
+.cm-fade { animation: cmFade .18s ease both; }
+@keyframes cmFade { from { opacity: 0; } to { opacity: 1; } }
+.cl-item { will-change: transform; }
+@media (prefers-reduced-motion: reduce) { .cm-fade { animation: none; } }

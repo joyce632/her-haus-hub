@@ -1071,6 +1071,29 @@ def register(module):
             H.ex("INSERT OR IGNORE INTO chat_layout(user_id,data,updated_at) VALUES(?,?,?)", (uid, data, H.iso(H.now_utc())))
         return jsonify(ok=True)
 
+    def _team_layout():
+        r = H.q("SELECT value FROM settings WHERE key='chat_team_layout'", one=True)
+        try:
+            return json.loads((r and r["value"]) or "{}")
+        except ValueError:
+            return {}
+
+    @app.get("/api/chat/team-layout")
+    @lr
+    def chat_team_layout_get():
+        """Sections executives set up for everyone: each person sees the spaces they're a member of."""
+        return jsonify(_team_layout())
+
+    @app.put("/api/chat/team-layout")
+    @H.exec_required
+    def chat_team_layout_put():
+        d = request.get_json(silent=True) or {}
+        clean = {"sections": [{"id": str(x.get("id"))[:40], "name": str(x.get("name"))[:40]} for x in d.get("sections", []) if x.get("id") and x.get("name")][:50],
+                 "place": {str(k): str(v)[:40] for k, v in (d.get("place") or {}).items()},
+                 "order": {str(k): [int(i) for i in v if str(i).isdigit()][:500] for k, v in (d.get("order") or {}).items()}}
+        H.ex("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", ("chat_team_layout", json.dumps(clean)))
+        return jsonify(clean)
+
     @app.get("/api/chat/diagnose")
     @H.exec_required
     def chat_diagnose():
