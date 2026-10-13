@@ -3627,7 +3627,7 @@ function newChatModal(kind, onCreated) {
 // ============================================================ huddles: live voice calls in the hub (see huddles.py)
 // Audio goes browser-to-browser (WebRTC). The newest person to join calls everyone already there, so two
 // browsers never call each other at the same time. Signals travel through the hub with a 1-second check-in.
-const HUD = { screen: null, screenSenders: new Map(), list: [], cur: null, stream: null, pcs: new Map(), audios: new Map(), pendingIce: new Map(), since: 0, timer: null,
+const HUD = { stage: null, screen: null, screenSenders: new Map(), list: [], cur: null, stream: null, pcs: new Map(), audios: new Map(), pendingIce: new Map(), since: 0, timer: null,
   muted: false, ice: [{ urls: ['stun:stun.l.google.com:19302'] }], levels: new Map(), dismissed: new Set(), ringing: new Map(), failed: new Set() };
 const huddleFor = (spaceId) => HUD.list.find((h) => h.space_id === Number(spaceId));
 const inHuddle = (userId) => HUD.list.some((h) => h.participants.some((p) => p.id === userId));
@@ -3712,7 +3712,7 @@ async function leaveHuddle(silent) {
   HUD.audios.forEach((a) => a.remove()); HUD.audios.clear(); HUD.pendingIce.clear(); HUD.levels.clear();
   HUD.stream?.getTracks().forEach((t) => t.stop()); HUD.stream = null; HUD.cur = null;
   HUD.screen?.getTracks().forEach((t) => t.stop()); HUD.screen = null; HUD.screenSenders.clear();
-  $$('.hud-screen').forEach((n) => n.remove());
+  HUD.stage = null; $('#hud-stage')?.remove();
   $('#hud-bar')?.remove();
   if (!silent) { playTone('leave', true); await api('POST', `/api/huddles/${h.id}/leave`, {}).catch(() => {}); }
   refreshHuddles();
@@ -3815,7 +3815,7 @@ setInterval(() => {
     const level = data.reduce((a, b) => a + b, 0) / data.length;
     const uid = key === 'me' ? S.me.id : key;
     const talking = level > 18 && !(key === 'me' && HUD.muted);
-    $$(`#hud-bar [data-hud-uid="${uid}"]`).forEach((n) => n.classList.toggle('talking', talking));
+    $$(`#hud-bar [data-hud-uid="${uid}"], #hud-stage [data-hud-uid="${uid}"]`).forEach((n) => n.classList.toggle('talking', talking));
   });
 }, 180);
 
@@ -3840,16 +3840,18 @@ function drawHuddleBar() {
       <button type="button" class="hud-btn leave" data-hud-leave title="Leave huddle">${I.phoneOff}</button></span>`;
   $$('[data-hud-uid]', bar).forEach((n) => { const p = h.participants.find((x) => x.id === Number(n.dataset.hudUid)); if (p && p.muted) n.classList.add('muted'); });
   tickHuddleClock();
+  drawStage();
 }
 function tickHuddleClock() {
-  const c = $('#hud-bar [data-hud-clock]'); if (!c || !HUD.cur) return;
+  if (!HUD.cur) return;
   const secs = Math.max(0, Math.floor(Date.now() / 1000 - HUD.cur.started_at));
-  c.textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+  $$('[data-hud-clock]').forEach((c) => { c.textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`; });
 }
 setInterval(tickHuddleClock, 1000);
 window.addEventListener('resize', () => { if (HUD.cur) drawHuddleBar(); });
 document.addEventListener('click', async (e) => {
-  if (!e.target.closest('#hud-bar')) return;
+  if (!e.target.closest('#hud-bar, #hud-stage')) return;
+  if (e.target.closest('[data-hud-switch]')) { switchShare(); return; }
   if (e.target.closest('[data-hud-leave]')) { leaveHuddle(); return; }
   if (e.target.closest('[data-hud-mute]')) {
     HUD.muted = !HUD.muted; HUD.stream?.getAudioTracks().forEach((t) => { t.enabled = !HUD.muted; });
@@ -3892,28 +3894,62 @@ async function stopShare() {
   if (HUD.cur) api('PUT', `/api/huddles/${HUD.cur.id}/me`, { sharing: false }).catch(() => {});
   drawHuddleBar();
 }
-function showScreen(uid, stream) {
-  const id = `hud-screen-${uid}`;
-  let box = document.getElementById(id);
-  const who = uid === 'me' ? 'You are' : `${esc((HUD.cur?.participants.find((p) => p.id === uid)?.name || 'Someone').split(' ')[0])} is`;
-  if (!box) {
-    box = document.createElement('div'); box.id = id; box.className = `hud-screen ${uid === 'me' ? 'mine small' : ''}`;
-    box.innerHTML = `<div class="hs-head"><span>${I.monitor} ${who} sharing ${uid === 'me' ? 'your' : 'their'} screen</span>
-      <button type="button" class="hs-btn" data-hs-size title="Bigger / smaller">⤢</button>
-      ${uid === 'me' ? '<button type="button" class="hs-btn stop" data-hs-stop>Stop sharing</button>' : '<button type="button" class="hs-btn" data-hs-full title="Full screen">⛶</button>'}
-      <button type="button" class="hs-btn" data-hs-min title="Minimize">–</button></div>
-      <video autoplay playsinline muted></video>`;
-    document.body.appendChild(box);
-    box.addEventListener('click', (e) => {
-      if (e.target.closest('[data-hs-size]')) box.classList.toggle('small');
-      if (e.target.closest('[data-hs-min]')) box.classList.toggle('min');
-      if (e.target.closest('[data-hs-stop]')) stopShare();
-      if (e.target.closest('[data-hs-full]')) $('video', box).requestFullscreen?.();
+// ---- the presentation window ("stage"): the shared screen with the whole call inside it, like Google Meet
+function showScreen(uid, stream) { HUD.stage = { uid, stream, min: HUD.stage && HUD.stage.uid === uid ? HUD.stage.min : false }; drawStage(); }
+function hideScreen(uid) { if (HUD.stage && HUD.stage.uid === uid) { HUD.stage = null; drawStage(); } }
+async function switchShare() {   // present a different screen / window / tab without stopping
+  if (!HUD.screen || !navigator.mediaDevices?.getDisplayMedia) return;
+  let next;
+  try { next = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 24 } }, audio: false }); }
+  catch (_) { return; }   // cancelled: keep presenting what you had
+  const track = next.getVideoTracks()[0], old = HUD.screen;
+  await Promise.all([...HUD.screenSenders.values()].map((sender) => sender.replaceTrack(track).catch(() => {})));
+  old.getVideoTracks().forEach((t) => { t.onended = null; t.stop(); });
+  HUD.screen = next;
+  track.onended = () => stopShare();
+  showScreen('me', next);
+  toast('Now presenting your new selection', 'ok');
+}
+function drawStage() {
+  const st = HUD.stage, h = HUD.cur;
+  let el = $('#hud-stage');
+  if (!st || !h) { el?.remove(); $('#hud-bar')?.classList.remove('stage-open'); return; }
+  const mine = st.uid === 'me';
+  const presenter = mine ? null : h.participants.find((p) => p.id === st.uid);
+  if (!el) {
+    el = document.createElement('div'); el.id = 'hud-stage';
+    el.innerHTML = `<div class="hs-head"><span class="hs-title"></span>
+        <button type="button" class="hs-btn" data-hs-size title="Bigger / smaller">⤢</button>
+        <button type="button" class="hs-btn" data-hs-full title="Full screen">⛶</button>
+        <button type="button" class="hs-btn" data-hs-min title="Minimize">–</button></div>
+      <div class="hs-body"><video autoplay playsinline muted></video></div>
+      <div class="hs-foot"><div class="hs-people"></div><div class="hs-ctrls"></div></div>`;
+    document.body.appendChild(el);
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('[data-hs-size]')) el.classList.toggle('big');
+      if (e.target.closest('[data-hs-min]') || (el.classList.contains('min') && e.target.closest('.hs-head') && !e.target.closest('.hs-btn'))) {
+        HUD.stage.min = !HUD.stage.min; drawStage();
+      }
+      if (e.target.closest('[data-hs-full]')) { if (document.fullscreenElement) document.exitFullscreen(); else el.requestFullscreen?.(); }
     });
   }
-  const v = $('video', box); v.srcObject = stream; v.play().catch(() => {});
+  el.className = `hud-stage ${mine ? 'mine' : ''} ${st.min ? 'min' : ''} ${el.classList.contains('big') ? 'big' : ''}`;
+  $('.hs-title', el).innerHTML = `${I.monitor}<span>${mine ? 'You are presenting' : `${esc((presenter?.name || 'Someone').split(' ')[0])} is presenting`}</span><small>${esc(h.space_title || 'Huddle')} · <span data-hud-clock></span></small>`;
+  const v = $('video', el); if (v.srcObject !== st.stream) { v.srcObject = st.stream; v.play().catch(() => {}); }
+  // everyone in the call, right under the screen
+  $('.hs-people', el).innerHTML = h.participants.map((p) => `<span class="hs-person ${p.muted ? 'muted' : ''}" data-hud-uid="${p.id}" title="${esc(p.name)}${p.muted ? ' · muted' : ''}">
+      ${av(p.name, p.avatar_file_id, 'sm')}<span>${esc(p.is_me ? 'You' : p.name.split(' ')[0])}</span>${p.muted ? `<i>${I.micOff}</i>` : ''}${p.sharing ? `<b title="Presenting">${I.monitor}</b>` : ''}</span>`).join('');
+  $('.hs-ctrls', el).innerHTML = `
+    <button type="button" class="hud-btn ${HUD.muted ? 'off' : ''}" data-hud-mute title="${HUD.muted ? 'Unmute' : 'Mute'}">${HUD.muted ? I.micOff : I.mic}</button>
+    ${mine ? `<button type="button" class="hud-btn wide" data-hud-switch title="Present a different screen, window or tab">${I.monitor}<span>Present something else</span></button>
+      <button type="button" class="hud-btn wide stop" data-hud-share title="Stop presenting">Stop presenting</button>`
+      : `<button type="button" class="hud-btn" disabled title="${esc((presenter?.name || 'Someone').split(' ')[0])} is presenting">${I.monitor}</button>`}
+    <button type="button" class="hud-btn" data-hud-invite title="Invite people">${I.userPlus}</button>
+    <button type="button" class="hud-btn" data-hud-open title="Open the chat">${I.chat}</button>
+    <button type="button" class="hud-btn leave" data-hud-leave title="Leave huddle">${I.phoneOff}</button>`;
+  $('#hud-bar')?.classList.toggle('stage-open', !st.min);   // the call lives in the window while it's open
+  tickHuddleClock();
 }
-function hideScreen(uid) { document.getElementById(`hud-screen-${uid}`)?.remove(); }
 
 function huddleInvite(anchor) {
   const h = HUD.cur; if (!h) return;
