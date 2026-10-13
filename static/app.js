@@ -53,7 +53,7 @@ async function api(method, url, data) {
   let j = null;
   try { j = await r.json(); } catch (_) { /* non-JSON */ }
   if (r.status === 401 && url !== '/api/login' && url !== '/api/me') { S.me = null; route(); throw new Error('Your session expired — please log in again'); }
-  if (!r.ok) throw new Error((j && j.error) || `Request failed (${r.status})`);
+  if (!r.ok) { const e = new Error((j && j.error) || `Request failed (${r.status})`); e.status = r.status; throw e; }
   return j;
 }
 
@@ -423,12 +423,17 @@ function watchLoading(stage) {
 }
 function loadingDone() { clearTimeout(loadWatchdog); document.getElementById('load-rescue')?.remove(); }
 
-async function boot() {
+async function boot(tries = 0) {
   watchLoading('opening');
   try {
     const r = await api('GET', '/api/me');
     await setMe(r);
-  } catch (_) { S.me = null; }
+  } catch (err) {
+    // Only a real "not signed in" answer shows the sign-in page. Anything else (a hiccup while a new version
+    // is switching in) is retried, so people are never bounced to sign-in by mistake.
+    if (err.status !== 401 && tries < 6) { setTimeout(() => boot(tries + 1), 1500 * (tries + 1)); return; }
+    S.me = null;
+  }
   await route();
   loadingDone();
 }
