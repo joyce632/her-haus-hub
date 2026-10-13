@@ -3405,7 +3405,7 @@ function gifPicker(anchor, onPick) {
   const pop = document.createElement('div');
   pop.className = 'gif-pop';
   pop.innerHTML = `<div class="gif-head"><input class="input" placeholder="Search GIFs" autocomplete="off"><button type="button" class="icon-btn" data-gif-close>${I.x}</button></div>
-    <div class="gif-grid"><div class="empty"><span class="cm-spin"></span></div></div><div class="gif-foot">Powered by Tenor</div>`;
+    <div class="gif-grid"><div class="empty"><span class="cm-spin"></span></div></div><div class="gif-foot">Powered by GIPHY</div>`;
   document.body.appendChild(pop);
   const place = () => {
     const r = anchor.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
@@ -3421,7 +3421,7 @@ function gifPicker(anchor, onPick) {
     try {
       const r = await api('GET', `/api/chat/gifs?q=${encodeURIComponent(q)}${append && next ? `&pos=${encodeURIComponent(next)}` : ''}`);
       if (my !== seq) return;
-      next = r.next;
+      next = r.next; if (r.provider) $('.gif-foot', pop).textContent = `Powered by ${r.provider}`;
       const html = r.gifs.map((g) => `<button type="button" class="gif-item" data-gif="${esc(g.id)}" title="${esc(g.title)}" style="aspect-ratio:${g.w}/${g.h}"><img src="${esc(g.preview)}" alt="${esc(g.title)}" loading="lazy"></button>`).join('');
       if (!append) grid.innerHTML = html || '<div class="empty">No GIFs found</div>'; else grid.insertAdjacentHTML('beforeend', html);
       pop._gifs = { ...(pop._gifs || {}), ...Object.fromEntries(r.gifs.map((g) => [g.id, g])) };

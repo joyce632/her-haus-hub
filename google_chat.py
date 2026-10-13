@@ -40,6 +40,7 @@ CHAT_API = os.environ.get("GOOGLE_CHAT_API", "https://chat.googleapis.com").rstr
 PEOPLE_API = os.environ.get("GOOGLE_PEOPLE_API", "https://people.googleapis.com").rstrip("/")
 MEET_API = os.environ.get("GOOGLE_MEET_API", "https://meet.googleapis.com").rstrip("/")
 TENOR_API = os.environ.get("TENOR_API", "https://tenor.googleapis.com").rstrip("/")
+GIPHY_API = os.environ.get("GIPHY_API", "https://api.giphy.com").rstrip("/")
 _gif_cache = {}   # gif id -> (url, mime, name, when) — only GIFs our own search returned can be sent (no arbitrary URLs)
 AUDIO_TYPES = {"audio/webm", "audio/ogg", "audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/aac", "audio/wav", "audio/x-wav"}
 SCOPES = [
@@ -826,7 +827,7 @@ def register(module):
         return jsonify(configured=configured(), connected=bool(a and a["refresh_token"]), email=a and a["email"],
                        seen_sync=_has_readstate(u["id"]), huddles="meetings.space.created" in ((a and a.get("scopes")) or ""),
                        manage=any(sc.endswith("/chat.memberships") for sc in ((a and a.get("scopes")) or "").split()),
-                       gifs=bool(os.environ.get("TENOR_API_KEY")),
+                       gifs=bool(os.environ.get("GIPHY_API_KEY") or os.environ.get("TENOR_API_KEY")),
                        last_sync=a and a["last_sync"], error=(a and a["sync_error"]) or "",
                        syncing=u["id"] in _status, spaces=spaces["n"] or 0, history_done=spaces["done"] or 0,
                        redirect_uri=_redirect_uri() if H.is_exec() else None)
@@ -1265,10 +1266,12 @@ def register(module):
     @app.get("/api/chat/gifs")
     @lr
     def chat_gifs():
+        qtext = (request.args.get("q") or "").strip()[:80]
+        if os.environ.get("GIPHY_API_KEY"):
+            return _giphy(qtext)
         key = os.environ.get("TENOR_API_KEY")
         if not key:
-            return H.bad("GIFs aren't set up yet — an admin needs to add a Tenor API key.", 409)
-        qtext = (request.args.get("q") or "").strip()[:80]
+            return H.bad("GIFs aren't set up yet — an admin needs to add a GIPHY API key on Render (GIPHY_API_KEY).", 409)
         params = {"key": key, "client_key": "herhaus_hub", "limit": 24, "media_filter": "gif,tinygif", "contentfilter": "medium"}
         if qtext:
             params["q"] = qtext
@@ -1289,9 +1292,38 @@ def register(module):
             _gif_cache[g["id"]] = (send["url"], "image/gif", (g.get("content_description") or "GIF")[:60], now)
             out.append({"id": g["id"], "preview": tiny.get("url") or full["url"], "w": (tiny.get("dims") or [200, 200])[0],
                         "h": (tiny.get("dims") or [200, 200])[1], "title": g.get("content_description") or ""})
+        _trim_gif_cache(now)
+        return jsonify(gifs=out, next=r.get("next") or "", provider="Tenor")
+
+    def _trim_gif_cache(now):
         for k in [k for k, v in _gif_cache.items() if v[3] < now - 3600]:
             _gif_cache.pop(k, None)
-        return jsonify(gifs=out, next=r.get("next") or "")
+
+    def _giphy(qtext):
+        """GIPHY search / trending. Sends the 'downsized' version (under ~2 MB) so it uploads fast."""
+        offset = int(request.args.get("pos") or 0) if (request.args.get("pos") or "0").isdigit() else 0
+        params = {"api_key": os.environ["GIPHY_API_KEY"], "limit": 24, "offset": offset, "rating": "pg-13", "bundle": "messaging_non_clips"}
+        if qtext:
+            params["q"] = qtext
+        try:
+            r = _http("GET", GIPHY_API + ("/v1/gifs/search" if qtext else "/v1/gifs/trending"), params=params, timeout=10)
+        except GoogleError as e:
+            return H.bad(f"Couldn't load GIFs: {e}", 502)
+        out, now = [], time.time()
+        for g in r.get("data", []):
+            im = g.get("images") or {}
+            preview = im.get("fixed_width") or im.get("downsized") or {}
+            send = im.get("downsized") or im.get("downsized_medium") or im.get("original") or {}
+            if not send.get("url") or not preview.get("url"):
+                continue
+            gid = "g" + g["id"]
+            _gif_cache[gid] = (send["url"], "image/gif", (g.get("title") or "GIF")[:60], now)
+            out.append({"id": gid, "preview": preview["url"], "w": int(preview.get("width") or 200), "h": int(preview.get("height") or 200),
+                        "title": g.get("title") or ""})
+        _trim_gif_cache(now)
+        pg = r.get("pagination") or {}
+        nxt = (pg.get("offset") or 0) + (pg.get("count") or 0)
+        return jsonify(gifs=out, next=str(nxt) if out and nxt < (pg.get("total_count") or 0) else "", provider="GIPHY")
 
     # ------------------------------------------------------------ space settings & members
     def _space_or_404(sid):

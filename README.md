@@ -81,7 +81,7 @@ you in the hub (bell, sound, floating window).
 8. If your Workspace restricts third-party apps (*admin.google.com › Security › API controls*), mark
    "Her Haus Hub" as **Trusted**. Internal apps are usually allowed already.
 
-**GIFs (optional):** enable the **Tenor API**, then *Credentials › Create credentials › API key*, restrict it to the Tenor API, and add it on Render as `TENOR_API_KEY`.
+**GIFs (optional):** sign up free at developers.giphy.com › *Create an App* › **API**, copy the key, and add it on Render as `GIPHY_API_KEY`.
 
 Then everyone opens **Chat** in the hub and clicks **Connect Google Chat** once. In *Settings*, keep
 "Hub web address" set to `https://teamhub.herhauscompany.com` so Google sends people back to the right place.

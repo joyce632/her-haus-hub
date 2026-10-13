@@ -44,5 +44,5 @@ services:
         sync: false
       - key: HUDDLE_ICE_SERVERS    # optional TURN relay for huddles on strict networks (JSON list of ICE servers)
         sync: false
-      - key: TENOR_API_KEY         # GIF search in chat — Google Cloud › Credentials › API key (Tenor API)
+      - key: GIPHY_API_KEY         # GIF search in chat — free key from developers.giphy.com
         sync: false
