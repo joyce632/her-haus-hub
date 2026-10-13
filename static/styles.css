@@ -1420,3 +1420,76 @@ body:has(#chat-pops > .chat-pop) #toast-root { right: auto; left: 24px; }
 .pp-pop button { display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 8px; border: 0; border-radius: 8px; background: none; text-align: left; cursor: pointer; font: inherit; }
 .pp-pop button.on, .pp-pop button:hover { background: var(--mist); }
 .pp-pop span { display: flex; flex-direction: column; min-width: 0; } .pp-pop b { font-size: 13px; color: var(--navy); } .pp-pop small { font-size: 11px; color: var(--muted); }
+
+/* ---------- huddles */
+.hs-badge { position: absolute; right: -5px; bottom: -4px; width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center;
+  background: #16a34a; color: #fff; border: 2px solid #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+.hs-badge svg { width: 9px; height: 9px; stroke-width: 2.6; }
+.cl-av, .hud-av { position: relative; display: inline-block; }
+.cl-hud { display: inline-flex; align-items: center; gap: 3px; flex: none; padding: 1px 6px; border-radius: 99px; background: rgba(22,163,74,.12); color: #15803d; font-size: 10.5px; font-weight: 700; }
+.cl-hud svg { width: 11px; height: 11px; }
+.hud-avs { display: inline-flex; align-items: center; flex: none; }
+.hud-av { margin-left: -6px; border-radius: 50%; transition: box-shadow .15s; }
+.hud-av:first-child { margin-left: 0; }
+.hud-av .avatar { width: 28px; height: 28px; border: 2px solid #fff; font-size: 10px; }
+.hud-av.talking { box-shadow: 0 0 0 3px #22c55e; }
+.hud-av.muted .hs-badge { background: #94a3b8; }
+.hud-more { margin-left: 4px; font-size: 11px; font-weight: 700; color: var(--muted); }
+.hud-live { flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; color: #fff; background: #16a34a; box-shadow: 0 0 0 0 rgba(22,163,74,.5); animation: hudPulse 2s infinite; }
+.hud-live svg { width: 17px; height: 17px; }
+@keyframes hudPulse { 0% { box-shadow: 0 0 0 0 rgba(22,163,74,.45); } 70% { box-shadow: 0 0 0 10px rgba(22,163,74,0); } 100% { box-shadow: 0 0 0 0 rgba(22,163,74,0); } }
+.hud-info { min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.hud-info b { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hud-info small { font-size: 11px; opacity: .75; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hud-join-btn { background: #16a34a !important; border-color: #16a34a !important; color: #fff !important; display: inline-flex; align-items: center; gap: 6px; }
+.hud-join-btn svg { width: 14px; height: 14px; }
+/* the bar while you're in a huddle */
+#hud-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 10px 0 0; padding: 12px; border-radius: 16px; color: #fff;
+  background: linear-gradient(135deg, #0f2c58, #081f42); box-shadow: 0 14px 34px -10px rgba(8,31,66,.55); animation: cpIn .25s var(--ease) both; }
+#hud-bar .hud-live { width: 30px; height: 30px; }
+#hud-bar .hud-info { flex: 1; min-width: 0; }
+#hud-bar .hud-avs { width: 100%; }
+#hud-bar .hud-btns { width: 100%; margin: 0; justify-content: space-between; }
+#hud-bar .hud-btn { flex: 1; height: 34px; }
+body > #hud-bar { position: fixed; top: 62px; left: 8px; right: 8px; z-index: 95; margin: 0; flex-wrap: nowrap; }
+body > #hud-bar .hud-avs, body > #hud-bar .hud-btns { width: auto; }
+body > #hud-bar .hud-btn { flex: none; width: 36px; }
+#hud-bar .hud-av .avatar { border-color: #0f2c58; }
+#hud-bar .hs-badge { border-color: #0f2c58; }
+.hud-btns { display: flex; gap: 6px; margin-left: 4px; }
+.hud-btn { width: 38px; height: 38px; border-radius: 12px; border: 0; display: grid; place-items: center; cursor: pointer; color: #fff; background: rgba(255,255,255,.12); transition: background .15s; }
+.hud-btn:hover { background: rgba(255,255,255,.22); }
+.hud-btn svg { width: 18px; height: 18px; }
+.hud-btn.off { background: rgba(255,255,255,.92); color: var(--red); }
+.hud-btn.leave { background: var(--red); }
+.hud-btn.leave:hover { background: #e03a40; }
+body:has(#hud-bar) #chat-pops { bottom: 0; }
+/* ringing invitation */
+.hud-ring { position: fixed; top: 18px; right: 18px; z-index: 1150; width: 360px; max-width: calc(100vw - 24px); display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+  padding: 14px; border-radius: 18px; background: #fff; border: 1px solid var(--line); box-shadow: 0 24px 60px -12px rgba(8,31,66,.4); animation: ringIn .3s var(--ease) both; }
+@keyframes ringIn { from { opacity: 0; transform: translateY(-14px) scale(.98); } }
+.hud-ring-ic { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; color: #fff; background: #16a34a; animation: hudPulse 1.4s infinite; flex: none; }
+.hud-ring-ic svg { width: 22px; height: 22px; }
+.hud-ring-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.hud-ring-main b { font-size: 13.5px; color: var(--navy); }
+.hud-ring-main small { font-size: 11.5px; color: var(--muted); }
+.hud-ring-btns { display: flex; gap: 8px; width: 100%; justify-content: flex-end; }
+/* join banner inside a conversation */
+.hud-banner { display: flex; align-items: center; gap: 12px; padding: 9px 18px; background: linear-gradient(90deg, rgba(22,163,74,.1), rgba(22,163,74,.04)); border-bottom: 1px solid rgba(22,163,74,.2); color: var(--navy); }
+.hud-banner[hidden] { display: none; }
+.hud-banner .hud-live { width: 30px; height: 30px; }
+.hud-banner .hud-info { flex: 1; }
+.cm-huddle.live { background: #16a34a; border-color: #16a34a; color: #fff; }
+.cm-huddle.joined { background: rgba(22,163,74,.12); border-color: rgba(22,163,74,.35); color: #15803d; }
+/* invite list */
+.hi-list { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; max-height: 50vh; overflow-y: auto; }
+.hi-row { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 10px; cursor: pointer; }
+.hi-row:hover { background: var(--mist); }
+.hi-row[hidden] { display: none; }
+.hi-row span { flex: 1; min-width: 0; display: flex; flex-direction: column; } .hi-row b { font-size: 13px; color: var(--navy); } .hi-row small { font-size: 11px; color: var(--muted); }
+.hi-row .hi-busy { flex: none; flex-direction: row; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 700; color: #15803d; }
+.hi-row .hi-busy svg { width: 12px; height: 12px; }
+@media (max-width: 760px) { body > #hud-bar .hud-avs { display: none; } }
+
+#sidebar #hud-bar { margin: auto 12px 0; }
+#sidebar #hud-bar + .sidebar-foot { margin-top: 10px; }

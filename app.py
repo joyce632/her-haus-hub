@@ -31,6 +31,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
 
 import google_chat as gchat
+import huddles
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(BASE_DIR, "data"))
@@ -1795,7 +1796,7 @@ def notification_count():
                   "LEFT JOIN chat_spaces cs ON cs.id=n.chat_space_id "
                   "WHERE n.user_id=? AND n.id>? AND n.read_at IS NULL ORDER BY n.id LIMIT 10", (uid, int(since)))
     return jsonify(unread=r["unread"] or 0, unread_mentions=r["mentions"] or 0, latest_id=latest, new=fresh,
-                   chat_unread=gchat.unread_total(uid))
+                   chat_unread=gchat.unread_total(uid), huddles=huddles.visible_huddles(uid))
 
 
 def _follower_ids(tid):
@@ -2711,6 +2712,7 @@ def _db_watchdog():
 
 
 gchat.register(sys.modules[__name__])   # Google Chat sync routes + background sync
+huddles.register(sys.modules[__name__])  # live voice huddles
 
 if os.environ.get("DISABLE_SCHEDULER") != "1":
     threading.Thread(target=_scheduler_loop, daemon=True, name="automations").start()

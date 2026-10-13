@@ -89,6 +89,16 @@ Then everyone opens **Chat** in the hub and clicks **Connect Google Chat** once.
 Notes: the hub only ever sees the spaces each person is a member of. Google sign-in tokens are stored encrypted.
 Disconnecting (bottom of the chat list) stops syncing for that person; it never changes anything in Google Chat.
 
+## Huddles (live voice calls)
+
+**Huddle** at the top of any chat starts a voice call inside the hub — no Google Meet needed. In spaces, members see a
+"Huddle in progress · Join" bar and a headset on the space; in DMs and group chats the others get a ringing Join / Decline
+card. Anyone in a huddle can invite more teammates (they're rung too). The huddle bar sits in the sidebar while you work.
+
+Audio goes directly between browsers (WebRTC). Most networks connect fine; if someone on a very strict network
+can't be heard, add a TURN relay as `HUDDLE_ICE_SERVERS` on Render, e.g.
+`[{"urls":"turn:relay.example.com:3478","username":"…","credential":"…"}]`.
+
 ## How pay is calculated
 
 - **Cutoffs:** the 1st–15th and the 16th to the end of the month, in the company timezone (Settings).
