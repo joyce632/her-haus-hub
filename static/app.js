@@ -4022,7 +4022,7 @@ async function chatPopup(sid, n, opts = {}) {
       items.push({ key: m.key || `m:${m.id}`, msg: true, html: `<div class="cp-msg ${m.sender.is_me ? 'me' : ''} ${first ? 'first' : 'cont'} ${m.pending ? 'pending' : ''} ${m.deleted ? 'unsent' : ''}" data-mid="${m.id}">
         ${m.sender.is_me ? '' : `<span class="cp-av-col">${first ? personAv(m.sender, 'sm') : ''}</span>`}
         <div class="cp-col">
-          ${first ? `<span class="cp-who">${m.sender.is_me ? '' : `<b>${esc(m.sender.name)}</b>`}<time>${time}</time></span>` : ''}
+
           <div class="cp-row"><div class="cp-stack">${textHTML ? `<div class="cp-bubble" title="${esc(time)}">${textHTML}</div>` : ''}${media ? `<div class="cp-media">${media}</div>` : ''}</div>
             ${m.deleted || m.pending ? '' : `<button type="button" class="cp-react" data-react-add title="React">${I.smile}</button>`}</div>
           ${rx.length ? `<div class="cp-rx">${rx.map((x) => `<button type="button" class="${x.mine ? 'mine' : ''}" data-react="${esc(x.emoji)}">${esc(x.emoji)}${x.count > 1 ? ` ${x.count}` : ''}</button>`).join('')}</div>` : ''}

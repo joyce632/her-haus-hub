@@ -1607,3 +1607,11 @@ body:has(#hud-bar) #chat-pops { bottom: 0; }
 @media (max-width: 860px) { .hud-stage, .hud-stage.mine { left: 8px; right: 8px; width: auto; top: 120px; bottom: auto; } .hs-ctrls .hud-btn.wide span { display: none; } }
 .hs-title > span { flex: none; overflow: visible; }
 .hs-title > small { flex: 1; min-width: 0; }
+
+/* GIF picker: two columns that scroll down (not sideways) */
+.gif-grid { columns: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; align-content: start; overflow-x: hidden; overflow-y: auto; }
+.gif-grid .empty { grid-column: 1 / -1; }
+.gif-item { margin: 0; }
+/* chat boxes: no names — just the picture at the start of a run, and Seen */
+.cp-av-col { padding-top: 0; align-self: flex-start; }
+.cp-msg.first { margin-top: 8px; }
