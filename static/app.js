@@ -202,6 +202,8 @@ const I = {
   clock: svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
   check: svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>'),
   mic: svg('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3M8.5 21h7"/>'),
+  camera: svg('<path d="M4 8h3l2-3h6l2 3h3a1 1 0 011 1v9a1 1 0 01-1 1H4a1 1 0 01-1-1V9a1 1 0 011-1z"/><circle cx="12" cy="13" r="3.5"/>'),
+  gear: svg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/>'),
   video: svg('<rect x="3" y="6" width="13" height="12" rx="2.5"/><path d="M16 10.5l5-3v9l-5-3z"/>'),
   image: svg('<rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5-5-8 9"/>'),
   smile: svg('<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5s1.3 1.8 3.5 1.8 3.5-1.8 3.5-1.8"/><path d="M9 9.5h.01M15 9.5h.01" stroke-width="2.6"/>'),
@@ -3134,6 +3136,8 @@ function chatComposerHTML(id, placeholder) {
     <div class="c-tray" hidden></div>
     <div class="ccomp-box"><textarea class="input" rows="1" placeholder="${esc(placeholder)}"></textarea><div class="mention-pop hidden"></div>
       <label class="icon-btn" title="Attach files (or paste / drop them)">${I.clip}<input type="file" multiple hidden></label>
+      <button type="button" class="icon-btn ccomp-gif" title="Send a GIF">GIF</button>
+      <button type="button" class="icon-btn ccomp-cam" title="Take a photo">${I.camera}</button>
       <button type="button" class="icon-btn ccomp-mic" title="Record a voice note">${I.mic}</button>
       <button type="button" class="btn sm ccomp-send" title="Send (Enter)">${I.send}</button></div>
     <div class="ccomp-rec" hidden><span class="rec-dot"></span><span class="rec-time">0:00</span><span class="rec-bars">${'<i></i>'.repeat(24)}</span>
@@ -3210,6 +3214,13 @@ function bindChatComposer(root, spaceId, send) {
       if (!ta.value) { ta.value = display; files = sent.files; picked = sent.picked; drawTray(); grow(); }
     }
   };
+  // ---- GIFs: pick one and it's sent straight away
+  $('.ccomp-gif', root).onclick = (e) => gifPicker(e.currentTarget, async (g) => {
+    try { await send({ text: '', display: '', files: [], gif: g.id, previews: [{ file: { name: g.title || 'GIF', type: 'image/gif' }, url: g.preview }] }); }
+    catch (err) { toast(err.message, 'err'); }
+  });
+  // ---- camera: take a photo, it lands in the tray so you can add a caption
+  $('.ccomp-cam', root).onclick = async () => { const f = await cameraCapture(); if (f) { add([f]); ta.focus(); } };
   // ---- voice notes: tap the mic, talk, then send (or discard)
   const rec = $('.ccomp-rec', root), box = $('.ccomp-box', root);
   let recorder = null, chunks = [], recStart = 0, recTimer = null, stream = null, analyser = null;
@@ -3281,7 +3292,8 @@ function pendingMessage(spaceId, { display, previews }, thread, myGid) {
       is_audio: f.file.type.startsWith('audio/'), url: f.url || '#', drive: false })),
     reactions: [], create_time: new Date().toISOString().replace(/\.(\d{3})Z$/, '.$1000Z'), edited: false, deleted: false, reply_count: 0, can_edit: false };
 }
-async function chatSend(spaceId, { text, files }, thread) {
+async function chatSend(spaceId, { text, files, gif }, thread) {
+  if (gif) return api('POST', `/api/chat/spaces/${spaceId}/messages`, { text, thread: thread || '', gif });
   if (files.length) {
     const fd = new FormData(); fd.append('text', text); if (thread) fd.append('thread', thread);
     files.forEach((f) => fd.append('files', f, f.name));
@@ -3290,6 +3302,232 @@ async function chatSend(spaceId, { text, files }, thread) {
   return api('POST', `/api/chat/spaces/${spaceId}/messages`, { text, thread: thread || '' });
 }
 
+
+
+// ---------- GIF picker (Tenor, Google's GIF service)
+function gifPicker(anchor, onPick) {
+  $('.gif-pop')?.remove();
+  const pop = document.createElement('div');
+  pop.className = 'gif-pop';
+  pop.innerHTML = `<div class="gif-head"><input class="input" placeholder="Search GIFs" autocomplete="off"><button type="button" class="icon-btn" data-gif-close>${I.x}</button></div>
+    <div class="gif-grid"><div class="empty"><span class="cm-spin"></span></div></div><div class="gif-foot">Powered by Tenor</div>`;
+  document.body.appendChild(pop);
+  const place = () => {
+    const r = anchor.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+    pop.style.left = `${Math.max(8, Math.min(r.right - w, innerWidth - w - 8))}px`;
+    pop.style.top = `${r.top - h - 8 > 8 ? r.top - h - 8 : Math.min(r.bottom + 8, innerHeight - h - 8)}px`;
+  };
+  place();
+  const grid = $('.gif-grid', pop), input = $('input', pop);
+  let next = '', q = '', seq = 0, timer = null;
+  const load = async (append) => {
+    const my = ++seq;
+    if (!append) grid.innerHTML = '<div class="empty"><span class="cm-spin"></span></div>';
+    try {
+      const r = await api('GET', `/api/chat/gifs?q=${encodeURIComponent(q)}${append && next ? `&pos=${encodeURIComponent(next)}` : ''}`);
+      if (my !== seq) return;
+      next = r.next;
+      const html = r.gifs.map((g) => `<button type="button" class="gif-item" data-gif="${esc(g.id)}" title="${esc(g.title)}" style="aspect-ratio:${g.w}/${g.h}"><img src="${esc(g.preview)}" alt="${esc(g.title)}" loading="lazy"></button>`).join('');
+      if (!append) grid.innerHTML = html || '<div class="empty">No GIFs found</div>'; else grid.insertAdjacentHTML('beforeend', html);
+      pop._gifs = { ...(pop._gifs || {}), ...Object.fromEntries(r.gifs.map((g) => [g.id, g])) };
+    } catch (err) { grid.innerHTML = `<div class="empty">${esc(err.message)}</div>`; }
+  };
+  const close = () => { pop.remove(); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', key, true); };
+  const outside = (e) => { if (!pop.contains(e.target) && !anchor.contains(e.target)) close(); };
+  const key = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  input.oninput = () => { clearTimeout(timer); timer = setTimeout(() => { q = input.value.trim(); load(false); }, 300); };
+  let loadingMore = false;
+  grid.addEventListener('scroll', () => {   // more GIFs as you scroll down
+    if (loadingMore || !next || grid.scrollTop + grid.clientHeight < grid.scrollHeight - 120) return;
+    loadingMore = true; load(true).finally(() => { loadingMore = false; });
+  });
+  pop.addEventListener('click', (e) => {
+    if (e.target.closest('[data-gif-close]')) { close(); return; }
+    const b = e.target.closest('[data-gif]'); if (b) { const g = pop._gifs[b.dataset.gif]; close(); onPick(g); }
+  });
+  setTimeout(() => { document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', key, true); input.focus(); });
+  load(false);
+}
+
+// ---------- camera: take a photo in the hub (front/back camera, retake)
+function cameraCapture() {
+  return new Promise((resolve) => {
+    if (!navigator.mediaDevices?.getUserMedia) {   // older browsers / some phones: use the system camera picker
+      const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*'; inp.capture = 'environment';
+      inp.onchange = () => resolve(inp.files[0] || null); inp.click(); return;
+    }
+    const { el, close } = openModal({ title: 'Take a photo', body: `<div class="cam-wrap"><video class="cam-video" autoplay playsinline muted></video><canvas class="cam-shot" hidden></canvas>
+        <div class="cam-msg"><span class="cm-spin"></span> Starting camera…</div></div>`,
+      foot: `<button class="btn ghost" data-cam-flip>${I.repeat} Switch camera</button><span style="flex:1"></span>
+        <button class="btn ghost" data-cam-retake hidden>Retake</button><button class="btn" data-cam-snap>${I.camera} Capture</button><button class="btn" data-cam-use hidden>${I.check} Use photo</button>` });
+    const video = $('.cam-video', el), canvas = $('.cam-shot', el), msg = $('.cam-msg', el), bg = el.parentElement;
+    let stream = null, facing = 'user', done = false, blob = null;
+    const stop = () => { stream?.getTracks().forEach((t) => t.stop()); stream = null; };
+    const finish = (v) => { if (done) return; done = true; stop(); close(); resolve(v); };
+    new MutationObserver((_m, obs) => { if (!bg.isConnected) { obs.disconnect(); if (!done) { done = true; stop(); resolve(null); } } }).observe($('#modal-root'), { childList: true });
+    const start = async () => {
+      stop(); msg.hidden = false;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+        video.srcObject = stream; video.classList.toggle('mirror', facing === 'user'); await video.play(); msg.hidden = true;
+      } catch (_) { msg.innerHTML = 'Allow camera access in your browser to take a photo.'; }
+    };
+    $('[data-cam-flip]', el).onclick = () => { facing = facing === 'user' ? 'environment' : 'user'; start(); };
+    $('[data-cam-snap]', el).onclick = () => {
+      if (!video.videoWidth) return;
+      canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+      const g = canvas.getContext('2d');
+      if (facing === 'user') { g.translate(canvas.width, 0); g.scale(-1, 1); }   // keep selfies the right way round
+      g.drawImage(video, 0, 0);
+      canvas.toBlob((b) => { blob = b; }, 'image/jpeg', 0.9);
+      canvas.hidden = false; video.hidden = true;
+      $('[data-cam-snap]', el).hidden = true; $('[data-cam-use]', el).hidden = false; $('[data-cam-retake]', el).hidden = false;
+    };
+    $('[data-cam-retake]', el).onclick = () => { canvas.hidden = true; video.hidden = false; blob = null; $('[data-cam-snap]', el).hidden = false; $('[data-cam-use]', el).hidden = true; $('[data-cam-retake]', el).hidden = true; };
+    $('[data-cam-use]', el).onclick = () => {
+      if (!blob) return;
+      const stamp = new Date().toLocaleString().replace(/[/:]/g, '-');
+      finish(new File([blob], `Photo ${stamp}.jpg`, { type: 'image/jpeg' }));
+    };
+    start();
+  });
+}
+
+
+// ---------- pick teammates (company directory + hub users) — used to add members and start chats
+function peoplePicker(root, { placeholder = 'Add people by name or email', exclude = [] } = {}) {
+  root.innerHTML = `<div class="pp"><div class="pp-chips"></div><input class="input pp-input" placeholder="${esc(placeholder)}" autocomplete="off"><div class="pp-pop hidden"></div></div>`;
+  const chips = $('.pp-chips', root), input = $('.pp-input', root), pop = $('.pp-pop', root);
+  let picked = [], matches = [], idx = 0, seq = 0;
+  const skip = new Set(exclude.map((e) => (e || '').toLowerCase()));
+  const draw = () => {
+    chips.innerHTML = picked.map((p, i) => `<span class="pp-chip">${personAv(p, 'xs')}<span>${esc(p.name)}</span><button type="button" data-pp-rm="${i}" aria-label="Remove">${I.x.replace('width="18" height="18"', 'width="11" height="11"')}</button></span>`).join('');
+  };
+  const show = () => {
+    pop.innerHTML = matches.map((p, i) => `<button type="button" class="${i === idx ? 'on' : ''}" data-pp="${i}">${personAv(p, 'sm')}<span><b>${esc(p.name)}</b><small>${esc(p.email)}</small></span></button>`).join('');
+    pop.classList.toggle('hidden', !matches.length);
+  };
+  const search = async () => {
+    const qv = input.value.trim(); const my = ++seq;
+    if (!qv) { matches = []; show(); return; }
+    let r = await api('GET', `/api/chat/people?q=${encodeURIComponent(qv)}`).catch(() => []);
+    if (my !== seq) return;
+    r = r.filter((p) => !skip.has(p.email.toLowerCase()) && !picked.some((x) => x.email === p.email));
+    if (!r.length && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(qv)) r = [{ name: qv, email: qv, photo: '' }];   // anyone by email
+    matches = r.slice(0, 8); idx = 0; show();
+  };
+  const pick = (p) => { picked.push(p); input.value = ''; matches = []; show(); draw(); input.focus(); root.dispatchEvent(new Event('change')); };
+  input.addEventListener('input', search);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Backspace' && !input.value && picked.length) { picked.pop(); draw(); root.dispatchEvent(new Event('change')); return; }
+    if (!matches.length) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); idx = (idx + (e.key === 'ArrowDown' ? 1 : -1) + matches.length) % matches.length; show(); }
+    else if (e.key === 'Enter') { e.preventDefault(); pick(matches[idx]); }
+  });
+  pop.addEventListener('mousedown', (e) => { const b = e.target.closest('[data-pp]'); if (b) { e.preventDefault(); pick(matches[Number(b.dataset.pp)]); } });
+  chips.addEventListener('click', (e) => { const b = e.target.closest('[data-pp-rm]'); if (b) { picked.splice(Number(b.dataset.ppRm), 1); draw(); root.dispatchEvent(new Event('change')); } });
+  input.addEventListener('blur', () => setTimeout(() => pop.classList.add('hidden'), 150));
+  return { emails: () => picked.map((p) => p.email), count: () => picked.length, focus: () => input.focus() };
+}
+
+// ---------- space settings: about + members (managers can edit; anyone can view or leave)
+async function spaceSettings(sid, onChange) {
+  const { el, close } = openModal({ title: 'Space settings', wide: true, body: '<div class="empty"><span class="cm-spin"></span> Loading from Google Chat…</div>' });
+  let d;
+  const load = async () => {
+    try { d = await api('GET', `/api/chat/spaces/${sid}/details`); }
+    catch (err) { $('.modal-body', el).innerHTML = `<div class="empty">${esc(err.message)}${/reconnect/i.test(err.message) ? '<div style="margin-top:12px"><a class="btn sm" href="/api/google/connect">Reconnect Google Chat</a></div>' : ''}</div>`; return false; }
+    return true;
+  };
+  const render = (tab = 'about') => {
+    const isSpace = d.type === 'SPACE';
+    const can = d.i_manage && isSpace;
+    $('.modal-head h2', el).textContent = isSpace ? (d.title || 'Space settings') : 'Chat details';
+    $('.modal-body', el).innerHTML = `<div class="ss-tabs"><button type="button" data-ss-tab="about" class="${tab === 'about' ? 'on' : ''}">About</button><button type="button" data-ss-tab="members" class="${tab === 'members' ? 'on' : ''}">Members <span>${d.members.length}</span></button></div>
+      <div class="ss-pane" ${tab === 'about' ? '' : 'hidden'}>
+        ${isSpace ? `<form id="ss-form" class="form-grid">
+          <label class="field full">Space name<input class="input" name="title" maxlength="128" value="${esc(d.title)}" ${can ? '' : 'disabled'} required></label>
+          <label class="field full"><span class="field-label">Description<span class="hint">· what this space is for (150 characters)</span></span><input class="input" name="description" maxlength="150" value="${esc(d.description)}" ${can ? '' : 'disabled'}></label>
+          <label class="field full"><span class="field-label">Guidelines<span class="hint">· rules shown to members</span></span><textarea class="input" name="guidelines" rows="5" ${can ? '' : 'disabled'}>${esc(d.guidelines)}</textarea></label>
+          </form>
+          <p class="small muted">${can ? 'Changes save to Google Chat for everyone in the space.' : 'Only space managers can change these.'}${d.created ? ` · Created ${esc(new Date(d.created).toLocaleDateString([], { dateStyle: 'medium' }))}` : ''}</p>`
+          : `<p class="muted">${d.type === 'DIRECT_MESSAGE' ? 'A direct message between you and one teammate.' : 'A group chat. To give it a name, settings and managers, start a space instead.'}</p>`}
+        <div class="ss-actions">
+          <a class="btn ghost sm" href="${esc(d.web_link)}" target="_blank" rel="noopener">${I.ext} Open in Google Chat</a>
+          ${isSpace ? `<button type="button" class="btn ghost sm danger-text" data-ss-leave>Leave space</button>` : ''}
+          ${can ? '<button type="submit" form="ss-form" class="btn sm">Save changes</button>' : ''}</div>
+      </div>
+      <div class="ss-pane" ${tab === 'members' ? '' : 'hidden'}>
+        ${isSpace && d.i_manage ? `<div class="ss-add"><div id="ss-picker"></div><button type="button" class="btn sm" data-ss-add disabled>Add</button></div>` : ''}
+        <div class="ss-members">${d.members.map((m) => `<div class="ss-member">
+          ${personAv(m, 'sm')}<span class="ss-who"><b>${esc(m.name)}${m.is_me ? ' <em>(you)</em>' : ''}</b><small>${esc(m.email || '')}${m.invited ? ' · invited' : ''}</small></span>
+          ${m.role === 'manager' ? '<span class="ss-role">Manager</span>' : ''}
+          ${isSpace && d.i_manage && !m.is_me ? `<button type="button" class="btn ghost sm" data-ss-role="${esc(m.membership)}" data-role="${m.role === 'manager' ? 'member' : 'manager'}">${m.role === 'manager' ? 'Remove manager' : 'Make manager'}</button>
+            <button type="button" class="icon-btn" data-ss-remove="${esc(m.membership)}" data-name="${esc(m.name)}" title="Remove from space">${I.trash}</button>` : ''}
+        </div>`).join('')}</div>
+      </div>`;
+    if (can) $('#ss-form', el).onsubmit = async (e) => {
+      e.preventDefault(); const f = e.target;
+      try { await api('PUT', `/api/chat/spaces/${sid}/details`, { title: f.title.value, description: f.description.value, guidelines: f.guidelines.value }); toast('Space updated', 'ok'); d.title = f.title.value; onChange && onChange(); }
+      catch (err) { toast(err.message, 'err'); }
+    };
+    if ($('#ss-picker', el)) {
+      const picker = peoplePicker($('#ss-picker', el), { exclude: d.members.map((m) => m.email) });
+      $('#ss-picker', el).addEventListener('change', () => { $('[data-ss-add]', el).disabled = !picker.count(); });
+      $('[data-ss-add]', el).onclick = async () => {
+        try {
+          const r = await api('POST', `/api/chat/spaces/${sid}/members`, { emails: picker.emails() });
+          if (r.errors.length) toast(r.errors[0], 'err'); else toast(`Added ${r.added.length} ${r.added.length === 1 ? 'person' : 'people'}`, 'ok');
+          if (await load()) render('members');
+        } catch (err) { toast(err.message, 'err'); }
+      };
+    }
+  };
+  el.addEventListener('click', async (e) => {
+    const t = e.target.closest('[data-ss-tab]'); if (t) { render(t.dataset.ssTab); return; }
+    const rl = e.target.closest('[data-ss-role]');
+    if (rl) {
+      try { await api('PUT', `/api/chat/spaces/${sid}/members/role`, { membership: rl.dataset.ssRole, role: rl.dataset.role }); toast('Role updated', 'ok'); if (await load()) render('members'); }
+      catch (err) { toast(err.message, 'err'); }
+      return;
+    }
+    const rm = e.target.closest('[data-ss-remove]');
+    if (rm) {
+      if (!await confirmModal(`Remove ${rm.dataset.name} from this space?`, { okLabel: 'Remove' })) return;
+      try { await api('DELETE', `/api/chat/spaces/${sid}/members?membership=${encodeURIComponent(rm.dataset.ssRemove)}`); toast('Removed', 'ok'); if (await load()) render('members'); }
+      catch (err) { toast(err.message, 'err'); }
+      return;
+    }
+    if (e.target.closest('[data-ss-leave]')) {
+      const me = d.members.find((m) => m.is_me);
+      if (!me || !await confirmModal(`Leave “${d.title}”? You'll stop getting its messages here and in Google Chat.`, { okLabel: 'Leave space' })) return;
+      try { await api('DELETE', `/api/chat/spaces/${sid}/members?membership=${encodeURIComponent(me.membership)}`); toast('You left the space', 'ok'); close(); onChange && onChange('left'); }
+      catch (err) { toast(err.message, 'err'); }
+    }
+  });
+  if (await load()) render();
+}
+
+// ---------- start a new chat: direct message / group chat, or a named space
+function newChatModal(kind, onCreated) {
+  const space = kind === 'space';
+  const { el, close } = openModal({ title: space ? 'New space' : 'New message', body: `<form id="nc-form">
+      ${space ? `<label class="field">Space name<input class="input" name="title" maxlength="128" required placeholder="e.g. Dispositions — Dallas"></label>
+        <label class="field"><span class="field-label">Description<span class="hint">· optional</span></span><input class="input" name="description" maxlength="150"></label>` : ''}
+      <div class="field"><span class="field-label">${space ? 'Members' : 'To'}<span class="hint">· ${space ? 'you can add more later' : 'one person for a DM, more for a group chat'}</span></span><div id="nc-picker"></div></div>
+    </form>`, foot: `<button class="btn ghost" data-close>Cancel</button><button class="btn" form="nc-form" data-nc-go>${space ? 'Create space' : 'Start chat'}</button>` });
+  const picker = peoplePicker($('#nc-picker', el), { placeholder: 'Type a name or email' });
+  setTimeout(() => (space ? $('[name=title]', el) : picker).focus(), 50);
+  $('#nc-form', el).onsubmit = async (e) => {
+    e.preventDefault();
+    if (!space && !picker.count()) { toast('Pick at least one person', 'err'); return; }
+    const btn = $('[data-nc-go]', el.parentElement); btn.disabled = true;
+    try {
+      const r = await api('POST', '/api/chat/spaces/new', { title: space ? e.target.title.value : '', description: space ? e.target.description.value : '', emails: picker.emails() });
+      close(); toast(space ? 'Space created' : 'Chat started', 'ok'); onCreated(r.id);
+    } catch (err) { toast(err.message, 'err'); btn.disabled = false; }
+  };
+}
 
 // ============================================================ chat pop-ups (a new DM / group message / mention, on any page)
 const chatPops = new Map();   // space id -> { el, timer, msgs }
@@ -3450,9 +3688,9 @@ async function pageChat(page, [sidParam], alive) {
   page.innerHTML = `<div class="chat-wrap" id="chat-wrap">
     <aside class="chat-side">
       <div class="chat-side-head"><input class="input" id="cs-search" placeholder="Search chats & messages" autocomplete="off">
-        <button class="icon-btn cs-btn" id="cs-new-sec" title="New section">${I.plus}</button>
+        <button class="icon-btn cs-btn" id="cs-new-sec" title="New message, space or section">${I.plus}</button>
         <button class="icon-btn cs-btn" id="cs-mini" title="Collapse chat list">«</button></div>
-      ${st.seen_sync && st.huddles ? '' : `<a class="cs-notice" href="/api/google/connect">${I.eye.replace('width="18" height="18"', 'width="14" height="14"')}<span><b>Turn on “Seen”, read sync & huddles</b> — reconnect once to allow them.</span></a>`}
+      ${st.seen_sync && st.huddles && st.manage ? '' : `<a class="cs-notice" href="/api/google/connect">${I.eye.replace('width="18" height="18"', 'width="14" height="14"')}<span><b>Turn on the newest chat features</b> — Seen, huddles and managing spaces. Reconnect once to allow them.</span></a>`}
       <div class="chat-list" id="chat-list"><div class="empty">Loading…</div></div>
       <div class="chat-side-foot"><span title="${esc(st.email || '')}">${I.chat.replace('width="18" height="18"', 'width="13" height="13"')} ${esc(st.email || '')}</span><button class="linkbtn" id="gc-disconnect">Disconnect</button></div>
     </aside>
@@ -3665,10 +3903,14 @@ async function pageChat(page, [sidParam], alive) {
     if (t.dataset.space) { const target = Number(t.dataset.space); if (target !== sid) moveTo(sid, t.dataset.secOf, target); }
     else moveTo(sid, t.dataset.sec || t.dataset.secDrop);
   });
+  const openNew = async (id) => { await loadSpaces(); location.hash = `#/chat/${id}`; };
   $('#cs-new-sec').onclick = (e) => {
-    if (!isExec()) { newSection(); return; }
-    popMenu(e.currentTarget, [{ text: 'New section (just me)', icon: '+', run: () => newSection() },
-      { text: 'New team section (everyone)', icon: '👥', run: () => newTeamSection() }]);
+    popMenu(e.currentTarget, [{ label: 'Google Chat' },
+      { text: 'New message', icon: '💬', run: () => newChatModal('dm', openNew) },
+      { text: 'New space', icon: '#', run: () => newChatModal('space', openNew) },
+      { label: 'Organize' },
+      { text: 'New section (just me)', icon: '+', run: () => newSection() },
+      ...(isExec() ? [{ text: 'New team section (everyone)', icon: '👥', run: () => newTeamSection() }] : [])]);
   };
   $('#cs-mini').onclick = () => { layout.mini = !layout.mini; applyMini(); drawList(); saveLayout(); };
   const loadSpaces = async () => {
@@ -3745,11 +3987,17 @@ async function pageChat(page, [sidParam], alive) {
         <div class="cm-actions">
           ${isExec() && s.type !== 'DIRECT_MESSAGE' ? `<select class="input sm" id="cm-client" title="Link this chat to a client board"><option value="">Link to client…</option>${S.clients.map((c) => `<option value="${c.id}" ${s.client && s.client.id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>` : ''}
           <button type="button" class="btn sm cm-huddle" id="cm-huddle" title="Start a Google Meet huddle in this chat">${I.video}<span>Huddle</span></button>
+          <button type="button" class="icon-btn cm-gear" id="cm-settings" title="${s.type === 'SPACE' ? 'Space settings & members' : 'Chat details & members'}">${I.gear}</button>
           <a class="btn sm ghost cm-open" href="${esc(s.web_link)}" target="_blank" rel="noopener" title="Open in Google Chat">${I.ext || '↗'}<span>Google Chat</span></a></div></header>
       <div class="cm-msgs-wrap"><div class="cm-msgs cm-fade" id="cm-msgs">${cached ? '' : '<div class="cm-skel"><i></i><span><b></b><em></em></span></div>'.repeat(5)}</div>
         <button type="button" class="cm-newpill" id="cm-newpill">↓ New messages</button></div>
       ${chatComposerHTML('cm-comp', `Message ${s.type === 'DIRECT_MESSAGE' ? s.title : s.title}`)}`;
     $('#cm-back').onclick = () => { wrap.classList.remove('has-open'); location.hash = '#/chat'; };
+    $('#cm-settings', main).onclick = () => spaceSettings(s.id, async (what) => {
+      await loadSpaces();
+      if (what === 'left') { current = null; location.hash = '#/chat'; return; }
+      const fresh = spaces.find((x) => x.id === s.id); if (fresh && current === s) $('.cm-title b', main).textContent = fresh.title;
+    });
     $('#cm-huddle', main).onclick = async () => {
       const r = await startHuddle(s.id);
       if (r && r.message && current === s) { msgs = merge(msgs, [r.message]); drawMsgs('bottom'); }

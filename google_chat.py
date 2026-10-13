@@ -39,6 +39,8 @@ USERINFO_URL = os.environ.get("GOOGLE_USERINFO_URL", "https://openidconnect.goog
 CHAT_API = os.environ.get("GOOGLE_CHAT_API", "https://chat.googleapis.com").rstrip("/")
 PEOPLE_API = os.environ.get("GOOGLE_PEOPLE_API", "https://people.googleapis.com").rstrip("/")
 MEET_API = os.environ.get("GOOGLE_MEET_API", "https://meet.googleapis.com").rstrip("/")
+TENOR_API = os.environ.get("TENOR_API", "https://tenor.googleapis.com").rstrip("/")
+_gif_cache = {}   # gif id -> (url, mime, name, when) — only GIFs our own search returned can be sent (no arbitrary URLs)
 AUDIO_TYPES = {"audio/webm", "audio/ogg", "audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/aac", "audio/wav", "audio/x-wav"}
 SCOPES = [
     "openid", "email", "profile",
@@ -47,6 +49,9 @@ SCOPES = [
     "https://www.googleapis.com/auth/chat.memberships.readonly",
     "https://www.googleapis.com/auth/chat.users.readstate",      # "seen" + unread status, both ways
     "https://www.googleapis.com/auth/meetings.space.created",    # start Google Meet huddles from a chat
+    "https://www.googleapis.com/auth/chat.spaces",               # edit space name / description / guidelines
+    "https://www.googleapis.com/auth/chat.memberships",          # add / remove members, managers, leave
+    "https://www.googleapis.com/auth/chat.spaces.create",        # new spaces, group chats and DMs
     "https://www.googleapis.com/auth/directory.readonly",       # teammates' names and photos
 ]
 SYNC_SECONDS = int(os.environ.get("GCHAT_SYNC_SECONDS", "15"))
@@ -820,6 +825,8 @@ def register(module):
                      "JOIN chat_spaces s ON s.id=m.space_id WHERE m.user_id=?", (u["id"],), one=True)
         return jsonify(configured=configured(), connected=bool(a and a["refresh_token"]), email=a and a["email"],
                        seen_sync=_has_readstate(u["id"]), huddles="meetings.space.created" in ((a and a.get("scopes")) or ""),
+                       manage=any(sc.endswith("/chat.memberships") for sc in ((a and a.get("scopes")) or "").split()),
+                       gifs=bool(os.environ.get("TENOR_API_KEY")),
                        last_sync=a and a["last_sync"], error=(a and a["sync_error"]) or "",
                        syncing=u["id"] in _status, spaces=spaces["n"] or 0, history_done=spaces["done"] or 0,
                        redirect_uri=_redirect_uri() if H.is_exec() else None)
@@ -993,7 +1000,10 @@ def register(module):
         text = (d.get("text") or "").strip()
         thread = (d.get("thread") or "").strip()
         files = request.files.getlist("files")[:10]
-        if not text and not files:
+        gif = _gif_cache.get((d.get("gif") or "").strip()) if d.get("gif") else None
+        if d.get("gif") and not gif:
+            return H.bad("That GIF expired — pick it again")
+        if not text and not files and not gif:
             return H.bad("Write a message first")
         if len(text) > 4000:
             return H.bad("Messages can be up to 4,000 characters")
@@ -1007,6 +1017,17 @@ def register(module):
                 meta = json.dumps({"filename": f.filename or "file"})
                 raw = (f"--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{meta}\r\n"
                        f"--{boundary}\r\nContent-Type: {f.mimetype or 'application/octet-stream'}\r\n\r\n").encode() + data + f"\r\n--{boundary}--".encode()
+                r = gapi(u["id"], "POST", f"/upload/v1/{sp['gname']}/attachments:upload", params={"uploadType": "multipart"},
+                         raw=raw, content_type=f"multipart/related; boundary={boundary}", timeout=90)
+                attachments.append({"attachmentDataRef": r.get("attachmentDataRef") or {}})
+            if gif:   # download the GIF and attach it, so it plays right in Google Chat too
+                data, ctype = _http("GET", gif[0], binary=True, timeout=30)
+                if len(data) > UPLOAD_LIMIT:
+                    return H.bad("That GIF is too big — try another")
+                boundary = uuid.uuid4().hex
+                meta = json.dumps({"filename": f"{gif[2] or 'GIF'}.gif"})
+                raw = (f"--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{meta}\r\n"
+                       f"--{boundary}\r\nContent-Type: image/gif\r\n\r\n").encode() + data + f"\r\n--{boundary}--".encode()
                 r = gapi(u["id"], "POST", f"/upload/v1/{sp['gname']}/attachments:upload", params={"uploadType": "multipart"},
                          raw=raw, content_type=f"multipart/related; boundary={boundary}", timeout=90)
                 attachments.append({"attachmentDataRef": r.get("attachmentDataRef") or {}})
@@ -1239,6 +1260,224 @@ def register(module):
                  "order": {str(k): [int(i) for i in v if str(i).isdigit()][:500] for k, v in (d.get("order") or {}).items()}}
         H.ex("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", ("chat_team_layout", json.dumps(clean)))
         return jsonify(clean)
+
+    # ------------------------------------------------------------ GIFs (Tenor, Google's GIF service)
+    @app.get("/api/chat/gifs")
+    @lr
+    def chat_gifs():
+        key = os.environ.get("TENOR_API_KEY")
+        if not key:
+            return H.bad("GIFs aren't set up yet — an admin needs to add a Tenor API key.", 409)
+        qtext = (request.args.get("q") or "").strip()[:80]
+        params = {"key": key, "client_key": "herhaus_hub", "limit": 24, "media_filter": "gif,tinygif", "contentfilter": "medium"}
+        if qtext:
+            params["q"] = qtext
+        if request.args.get("pos"):
+            params["pos"] = request.args["pos"][:100]
+        try:
+            r = _http("GET", TENOR_API + ("/v2/search" if qtext else "/v2/featured"), params=params, timeout=10)
+        except GoogleError as e:
+            return H.bad(f"Couldn't load GIFs: {e}", 502)
+        out, now = [], time.time()
+        for g in r.get("results", []):
+            fm = g.get("media_formats") or {}
+            full, tiny = fm.get("gif") or {}, fm.get("tinygif") or fm.get("gif") or {}
+            if not full.get("url"):
+                continue
+            # big GIFs get sent in their smaller version so they upload quickly
+            send = full if (full.get("size") or 0) <= 6_000_000 else tiny
+            _gif_cache[g["id"]] = (send["url"], "image/gif", (g.get("content_description") or "GIF")[:60], now)
+            out.append({"id": g["id"], "preview": tiny.get("url") or full["url"], "w": (tiny.get("dims") or [200, 200])[0],
+                        "h": (tiny.get("dims") or [200, 200])[1], "title": g.get("content_description") or ""})
+        for k in [k for k, v in _gif_cache.items() if v[3] < now - 3600]:
+            _gif_cache.pop(k, None)
+        return jsonify(gifs=out, next=r.get("next") or "")
+
+    # ------------------------------------------------------------ space settings & members
+    def _space_or_404(sid):
+        return _member_or_404(sid)
+
+    def _manage_error(e):
+        if isinstance(e, NotConnected):
+            return H.bad("Connect Google Chat first", 409)
+        if e.status == 403:
+            msg = str(e).lower()
+            if "scope" in msg or "insufficient" in msg:
+                return H.bad("Reconnect Google Chat once to allow managing spaces (the blue notice on the Chat page).", 409)
+            return H.bad("Only space managers can do that.", 403)
+        return H.bad(f"Google Chat didn't accept that: {e}", 502)
+
+    @app.get("/api/chat/spaces/<int:sid>/details")
+    @lr
+    def chat_space_details(sid):
+        u = H.current_user()
+        sp = _space_or_404(sid)
+        try:
+            info = gapi(u["id"], "GET", f"/v1/{sp['gname']}")
+            members, token = [], None
+            for _ in range(10):
+                params = {"pageSize": 1000, "showInvited": "true"}
+                if token:
+                    params["pageToken"] = token
+                r = gapi(u["id"], "GET", f"/v1/{sp['gname']}/members", params=params)
+                members += r.get("memberships", [])
+                token = r.get("nextPageToken")
+                if not token:
+                    break
+        except (GoogleError, NotConnected) as e:
+            return _manage_error(e)
+        gids = [(m.get("member") or {}).get("name") for m in members]
+        resolve_people(u["id"], [g for g in gids if g])
+        people = _people_map(gids)
+        my = _my_gid(u["id"])
+        out = []
+        for m in members:
+            mem = m.get("member") or {}
+            if mem.get("type", "HUMAN") != "HUMAN":
+                continue
+            p = _person_out(mem.get("name", ""), people, my, mem.get("displayName", ""))
+            p.update(membership=m.get("name"), role="manager" if m.get("role") == "ROLE_MANAGER" else "member",
+                     invited=m.get("state") == "INVITED", email=(people.get(mem.get("name")) or {}).get("email", ""))
+            out.append(p)
+        out.sort(key=lambda p: (p["role"] != "manager", not p["is_me"], p["name"].lower()))
+        me_row = next((p for p in out if p["is_me"]), None)
+        details = info.get("spaceDetails") or {}
+        return jsonify(title=info.get("displayName") or "", type=info.get("spaceType") or sp["space_type"],
+                       description=details.get("description", ""), guidelines=details.get("guidelines", ""),
+                       created=norm_time(info.get("createTime")), web_link=_web_link(sp), members=out,
+                       i_manage=bool(me_row and me_row["role"] == "manager"))
+
+    @app.put("/api/chat/spaces/<int:sid>/details")
+    @lr
+    def chat_space_update(sid):
+        u = H.current_user()
+        sp = _space_or_404(sid)
+        d = H.body()
+        body, mask = {}, []
+        if "title" in d:
+            if not (d.get("title") or "").strip():
+                return H.bad("The space needs a name")
+            body["displayName"] = d["title"].strip()[:128]
+            mask.append("display_name")
+        if "description" in d or "guidelines" in d:
+            body["spaceDetails"] = {"description": (d.get("description") or "")[:150], "guidelines": (d.get("guidelines") or "")[:5000]}
+            mask.append("space_details")
+        if not mask:
+            return H.bad("Nothing to change")
+        try:
+            r = gapi(u["id"], "PATCH", f"/v1/{sp['gname']}", params={"updateMask": ",".join(mask)}, body=body)
+        except (GoogleError, NotConnected) as e:
+            return _manage_error(e)
+        _upsert_space(r if r.get("name") else {**body, "name": sp["gname"], "spaceType": sp["space_type"]})
+        return jsonify(ok=True)
+
+    @app.post("/api/chat/spaces/<int:sid>/members")
+    @lr
+    def chat_member_add(sid):
+        u = H.current_user()
+        sp = _space_or_404(sid)
+        emails = [e.strip().lower() for e in (H.body().get("emails") or []) if "@" in str(e)][:20]
+        if not emails:
+            return H.bad("Pick someone to add")
+        added, errors = [], []
+        for email in emails:
+            try:
+                gapi(u["id"], "POST", f"/v1/{sp['gname']}/members", body={"member": {"name": f"users/{email}", "type": "HUMAN"}})
+                added.append(email)
+            except NotConnected as e:
+                return _manage_error(e)
+            except GoogleError as e:
+                if e.status == 409:
+                    added.append(email)   # already in the space
+                elif e.status == 403:
+                    return _manage_error(e)
+                else:
+                    errors.append(f"{email}: {e}")
+        H.ex("UPDATE chat_spaces SET members_at=0 WHERE id=?", (sid,))
+        return jsonify(added=added, errors=errors)
+
+    @app.delete("/api/chat/spaces/<int:sid>/members")
+    @lr
+    def chat_member_remove(sid):
+        u = H.current_user()
+        sp = _space_or_404(sid)
+        name = (request.args.get("membership") or "").strip()
+        if not name.startswith(sp["gname"] + "/members/"):
+            return H.bad("Unknown member")
+        try:
+            gapi(u["id"], "DELETE", f"/v1/{name}")
+        except (GoogleError, NotConnected) as e:
+            return _manage_error(e)
+        if name.endswith("/" + _gid_num(_my_gid(u["id"]))):   # left the space
+            H.ex("DELETE FROM chat_members WHERE space_id=? AND user_id=?", (sid, u["id"]))
+        H.ex("UPDATE chat_spaces SET members_at=0 WHERE id=?", (sid,))
+        return jsonify(ok=True)
+
+    @app.put("/api/chat/spaces/<int:sid>/members/role")
+    @lr
+    def chat_member_role(sid):
+        u = H.current_user()
+        sp = _space_or_404(sid)
+        d = H.body()
+        name = (d.get("membership") or "").strip()
+        if not name.startswith(sp["gname"] + "/members/"):
+            return H.bad("Unknown member")
+        role = "ROLE_MANAGER" if d.get("role") == "manager" else "ROLE_MEMBER"
+        try:
+            gapi(u["id"], "PATCH", f"/v1/{name}", params={"updateMask": "role"}, body={"role": role})
+        except (GoogleError, NotConnected) as e:
+            return _manage_error(e)
+        return jsonify(ok=True)
+
+    @app.get("/api/chat/people")
+    @lr
+    def chat_people_search():
+        """Teammates to add to a space or start a chat with (company directory + hub users)."""
+        qtext = (request.args.get("q") or "").strip().lower()
+        like = f"%{qtext}%"
+        rows = H.q("SELECT gid, name, email, photo FROM chat_people WHERE name!='' AND email!='' AND (lower(name) LIKE ? OR lower(email) LIKE ?) "
+                   "ORDER BY name LIMIT 20", (like, like))
+        seen_emails = {r["email"].lower() for r in rows}
+        hub = H.q("SELECT name, email, avatar_file_id FROM users WHERE active=1 AND (lower(name) LIKE ? OR lower(email) LIKE ?) ORDER BY name LIMIT 20", (like, like))
+        out = [{"name": r["name"], "email": r["email"], "photo": r["photo"], "gid": r["gid"]} for r in rows]
+        avatars = {h["email"].lower(): h["avatar_file_id"] for h in hub}
+        for o in out:
+            o["avatar_file_id"] = avatars.get(o["email"].lower())
+        out += [{"name": h["name"], "email": h["email"], "photo": "", "avatar_file_id": h["avatar_file_id"], "gid": ""} for h in hub if h["email"].lower() not in seen_emails]
+        me = H.current_user()["email"].lower()
+        return jsonify([o for o in out if o["email"].lower() != me][:20])
+
+    @app.post("/api/chat/spaces/new")
+    @lr
+    def chat_space_create():
+        """New space, group chat or direct message — created in Google Chat with these people."""
+        u = H.current_user()
+        d = H.body()
+        emails = [e.strip().lower() for e in (d.get("emails") or []) if "@" in str(e)][:50]
+        title = (d.get("title") or "").strip()[:128]
+        kind = "SPACE" if title else ("DIRECT_MESSAGE" if len(emails) == 1 else "GROUP_CHAT")
+        if not emails and kind != "SPACE":
+            return H.bad("Pick at least one person")
+        space = {"spaceType": kind}
+        if kind == "SPACE":
+            space["displayName"] = title
+            if d.get("description"):
+                space["spaceDetails"] = {"description": d["description"][:150]}
+        try:
+            r = gapi(u["id"], "POST", "/v1/spaces:setup", body={"space": space,
+                     "memberships": [{"member": {"name": f"users/{e}", "type": "HUMAN"}} for e in emails]})
+        except (GoogleError, NotConnected) as e:
+            if isinstance(e, GoogleError) and e.status == 403:
+                return H.bad("Reconnect Google Chat once to allow creating spaces (the blue notice on the Chat page).", 409)
+            return _manage_error(e)
+        sid = _upsert_space(r)
+        H.ex("INSERT OR IGNORE INTO chat_members(space_id,user_id) VALUES(?,?)", (sid, u["id"]))
+        _set_read(sid, u["id"], now_norm(), real=False)
+        try:
+            refresh_members(sid, u["id"], force=True)
+        except GoogleError:
+            pass
+        return jsonify(id=sid, existing=False)
 
     @app.get("/api/chat/diagnose")
     @H.exec_required

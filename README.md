@@ -68,7 +68,7 @@ you in the hub (bell, sound, floating window).
 3. **Consent screen** — *Google Auth Platform › Branding › Get started*: app name "Her Haus Hub", your support
    email, Audience **Internal**, contact email › *Create*.
 4. **Scopes** — *Google Auth Platform › Data Access › Add or remove scopes*, add:
-   `chat.spaces.readonly`, `chat.messages`, `chat.memberships.readonly`, `chat.users.readstate`, `directory.readonly` and `meetings.space.created`
+   `chat.spaces.readonly`, `chat.spaces`, `chat.spaces.create`, `chat.messages`, `chat.memberships.readonly`, `chat.memberships`, `chat.users.readstate`, `directory.readonly` and `meetings.space.created`
    (all under `https://www.googleapis.com/auth/`) › *Update* › *Save*.
 5. **OAuth client** — *Google Auth Platform › Clients › Create client*: type **Web application**, name
    "Her Haus Hub", Authorized redirect URI **https://teamhub.herhauscompany.com/api/google/callback** › *Create*.
@@ -80,6 +80,8 @@ you in the hub (bell, sound, floating window).
    from step 5 › *Save* (the app redeploys).
 8. If your Workspace restricts third-party apps (*admin.google.com › Security › API controls*), mark
    "Her Haus Hub" as **Trusted**. Internal apps are usually allowed already.
+
+**GIFs (optional):** enable the **Tenor API**, then *Credentials › Create credentials › API key*, restrict it to the Tenor API, and add it on Render as `TENOR_API_KEY`.
 
 Then everyone opens **Chat** in the hub and clicks **Connect Google Chat** once. In *Settings*, keep
 "Hub web address" set to `https://teamhub.herhauscompany.com` so Google sends people back to the right place.

@@ -42,3 +42,5 @@ services:
         sync: false
       - key: GOOGLE_CLIENT_SECRET
         sync: false
+      - key: TENOR_API_KEY         # GIF search in chat — Google Cloud › Credentials › API key (Tenor API)
+        sync: false
