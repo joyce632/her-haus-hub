@@ -98,7 +98,9 @@ card. Anyone in a huddle can invite more teammates (they're rung too). The huddl
 Audio goes directly between browsers (WebRTC) when it can. Shared/carrier-grade internet (common with PH ISPs) and
 strict firewalls block that, so set up the free Cloudflare TURN relay: Cloudflare dashboard › *Realtime* › *TURN Server* ›
 *Create*, then put its **Turn Token ID** and **API Token** on Render as `CLOUDFLARE_TURN_KEY_ID` and
-`CLOUDFLARE_TURN_API_TOKEN`. (Any other TURN service can go in `HUDDLE_ICE_SERVERS` instead, e.g.
+`CLOUDFLARE_TURN_API_TOKEN` (Cloudflare asks for a card on file, free up to 1 TB/month). No card: sign up for
+Metered's free Open Relay (metered.ca, 20 GB/month) and set `METERED_APP` (your *app*.metered.live name) and
+`METERED_API_KEY`. (Any other TURN service can go in `HUDDLE_ICE_SERVERS` instead, e.g.
 `[{"urls":"turn:relay.example.com:3478","username":"…","credential":"…"}]`.
 
 ## How pay is calculated

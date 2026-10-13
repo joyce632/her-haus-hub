@@ -46,6 +46,10 @@ services:
         sync: false
       - key: CLOUDFLARE_TURN_API_TOKEN  # …and that key's API token
         sync: false
+      - key: METERED_APP               # or, no card needed: Metered Open Relay app name (<app>.metered.live)
+        sync: false
+      - key: METERED_API_KEY           # …and its TURN API key
+        sync: false
       - key: HUDDLE_ICE_SERVERS    # optional TURN relay for huddles on strict networks (JSON list of ICE servers)
         sync: false
       - key: GIPHY_API_KEY         # GIF search in chat — free key from developers.giphy.com

@@ -51,6 +51,34 @@ def _cloudflare_turn():
         return []
 
 
+_metered_cache = {"servers": [], "until": 0}
+
+
+def _metered_turn():
+    """TURN from Metered's free Open Relay (no card): METERED_APP (the <app>.metered.live name) + METERED_API_KEY."""
+    app_name, key = os.environ.get("METERED_APP"), os.environ.get("METERED_API_KEY")
+    if not app_name or not key:
+        return []
+    if _metered_cache["until"] > time.time():
+        return _metered_cache["servers"]
+    import urllib.parse
+    import urllib.request
+    host = app_name.strip().replace("https://", "").split(".")[0]
+    base = os.environ.get("METERED_API", f"https://{host}.metered.live").rstrip("/")
+    try:
+        req = urllib.request.Request(f"{base}/api/v1/turn/credentials?{urllib.parse.urlencode({'apiKey': key})}")
+        with urllib.request.urlopen(req, timeout=8, context=H._ssl_ctx) as r:
+            servers = json.loads(r.read() or b"[]")
+        if isinstance(servers, dict):
+            servers = servers.get("iceServers") or [servers]
+        _metered_cache.update(servers=servers, until=time.time() + 6 * 3600)
+        return servers
+    except Exception as e:
+        print(f"[huddle] couldn't get Metered TURN credentials: {e!r}", flush=True)
+        _metered_cache.update(servers=[], until=time.time() + 300)
+        return []
+
+
 def ice_servers():
     """STUN always; plus a TURN relay from Cloudflare (CLOUDFLARE_TURN_KEY_ID / CLOUDFLARE_TURN_API_TOKEN)
     and/or any servers in HUDDLE_ICE_SERVERS (JSON)."""
@@ -58,7 +86,7 @@ def ice_servers():
         extra = json.loads(os.environ.get("HUDDLE_ICE_SERVERS") or "[]")
     except ValueError:
         extra = []
-    return [{"urls": ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"]}] + _cloudflare_turn() + extra
+    return [{"urls": ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"]}] + _cloudflare_turn() + _metered_turn() + extra
 
 
 # ---------------------------------------------------------------- presence & typing (in memory, like huddles)
