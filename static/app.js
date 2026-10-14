@@ -3198,7 +3198,10 @@ function morph(a, b) {
 // With flip, items that move glide to their new spot instead of jumping.
 function patchList(box, items, animate, flip) {
   const old = new Map();
-  [...box.children].forEach((n) => { if (n.dataset.key) old.set(n.dataset.key, n); else n.remove(); });
+  // one element per key: anything unkeyed or a second copy of a key is removed (so copies can never pile up)
+  [...box.children].forEach((n) => { if (n.dataset.key && !old.has(n.dataset.key)) old.set(n.dataset.key, n); else n.remove(); });
+  const seenKeys = new Set();
+  items = items.filter((it) => !seenKeys.has(it.key) && seenKeys.add(it.key));
   const before = flip ? new Map([...old].map(([k, n]) => [k, n.getBoundingClientRect().top])) : null;
   let ref = box.firstElementChild, added = 0;
   const tpl = document.createElement('template');
@@ -4115,7 +4118,7 @@ async function chatPopup(sid, n, opts = {}) {
   const mergeIn = (incoming) => {
     const byId = new Map(msgs.map((m) => [m.id, m]));
     for (const m of incoming) {
-      const pend = m.sender.is_me && [...byId.values()].find((x) => x.pending && x.text === m.text);
+      const pend = m.sender.is_me && !byId.has(m.id) && [...byId.values()].find((x) => x.pending && x.text === m.text && m.create_time >= x.create_time.slice(0, 19));
       if (pend) { m.key = pend.key; byId.delete(pend.id); }
       const old = byId.get(m.id); if (old && old.key) m.key = old.key;
       byId.set(m.id, m);
@@ -4478,8 +4481,8 @@ async function pageChat(page, [sidParam], alive) {
   const merge = (list, incoming) => {
     const byId = new Map(list.map((m) => [m.id, m]));
     for (const m of incoming) {
-      if (!keyFor.has(m.id) && m.sender && m.sender.is_me) {   // the server copy of something we're still "sending"
-        const p = [...byId.values()].find((x) => x.pending && x.text === m.text && (!x.thread || x.thread === m.thread));
+      if (!keyFor.has(m.id) && !byId.has(m.id) && m.sender && m.sender.is_me) {   // the server copy of something we're still "sending" (never an older message with the same words)
+        const p = [...byId.values()].find((x) => x.pending && x.text === m.text && (!x.thread || x.thread === m.thread) && m.create_time >= x.create_time.slice(0, 19));
         if (p) { keyFor.set(m.id, p.key); byId.delete(p.id); }
       }
       if (keyFor.has(m.id)) m.key = keyFor.get(m.id);
@@ -4537,7 +4540,7 @@ async function pageChat(page, [sidParam], alive) {
       let m;
       try { m = await chatSend(s.id, payload); }
       catch (err) { msgs = msgs.filter((x) => x !== p); if (current === s) drawMsgs(); throw err; }
-      if (!keyFor.has(m.id)) keyFor.set(m.id, p.key);
+      if (!keyFor.has(m.id) && ![...keyFor.values()].includes(p.key)) keyFor.set(m.id, p.key);
       msgs = merge(msgs.filter((x) => x !== p), [m]);
       if (current === s) drawMsgs('bottom');
       loadSpaces();
@@ -4589,7 +4592,7 @@ async function pageChat(page, [sidParam], alive) {
       let m;
       try { m = await chatSend(current.id, payload, name); }
       catch (err) { threadMsgs = threadMsgs.filter((x) => x !== p); drawThread(); throw err; }
-      if (!keyFor.has(m.id)) keyFor.set(m.id, p.key);
+      if (!keyFor.has(m.id) && ![...keyFor.values()].includes(p.key)) keyFor.set(m.id, p.key);
       threadMsgs = merge(threadMsgs.filter((x) => x !== p), [m]); drawThread(true);
       const top = msgs.find((x) => x.thread === name && !x.thread_reply); if (top) { top.reply_count += 1; top.last_reply = m.create_time; drawMsgs(); }
     }).focus();
