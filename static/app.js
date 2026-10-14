@@ -1755,11 +1755,24 @@ function setupComments(el, taskId) {
     return true;
   };
   const load = async () => { comments = await api('GET', `/api/tasks/${taskId}/comments`); draw(); };
+  let changes = 0;   // bumped on every local add/edit/delete, so a check that raced with one is thrown away
+  const live = setInterval(async () => {   // new replies show up while the task is open, even mid-typing
+    if (!list.isConnected) { clearInterval(live); return; }
+    if (document.hidden || list.querySelector('textarea')) return;   // not while editing a comment
+    const at = changes;
+    try {
+      const fresh = await api('GET', `/api/tasks/${taskId}/comments`);
+      if (at !== changes || !list.isConnected || JSON.stringify(fresh) === JSON.stringify(comments)) return;
+      const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+      comments = fresh; draw(!atBottom);
+    } catch (_) { /* try again next tick */ }
+  }, 2000);
   const send = async () => {
     const text = ta.value.trim(); if (!text && !pending.length) return;
     if (pending.some((p) => !p.id)) { toast('Still uploading your image — one moment'); return; }
     const btn = $('#c-send', el); btn.disabled = true;
     try {
+      changes++;
       comments.push(await api('POST', `/api/tasks/${taskId}/comments`, { body: mentionsToTokens(text), image_ids: pending.map((p) => p.id) }));
       ta.value = ''; pending.forEach((p) => URL.revokeObjectURL(p.url)); pending = []; drawTray(); draw();
     } catch (err) { toast(err.message, 'err'); } finally { btn.disabled = false; }
@@ -1787,11 +1800,12 @@ function setupComments(el, taskId) {
     const cid = Number(e.target.closest('[data-cid]')?.dataset.cid);
     if (img) { lightbox(fileUrl(img.dataset.img), img.title); return; }
     if (rx || add) {
-      const react = async (emoji) => { try { drawOne(await api('POST', `/api/comments/${cid}/reactions`, { emoji })); } catch (err) { toast(err.message, 'err'); } };
+      const react = async (emoji) => { changes++; try { drawOne(await api('POST', `/api/comments/${cid}/reactions`, { emoji })); } catch (err) { toast(err.message, 'err'); } };
       if (rx) react(rx.dataset.react); else emojiPicker(add, react);
       return;
     }
     if (de && await confirmModal('Delete this comment?')) {
+      changes++;
       try { await api('DELETE', `/api/comments/${de.dataset.cDel}`); comments = comments.filter((c) => c.id !== Number(de.dataset.cDel)); draw(true); } catch (err) { toast(err.message, 'err'); }
     }
     if (ed) {
@@ -1803,6 +1817,7 @@ function setupComments(el, taskId) {
       const eta = $('textarea', body); attachMentionPicker(eta, $('.mention-pop', body)); eta.focus();
       $('[data-x]', body).onclick = () => draw(true);
       $('[data-ok]', body).onclick = async () => {
+        changes++;
         try { const u = await api('PUT', `/api/comments/${c.id}`, { body: mentionsToTokens(eta.value) }); Object.assign(c, u); draw(true); } catch (err) { toast(err.message, 'err'); }
       };
     }
@@ -1851,12 +1866,14 @@ function alertPlain(n) {
     huddle_invite: [`${who} invited you to a huddle`, n.chat_title || 'Tap to join'],
     chat_mention: [`${who} mentioned you${n.chat_title ? ` in ${n.chat_title}` : ''}`, n.snippet || ''] }[n.kind] || ['Her Haus Hub', task];
 }
+const inviteNotes = new Map();   // chat space id -> desktop pop-ups for huddle invites (closed when the ring stops)
 function desktopAlert(n) {
   if (!('Notification' in window) || Notification.permission !== 'granted' || !document.hidden) return;
   const [title, body] = alertPlain(n);
   try {
     const note = new Notification(title, { body, icon: '/static/icon.png', tag: `hh-${n.id}` });
     note.onclick = () => { window.focus(); openNotification(n); note.close(); };
+    if (n.kind === 'huddle_invite') inviteNotes.set(n.chat_space_id, [...(inviteNotes.get(n.chat_space_id) || []), note]);
   } catch (_) { /* some browsers only allow this from a service worker */ }
 }
 
@@ -3694,6 +3711,17 @@ async function refreshHuddles() {
   document.dispatchEvent(new CustomEvent('hh-huddles'));
 }
 setInterval(() => { if (!document.hidden) refreshHuddles(); }, 3000);
+// A background tab barely runs its timers, so while it's ringing a small worker keeps checking:
+// the ring stops within seconds once the call is answered or declined anywhere (another tab, the phone).
+const ringTicker = (() => {
+  try { return new Worker(URL.createObjectURL(new Blob(['setInterval(() => postMessage(1), 2000)'], { type: 'text/javascript' }))); }
+  catch (_) { return null; }
+})();
+if (ringTicker) ringTicker.onmessage = () => { if (HUD.ringing.size && document.hidden) refreshHuddles(); };
+// Other hub tabs in this browser hear about a join/decline straight away.
+const hudTabs = (() => { try { return new BroadcastChannel('hh-huddle'); } catch (_) { return null; } })();
+if (hudTabs) hudTabs.onmessage = (e) => { const hid = e.data && e.data.answered; if (hid) { stopRing(hid); HUD.dismissed.add(hid); } };
+function answered(hid) { stopRing(hid); HUD.dismissed.add(hid); try { hudTabs?.postMessage({ answered: hid }); } catch (_) { /* tab closing */ } }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshHuddles(); });
 
 // ---- ringing invite (top-right card + ring tone)
@@ -3707,13 +3735,14 @@ function showHuddleRing(h) {
   document.body.appendChild(el);
   const tone = setInterval(() => playTone('ring', true), 2200); playTone('ring', true);
   const stopAfter = setTimeout(() => stopRing(h.id), 40000);
-  HUD.ringing.set(h.id, { el, tone, stopAfter });
-  el.querySelector('[data-ring-yes]').onclick = () => { stopRing(h.id); joinHuddle(h.id); };
-  el.querySelector('[data-ring-no]').onclick = () => { stopRing(h.id); api('POST', `/api/huddles/${h.id}/decline`, {}).catch(() => {}); };
+  HUD.ringing.set(h.id, { el, tone, stopAfter, spaceId: h.space_id });
+  el.querySelector('[data-ring-yes]').onclick = () => { answered(h.id); joinHuddle(h.id); };
+  el.querySelector('[data-ring-no]').onclick = () => { answered(h.id); api('POST', `/api/huddles/${h.id}/decline`, {}).catch(() => {}); };
 }
 function stopRing(hid) {
   const r = HUD.ringing.get(hid); if (!r) return;
   clearInterval(r.tone); clearTimeout(r.stopAfter); r.el.remove(); HUD.ringing.delete(hid); HUD.dismissed.add(hid);
+  (inviteNotes.get(r.spaceId) || []).forEach((n) => { try { n.close(); } catch (_) { /* already gone */ } }); inviteNotes.delete(r.spaceId);
 }
 
 // ---- joining / leaving
@@ -3742,7 +3771,7 @@ async function joinHuddle(hid) {
 function enterHuddle(r, stream) {
   HUD.cur = r.huddle; HUD.stream = stream; HUD.since = 0; HUD.muted = false; HUD.failed.clear();
   if (r.ice) HUD.ice = r.ice;
-  stopRing(r.huddle.id);
+  answered(r.huddle.id);
   watchLevel('me', stream);
   r.peers.forEach((uid) => makePeer(uid, true));   // newcomer calls everyone already here
   clearInterval(HUD.timer);
