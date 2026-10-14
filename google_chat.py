@@ -1545,6 +1545,13 @@ def register(module):
                 out["single_lookup"] = "named" if (res.get("person") or {}).get("names") else f"no name returned ({(res.get('status') or {}).get('message', 'empty')})"
             except GoogleError as e:
                 out["single_lookup"] = f"error {e.status}: {e}"
+        find = (request.args.get("find") or "").strip()
+        if len(find) >= 4:   # executives: how many stored copies of a message exist, and how its text is laid out
+            rows = H.q("SELECT id, gname, space_id, create_time, text, thread_reply FROM chat_messages WHERE text LIKE ? ORDER BY create_time DESC LIMIT 20",
+                       (f"%{find}%",))
+            out["find"] = [{"id": r["id"], "space_id": r["space_id"], "time": r["create_time"], "name_tail": r["gname"][-24:],
+                            "lines": r["text"].count("\n") + 1, "blank_lines": r["text"].count("\n\n"), "length": len(r["text"]),
+                            "reply": r["thread_reply"]} for r in rows]
         out["people_known"] = H.q("SELECT COUNT(*) n FROM chat_people WHERE name!=''", one=True)["n"]
         out["people_unknown"] = H.q("SELECT COUNT(*) n FROM chat_people WHERE name=''", one=True)["n"]
         return jsonify(out)
