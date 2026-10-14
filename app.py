@@ -32,6 +32,7 @@ from werkzeug.utils import secure_filename
 
 import google_chat as gchat
 import huddles
+import office
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(BASE_DIR, "data"))
@@ -257,10 +258,13 @@ PG_MIGRATIONS = ["ALTER TABLE tasks ADD COLUMN IF NOT EXISTS deadline_reminded T
                  "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS actor_label TEXT",
                  "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS chat_space_id INTEGER"]
 PG_MIGRATIONS += gchat.PG_MIGRATIONS
-_NO_ID_TABLES = {"settings", "task_followers", "comment_reactions"} | gchat.NO_ID_TABLES
+_NO_ID_TABLES = {"settings", "task_followers", "comment_reactions"} | gchat.NO_ID_TABLES | office.NO_ID_TABLES
 # Google Chat sync tables (see google_chat.py)
 SCHEMA += gchat.SCHEMA_SQLITE
 PG_SCHEMA += gchat.SCHEMA_PG
+# Office tables: character looks, notes and arcade scores (see office.py)
+SCHEMA += office.SCHEMA_SQLITE
+PG_SCHEMA += office.SCHEMA_PG
 PG_TABLES += gchat.TABLES
 _PG_PARENTS = {"time_entries": ("user_id", "users"), "breaks": ("entry_id", "time_entries"),
                "tasks": ("client_id", "clients"), "task_links": ("task_id", "tasks"),
@@ -2629,9 +2633,9 @@ def healthz():
 
 
 def _asset_version():
-    """A fingerprint of the app's code. Changes whenever app.js or styles.css change (content, not file dates)."""
+    """A fingerprint of the app's code. Changes whenever app.js, office.js or styles.css change (content, not file dates)."""
     h = hashlib.sha256()
-    for name in ("app.js", "styles.css"):
+    for name in ("app.js", "office.js", "styles.css"):
         with open(os.path.join(app.static_folder, name), "rb") as f:
             h.update(f.read())
     return h.hexdigest()[:12]
@@ -2643,7 +2647,7 @@ ASSET_VERSION = _asset_version()
 def _index_html():
     # Asset URLs carry the code fingerprint, so a browser can never mix an old app.js with a new server.
     html = open(os.path.join(app.static_folder, "index.html"), encoding="utf-8").read()
-    for name in ("styles.css", "app.js"):
+    for name in ("styles.css", "app.js", "office.js"):
         html = html.replace(f"/static/{name}", f"/static/{name}?v={ASSET_VERSION}")
     html = html.replace("<head>", f'<head>\n  <meta name="app-version" content="{ASSET_VERSION}">', 1)
     resp = Response(html, mimetype="text/html")
@@ -2713,6 +2717,7 @@ def _db_watchdog():
 
 gchat.register(sys.modules[__name__])   # Google Chat sync routes + background sync
 huddles.register(sys.modules[__name__])  # live voice huddles
+office.register(sys.modules[__name__])   # the pixel Office page
 
 if os.environ.get("DISABLE_SCHEDULER") != "1":
     threading.Thread(target=_scheduler_loop, daemon=True, name="automations").start()

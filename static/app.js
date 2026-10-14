@@ -205,6 +205,7 @@ const CLIENT_COLORS = ['#0C2E60', '#CB252B', '#2463c7', '#1f8a4c', '#d18a00', '#
 const svg = (p) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">${p}</svg>`;
 const I = {
   home: svg('<path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/>'),
+  office: svg('<path d="M4 21V7l8-4 8 4v14"/><path d="M9 21v-5h6v5"/><path d="M8 9h2M14 9h2M8 12.5h2M14 12.5h2"/>'),
   chart: svg('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
   users: svg('<circle cx="9" cy="8" r="3.5"/><path d="M2 20c0-3.5 3-6 7-6s7 2.5 7 6"/><path d="M16 4.5a3.5 3.5 0 010 7M22 20c0-2.6-1.6-4.7-4-5.6"/>'),
   user: svg('<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/>'),
@@ -523,6 +524,7 @@ const chatNav = () => navLink('chat', I.chat, 'Chat', '<span class="nav-count" i
 function renderShell() {
   const execNav = [
     navLink('overview', I.chart, 'Overview'),
+    navLink('office', I.office, 'Office'),
     chatNav(),
     navLink('team', I.users, 'Team'),
     navLink('timesheets', I.clock, 'Timesheets & Payroll'),
@@ -535,6 +537,7 @@ function renderShell() {
   ];
   const empNav = [
     navLink('dashboard', I.home, 'My Dashboard'),
+    navLink('office', I.office, 'Office'),
     chatNav(),
     navLink('eod', I.doc, 'Submit EOD'),
     navLink('metrics', I.bars, 'My Task Metrics'),
@@ -635,6 +638,7 @@ const ROUTES = {
   metrics: { render: pageMetrics },
   notifications: { render: pageNotifications },
   chat: { render: pageChat },
+  office: { render: (...a) => pageOffice(...a) },   // static/office.js
   archive: { render: pageArchive },
   overview: { render: pageOverview, exec: true },
   team: { render: pageTeam, exec: true },
