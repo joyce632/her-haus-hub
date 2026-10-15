@@ -3,8 +3,8 @@
    act out their In Progress task. Talks to /api/office/* (see office.py). Loaded after app.js, uses its helpers. */
 'use strict';
 
-const OFFICE_CSS = "/* Layout: game client. HUD bar on top; left rail = you + roster by room; right = the walkable office, chat bar, activity log. Stacks map-first on phones. Single committed dark look. */\n/* Her Haus brand: navy #0C2E60 \u00b7 red #CB252B \u00b7 white \u00b7 mist #EDF2F8 (from the Hub). Single committed navy look. */\n.office-app {--bg: #081f42;\n  --panel: #0C2E60;\n  --panel-2: #143b75;\n  --ink: #FFFFFF;\n  --muted: #b8c7de;\n  --line: rgba(237, 242, 248, .16);\n  --accent: #CB252B;\n  --accent-ink: #ff6b70;\n  --accent-soft: rgba(203, 37, 43, .28);\n  --mist: #EDF2F8;\n  --live: #4ade80;\n  --danger: #ff8a8e;\n  --font-display: \"Montserrat\", system-ui, -apple-system, \"Segoe UI\", sans-serif;\n  --font-body: \"VT323\", ui-monospace, \"SF Mono\", Menlo, monospace;\n  color-scheme: dark; container: office / inline-size; background: var(--bg); border-radius: 16px; padding: 12px; box-shadow: 0 20px 50px -24px rgba(8, 31, 66, .55); }\n.office-app * {box-sizing: border-box; }\n.office-app {background: var(--bg); }\n.office-app {color: var(--ink); font-family: var(--font-body); font-size: 19px; line-height: 1.2; }\n.office-app .wrap { display: grid; gap: 12px; }\n.office-app .hud {display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; }\n.office-app .brand {display: flex; align-items: center; gap: 10px; padding: 6px 14px 6px 10px; background: #fff; border: 1px solid #fff; border-radius: 6px; }\n.office-app .brand svg {width: 38px; height: 26px; flex: none; }\n.office-app .brand h1 .her {color: var(--accent); }\n.office-app .brand h1 {color: var(--panel); }\n.office-app .brand small {color: #4a6286 !important; }\n.office-app .brand h1 {margin: 0; font-family: var(--font-display); font-weight: 800; font-size: 20px; letter-spacing: .04em; line-height: 1; text-transform: uppercase; }\n.office-app .brand small {display: block; font-family: var(--font-body); font-size: 15px; color: var(--muted); }\n.office-app .stat {display: grid; align-content: center; min-width: 74px; padding: 4px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; font-variant-numeric: tabular-nums; }\n.office-app .stat b {font-family: var(--font-display); font-size: 20px; font-weight: 700; line-height: 1.1; }\n.office-app .stat span {color: var(--muted); font-size: 15px; }\n.office-app .stat.live b {color: var(--live); }\n.office-app .stat.clock {margin-left: auto; }\n.office-app .main {display: grid; grid-template-columns: 320px minmax(0, 1fr); grid-template-areas: \"side map\"; gap: 12px; align-items: start; }\n.office-app .side {grid-area: side; display: grid; gap: 12px; min-width: 0; }\n.office-app .mapcol {grid-area: map; display: grid; gap: 10px; min-width: 0; }\n@container office (max-width: 900px) {.office-app .main {grid-template-columns: minmax(0, 1fr); grid-template-areas: \"map\" \"side\"; }\n}\n.office-app .card {background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px; display: grid; gap: 10px; min-width: 0; }\n.office-app .card h2 {margin: 0; font-family: var(--font-display); font-size: 14px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }\n.office-app .screen {position: relative; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: #000; min-width: 0; }\n.office-app canvas#of-office {display: block; width: 100%; height: auto; image-rendering: pixelated; image-rendering: crisp-edges; cursor: pointer; }\n.office-app canvas#of-office:focus-visible {outline: 2px solid #fff; outline-offset: -2px; }\n.office-app .overlay {position: absolute; inset: 0; pointer-events: none; overflow: hidden; }\n.office-app .sign {position: absolute; transform: translate(-50%, -50%); font-family: var(--font-display); font-weight: 700; font-size: clamp(8px, 1vw, 13px);\n  color: #fff; background: rgba(12, 46, 96, .92); border: 1px solid #081f42; border-radius: 3px; padding: 1px 6px; white-space: nowrap; letter-spacing: .03em; }\n.office-app .tag {position: absolute; transform: translate(-50%, -100%); pointer-events: auto; cursor: pointer; font: inherit; font-size: clamp(11px, 1.1vw, 15px); line-height: 1;\n  padding: 1px 5px 2px; white-space: nowrap; background: rgba(8, 31, 66, .88); color: #fff; border: 1px solid #081f42; border-radius: 3px; }\n.office-app .tag.live::before {content: \"\"; display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--live); margin-right: 4px; vertical-align: 2px; }\n.office-app .tag.me {background: var(--accent); color: #fff; }\n.office-app .tag.sel {outline: 2px solid #fff; z-index: 3; }\n.office-app .tag.hide {display: none; }\n.office-app .tag small {display: block; max-width: 11em; overflow: hidden; text-overflow: ellipsis; font-size: .82em; color: #c9d6e8; margin-top: 1px; }\n.office-app .tag.me small {color: #ffe0e1; }\n.office-app .bubble {position: absolute; transform: translate(-50%, -100%); max-width: 34%; padding: 3px 7px 4px; background: #fff; color: #0C2E60; border: 1px solid #0C2E60;\n  border-radius: 6px; font-size: clamp(12px, 1.2vw, 16px); line-height: 1.05; z-index: 4; overflow-wrap: anywhere; text-align: center; }\n.office-app .bubble::after {content: \"\"; position: absolute; left: 50%; bottom: -5px; width: 8px; height: 8px; background: #fff; border-right: 1px solid #0C2E60; border-bottom: 1px solid #0C2E60; transform: translateX(-50%) rotate(45deg); }\n.office-app .chatbar {display: flex; gap: 8px; }\n.office-app .chatbar input {flex: 1; min-width: 0; font: inherit; font-size: 20px; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }\n.office-app .hint {color: var(--muted); font-size: 16px; }\n.office-app .banner {background: var(--panel-2); border: 1px dashed rgba(237, 242, 248, .35); border-radius: 6px; padding: 8px 12px; color: var(--muted); }\n.office-app .banner b {color: var(--accent-ink); font-weight: 400; }\n.office-app .btn {font-family: var(--font-display); font-weight: 700; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; cursor: pointer; padding: 8px 12px; border-radius: 5px; border: 1px solid #081f42; box-shadow: 0 2px 0 #051632; }\n.office-app .btn.primary {background: var(--accent); color: #fff; border-color: #8f1a1f; }\n.office-app .btn.primary:hover {background: #e03a40; }\n.office-app .btn.ghost {background: var(--panel-2); color: var(--ink); border-color: var(--line); }\n.office-app .btn:active {transform: translateY(2px); box-shadow: none; }\n.office-app .btn:disabled {opacity: .45; cursor: not-allowed; }\n.office-app button:focus-visible, .office-app input:focus-visible, .office-app summary:focus-visible {outline: 2px solid #fff; outline-offset: 2px; }\n.office-app .me-row {display: flex; align-items: center; gap: 10px; min-width: 0; }\n.office-app .me-row img {width: 32px; height: 48px; image-rendering: pixelated; flex: none; background: var(--panel-2); border-radius: 4px; }\n.office-app .me-row div {min-width: 0; }\n.office-app .me-row strong {display: block; font-weight: 400; font-size: 21px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.office-app .me-row span {color: var(--muted); font-size: 16px; }\n.office-app .picks {display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }\n.office-app .pick {font: inherit; font-size: 17px; text-align: left; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px;\n  padding: 4px 8px; cursor: pointer; display: grid; grid-template-columns: 9px minmax(0, 1fr); column-gap: 7px; align-items: center; min-width: 0; line-height: 1; }\n.office-app .pick i {width: 9px; height: 9px; border-radius: 2px; grid-row: span 2; }\n.office-app .pick small {color: var(--muted); font-size: 14px; }\n.office-app .pick[aria-pressed=\"true\"] {border-color: var(--accent); background: var(--accent-soft); }\n.office-app .lbl {display: grid; gap: 4px; color: var(--muted); font-size: 16px; }\n.office-app .lbl input {font: inherit; font-size: 19px; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 5px 8px; width: 100%; }\n.office-app .row {display: flex; flex-wrap: wrap; gap: 8px; }\n.office-app .chips {display: flex; flex-wrap: wrap; gap: 4px; }\n.office-app .chips button {font: inherit; font-size: 15px; color: var(--ink); background: transparent; border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; cursor: pointer; }\n.office-app .chips button:hover {border-color: var(--accent); background: var(--accent-soft); }\n.office-app .detect {font-size: 16px; color: var(--muted); min-height: 1.2em; }\n.office-app .detect b {color: var(--ink); font-weight: 400; }\n.office-app .msg {min-height: 1.2em; color: var(--muted); font-size: 16px; }\n.office-app .msg.err {color: var(--danger); }\n.office-app details.editor {border-top: 1px solid var(--line); padding-top: 8px; }\n.office-app details.editor summary {cursor: pointer; font-family: var(--font-display); font-weight: 700; font-size: 13px; letter-spacing: .03em; list-style: none; display: flex; justify-content: space-between; }\n.office-app details.editor summary::after {content: \"+\"; color: var(--muted); }\n.office-app details.editor[open] summary::after {content: \"\u2013\"; }\n.office-app .edit-body {display: grid; gap: 8px; margin-top: 10px; }\n.office-app #of-preview {width: 100%; max-width: 260px; height: auto; image-rendering: pixelated; background: var(--panel-2); border-radius: 5px; justify-self: center; }\n.office-app .opt {display: grid; gap: 3px; }\n.office-app .opt > span {color: var(--muted); font-size: 15px; }\n.office-app .opts {display: flex; flex-wrap: wrap; gap: 4px; }\n.office-app .sw {width: 22px; height: 22px; border-radius: 4px; border: 2px solid transparent; cursor: pointer; padding: 0; box-shadow: inset 0 0 0 1px rgba(0,0,0,.5); }\n.office-app .sw[aria-pressed=\"true\"] {border-color: #fff; box-shadow: 0 0 0 2px var(--accent); }\n.office-app .word {font: inherit; font-size: 15px; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 2px 7px; cursor: pointer; }\n.office-app .word[aria-pressed=\"true\"] {border-color: var(--accent); color: #fff; background: var(--accent-soft); }\n.office-app .group {display: grid; gap: 2px; }\n.office-app .group h3 {margin: 4px 0 2px; font-family: var(--font-display); font-weight: 700; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; }\n.office-app .person {font: inherit; color: inherit; width: 100%; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 5px; cursor: pointer;\n  display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 0 9px; align-items: center; padding: 4px 6px; }\n.office-app .person:hover {background: var(--panel-2); }\n.office-app .person.sel {border-color: var(--accent); background: var(--panel-2); }\n.office-app .person img {width: 22px; height: 33px; image-rendering: pixelated; grid-row: span 2; }\n.office-app .person .nm {overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 19px; }\n.office-app .person .nm.live::before {content: \"\"; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--live); margin-right: 5px; vertical-align: 3px; }\n.office-app .person .ago {color: var(--muted); font-size: 15px; font-variant-numeric: tabular-nums; }\n.office-app .person .st {grid-column: 2 / 4; color: var(--muted); font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.office-app .person .st i {display: inline-block; width: 7px; height: 7px; border-radius: 2px; margin-right: 5px; }\n.office-app .feed {max-height: 230px; overflow-y: auto; display: grid; gap: 0; align-content: start; }\n.office-app .feed .ln {display: grid; grid-template-columns: 70px 16px minmax(60px, 120px) minmax(0, 1fr); gap: 8px; align-items: center; padding: 3px 2px; border-bottom: 1px solid rgba(237, 242, 248, .08); font-size: 17px; }\n.office-app .feed .ln time {color: var(--muted); font-variant-numeric: tabular-nums; }\n.office-app .feed .ln img {width: 16px; height: 24px; image-rendering: pixelated; }\n.office-app .feed .ln b {font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.office-app .feed .ln span {color: #dbe4f1; overflow-wrap: anywhere; }\n.office-app .feed .ln span.say {color: #fff; }\n.office-app .feed .ln span.say::before {content: \"\u201c\"; }\n.office-app .feed .ln span.say::after {content: \"\u201d\"; }\n.office-app .empty {color: var(--muted); }\n@container office (max-width: 560px) {.office-app .feed .ln {grid-template-columns: 58px 14px minmax(0, 1fr); }\n.office-app .feed .ln b {display: none; }\n}\n/* arcade */\n.office-app .games {display: grid; gap: 6px; }\n.office-app .game {font: inherit; color: var(--ink); text-align: left; background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px; padding: 6px 8px; cursor: pointer;\n  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 8px; align-items: baseline; }\n.office-app .game:hover {border-color: var(--accent); }\n.office-app .game b {font-family: var(--font-display); font-weight: 700; font-size: 14px; }\n.office-app .game em {font-style: normal; color: var(--accent-ink); font-variant-numeric: tabular-nums; font-size: 17px; }\n.office-app .game span {grid-column: 1 / 3; color: var(--muted); font-size: 15px; }\n.office-app .tabs {display: flex; gap: 4px; flex-wrap: wrap; }\n.office-app .tabs button {font: inherit; font-size: 16px; color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 4px; padding: 1px 8px; cursor: pointer; }\n.office-app .tabs button[aria-selected=\"true\"] {color: var(--ink); border-color: var(--accent); }\n.office-app .lb {list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }\n.office-app .lb li {display: grid; grid-template-columns: 20px 14px minmax(0, 1fr) auto; gap: 8px; align-items: center; font-size: 18px; }\n.office-app .lb li .rk {color: var(--muted); font-variant-numeric: tabular-nums; }\n.office-app .lb li img {width: 14px; height: 21px; image-rendering: pixelated; }\n.office-app .lb li .n {overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.office-app .lb li .v {color: var(--accent-ink); font-variant-numeric: tabular-nums; }\n.office-app .lb li.me .n {color: var(--accent-ink); }\n.office-app .arcade {position: fixed; inset: 0; z-index: 50; background: rgba(5, 18, 40, .8); display: flex; align-items: center; justify-content: center; padding-inline: 16px; padding-block: 16px; }\n.office-app .cab {width: min(520px, 100%); max-height: 100%; overflow-y: auto; background: var(--panel); border: 2px solid #081f42; border-radius: 10px; box-shadow: 0 0 0 4px var(--accent), 0 18px 40px rgba(0,0,0,.6); padding: 12px; display: grid; gap: 10px; }\n.office-app .cab header {display: flex; align-items: center; gap: 10px; }\n.office-app .cab h2 {margin: 0; font-family: var(--font-display); font-weight: 800; font-size: 18px; text-transform: uppercase; letter-spacing: .04em; flex: 1; min-width: 0; }\n.office-app .cab #of-ag-score {font-family: var(--font-display); font-weight: 700; color: var(--accent-ink); font-size: 18px; font-variant-numeric: tabular-nums; }\n.office-app #of-agc {width: 100%; height: auto; aspect-ratio: 1; image-rendering: pixelated; background: #081f42; border-radius: 6px; touch-action: none; cursor: pointer; }\n.office-app #of-ag-msg {margin: 0; color: var(--muted); font-size: 18px; min-height: 1.2em; }\n.office-app #of-ag-msg b {color: var(--ink); font-weight: 400; }\n.office-app .pad {display: grid; grid-template-columns: repeat(3, 56px); grid-template-rows: repeat(2, 44px); gap: 6px; justify-content: center; }\n.office-app .pad button {font-family: var(--font-display); font-size: 18px; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; touch-action: manipulation; }\n.office-app .pad button:active {background: var(--accent-soft); }\n.office-app .pad .u {grid-column: 2; grid-row: 1; }\n.office-app .pad .l {grid-column: 1; grid-row: 2; }\n.office-app .pad .d {grid-column: 2; grid-row: 2; }\n.office-app .pad .r {grid-column: 3; grid-row: 2; }\n.office-app .pad.flap {grid-template-columns: 1fr; grid-template-rows: 52px; }\n.office-app .pad.flap button {width: 100%; }\n.office-app #of-ag-panel {display: grid; gap: 10px; }\n.office-app .duel-score {display: flex; justify-content: center; gap: 18px; font-family: var(--font-display); font-size: 26px; font-variant-numeric: tabular-nums; }\n.office-app .duel-score span {color: var(--muted); font-size: 15px; font-family: var(--font-body); display: block; text-align: center; }\n.office-app .duel-picks {display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }\n.office-app .duel-picks button {font: inherit; font-size: 18px; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 4px; cursor: pointer; display: grid; justify-items: center; gap: 4px; }\n.office-app .duel-picks button img {width: 48px; height: 48px; image-rendering: pixelated; }\n.office-app .duel-picks button[aria-pressed=\"true\"] {border-color: var(--accent); background: var(--accent-soft); }\n.office-app .duel-picks button:disabled {cursor: default; }\n.office-app .duel-picks button:disabled:not([aria-pressed=\"true\"]) {opacity: .45; }\n.office-app .reveal {text-align: center; font-size: 20px; min-height: 1.3em; }\n.office-app .opps {display: grid; gap: 4px; }\n.office-app .opps .person {grid-template-columns: 22px minmax(0, 1fr) auto; }\n.office-app .toasts {position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 60; display: grid; gap: 8px; width: min(420px, calc(100% - 32px)); }\n.office-app .toast {background: var(--panel); border: 2px solid var(--accent); border-radius: 8px; padding: 10px 12px; display: grid; gap: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.5); }\n\n/* Hub page integration */\n.office-app .clockrow { display: flex; flex-wrap: wrap; gap: 6px; }\n.office-app .shiftline { font-size: 16px; color: var(--muted); }\n.office-app .shiftline b { color: var(--ink); font-weight: 400; }\n.office-app .pick small { color: var(--muted); }\n\n/* the Hub has no global [hidden] reset; the Office relies on it */\n.office-app [hidden] { display: none !important; }\n/* the Hub colours headings navy; on the Office's navy panels they need the light ink */\n.office-app h1, .office-app h2, .office-app h3 { color: var(--ink); letter-spacing: normal; }\n.office-app .group h3 { color: var(--muted); }\n";
-const OFFICE_HTML = "<div class=\"wrap\">\n  <header class=\"hud\">\n        <div class=\"stat\"><b id=\"of-s-in\">0</b><span>in office</span></div>\n    <div class=\"stat\"><b id=\"of-s-meet\">0</b><span>in meetings</span></div>\n    <div class=\"stat\"><b id=\"of-s-break\">0</b><span>on break</span></div>\n    <div class=\"stat\"><b id=\"of-s-out\">0</b><span>out of office</span></div>\n    <div class=\"stat live\"><b id=\"of-s-live\">0</b><span>here now</span></div>\n    \n  </header>\n\n  <div class=\"main\">\n    <section class=\"mapcol\" aria-label=\"Office\">\n      <div class=\"screen\">\n        <canvas id=\"of-office\" width=\"576\" height=\"304\" tabindex=\"0\" role=\"img\" aria-label=\"Pixel office map. Click the floor to walk your character there; arrow keys also move.\"></canvas>\n        <div class=\"overlay\" id=\"of-overlay\"></div>\n      </div>\n      <div class=\"banner\" id=\"of-banner\" hidden></div>\n      <form class=\"chatbar\" id=\"of-chatform\" autocomplete=\"off\">\n        <input id=\"of-say\" type=\"text\" maxlength=\"120\" placeholder=\"Say something\u2026 (press Enter)\" aria-label=\"Say something\">\n        <button class=\"btn primary\" type=\"submit\" id=\"of-saybtn\">Say</button>\n      </form>\n      <div class=\"hint\">Click the floor to walk. Arrow keys or WASD work when the map is focused. Your character follows your Hub clock and your In Progress task.</div>\n      <section class=\"card\" aria-labelledby=\"of-h-feed\">\n        <h2 id=\"of-h-feed\">Activity</h2>\n        <div class=\"feed\" id=\"of-feed\"><div class=\"empty\">Nothing yet. Status changes, chat and room moves show up here.</div></div>\n      </section>\n    </section>\n\n    <aside class=\"side\">\n      <section class=\"card\" aria-labelledby=\"of-h-me\">\n        <h2 id=\"of-h-me\">You</h2>\n        <div class=\"me-row\" id=\"of-merow\"><img id=\"of-meimg\" alt=\"\"><div><strong id=\"of-mename\">Connecting\u2026</strong><span id=\"of-mesub\"></span></div></div>\n        <div class=\"picks\" id=\"of-picks\" role=\"group\" aria-label=\"Status\"></div>\n        <div class=\"shiftline\" id=\"of-shiftline\"></div>\n        <div class=\"clockrow\" id=\"of-clockrow\"></div>\n        <label class=\"lbl\" for=\"of-note\">Note (optional, shows instead of your Hub task)\n          <input id=\"of-note\" type=\"text\" maxlength=\"80\" placeholder=\"e.g. Calling sellers, showing 88 Elm St\">\n        </label>\n        <div class=\"chips\" id=\"of-chips\" aria-label=\"Quick tasks\"></div>\n        <div class=\"detect\" id=\"of-detect\"></div>\n        <div class=\"row\">\n          <button class=\"btn primary\" id=\"of-save\" type=\"button\">Save</button>\n        </div>\n        <div class=\"msg\" id=\"of-msg\" role=\"status\"></div>\n        <details class=\"editor\" id=\"of-editor\">\n          <summary>Customize character</summary>\n          <div class=\"edit-body\">\n            <canvas id=\"of-preview\" width=\"48\" height=\"16\" aria-label=\"Character preview from four sides\"></canvas>\n            <div id=\"of-optrows\"></div>\n            <div class=\"row\">\n              <button class=\"btn primary\" id=\"of-savelook\" type=\"button\">Save character</button>\n              <button class=\"btn ghost\" id=\"of-randlook\" type=\"button\">Shuffle</button>\n            </div>\n          </div>\n        </details>\n      </section>\n\n      <section class=\"card\" aria-labelledby=\"of-h-arcade\">\n        <h2 id=\"of-h-arcade\">Arcade <span style=\"color:var(--muted);font-weight:500\">\u00b7 Break room</span></h2>\n        <div class=\"games\" id=\"of-games\"></div>\n        <div class=\"tabs\" id=\"of-lbtabs\" role=\"tablist\" aria-label=\"Leaderboard\"></div>\n        <ol class=\"lb\" id=\"of-lb\"></ol>\n      </section>\n\n      <section class=\"card\" aria-labelledby=\"of-h-roster\">\n        <h2 id=\"of-h-roster\">Who's where</h2>\n        <div id=\"of-roster\"></div>\n      </section>\n    </aside>\n  </div>\n</div>\n\n<div class=\"arcade\" id=\"of-arcade\" hidden role=\"dialog\" aria-modal=\"true\" aria-labelledby=\"of-ag-title\">\n  <div class=\"cab\">\n    <header><h2 id=\"of-ag-title\">Arcade</h2><span id=\"of-ag-score\"></span><button class=\"btn ghost\" id=\"of-ag-close\" type=\"button\">Close</button></header>\n    <canvas id=\"of-agc\" width=\"240\" height=\"240\" tabindex=\"0\" aria-label=\"Game screen\"></canvas>\n    <div id=\"of-ag-panel\" hidden></div>\n    <p id=\"of-ag-msg\" role=\"status\"></p>\n    <div class=\"pad\" id=\"of-ag-pad\"></div>\n  </div>\n</div>\n<div class=\"toasts\" id=\"of-toasts\" aria-live=\"polite\"></div>";
+const OFFICE_CSS = "/* Layout: game client. HUD bar on top; left rail = you + roster by room; right = the walkable office, chat bar, activity log. Stacks map-first on phones. Single committed dark look. */\n/* Her Haus brand: navy #0C2E60 \u00b7 red #CB252B \u00b7 white \u00b7 mist #EDF2F8 (from the Hub). Single committed navy look. */\n.office-app {--bg: #081f42;\n  --panel: #0C2E60;\n  --panel-2: #143b75;\n  --ink: #FFFFFF;\n  --muted: #b8c7de;\n  --line: rgba(237, 242, 248, .16);\n  --accent: #CB252B;\n  --accent-ink: #ff6b70;\n  --accent-soft: rgba(203, 37, 43, .28);\n  --mist: #EDF2F8;\n  --live: #4ade80;\n  --danger: #ff8a8e;\n  --font-display: \"Montserrat\", system-ui, -apple-system, \"Segoe UI\", sans-serif;\n  --font-body: \"VT323\", ui-monospace, \"SF Mono\", Menlo, monospace;\n  color-scheme: dark; container: office / inline-size; background: var(--bg); border-radius: 16px; padding: 12px; box-shadow: 0 20px 50px -24px rgba(8, 31, 66, .55); }\n.office-app * {box-sizing: border-box; }\n.office-app {background: var(--bg); }\n.office-app {color: var(--ink); font-family: var(--font-body); font-size: 19px; line-height: 1.2; }\n.office-app .wrap { display: grid; gap: 12px; }\n.office-app .hud {display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; }\n.office-app .brand {display: flex; align-items: center; gap: 10px; padding: 6px 14px 6px 10px; background: #fff; border: 1px solid #fff; border-radius: 6px; }\n.office-app .brand svg {width: 38px; height: 26px; flex: none; }\n.office-app .brand h1 .her {color: var(--accent); }\n.office-app .brand h1 {color: var(--panel); }\n.office-app .brand small {color: #4a6286 !important; }\n.office-app .brand h1 {margin: 0; font-family: var(--font-display); font-weight: 800; font-size: 20px; letter-spacing: .04em; line-height: 1; text-transform: uppercase; }\n.office-app .brand small {display: block; font-family: var(--font-body); font-size: 15px; color: var(--muted); }\n.office-app .stat {display: grid; align-content: center; min-width: 74px; padding: 4px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; font-variant-numeric: tabular-nums; }\n.office-app .stat b {font-family: var(--font-display); font-size: 20px; font-weight: 700; line-height: 1.1; }\n.office-app .stat span {color: var(--muted); font-size: 15px; }\n.office-app .stat.live b {color: var(--live); }\n.office-app .stat.clock {margin-left: auto; }\n.office-app .main {display: grid; grid-template-columns: 320px minmax(0, 1fr); grid-template-areas: \"side map\"; gap: 12px; align-items: start; }\n.office-app .side {grid-area: side; display: grid; gap: 12px; min-width: 0; }\n.office-app .mapcol {grid-area: map; display: grid; gap: 10px; min-width: 0; }\n@container office (max-width: 900px) {.office-app .main {grid-template-columns: minmax(0, 1fr); grid-template-areas: \"map\" \"side\"; }\n}\n.office-app .card {background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px; display: grid; gap: 10px; min-width: 0; }\n.office-app .card h2 {margin: 0; font-family: var(--font-display); font-size: 14px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }\n.office-app .screen {position: relative; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: #000; min-width: 0; }\n.office-app canvas#of-office {display: block; width: 100%; height: auto; image-rendering: pixelated; image-rendering: crisp-edges; cursor: pointer; }\n.office-app canvas#of-office:focus-visible {outline: 2px solid #fff; outline-offset: -2px; }\n.office-app .overlay {position: absolute; inset: 0; pointer-events: none; overflow: hidden; }\n.office-app .sign {position: absolute; transform: translate(-50%, -50%); font-family: var(--font-display); font-weight: 700; font-size: clamp(8px, 1vw, 13px);\n  color: #fff; background: rgba(12, 46, 96, .92); border: 1px solid #081f42; border-radius: 3px; padding: 1px 6px; white-space: nowrap; letter-spacing: .03em; }\n.office-app .tag {position: absolute; transform: translate(-50%, -100%); pointer-events: auto; cursor: pointer; font: inherit; font-size: clamp(11px, 1.1vw, 15px); line-height: 1;\n  padding: 1px 5px 2px; white-space: nowrap; background: rgba(8, 31, 66, .88); color: #fff; border: 1px solid #081f42; border-radius: 3px; }\n.office-app .tag.live::before {content: \"\"; display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--live); margin-right: 4px; vertical-align: 2px; }\n.office-app .tag.me {background: var(--accent); color: #fff; }\n.office-app .tag.sel {outline: 2px solid #fff; z-index: 3; }\n.office-app .tag.hide {display: none; }\n.office-app .tag small {display: block; max-width: 11em; overflow: hidden; text-overflow: ellipsis; font-size: .82em; color: #c9d6e8; margin-top: 1px; }\n.office-app .tag.me small {color: #ffe0e1; }\n.office-app .bubble {position: absolute; transform: translate(-50%, -100%); max-width: 34%; padding: 3px 7px 4px; background: #fff; color: #0C2E60; border: 1px solid #0C2E60;\n  border-radius: 6px; font-size: clamp(12px, 1.2vw, 16px); line-height: 1.05; z-index: 4; overflow-wrap: anywhere; text-align: center; }\n.office-app .bubble::after {content: \"\"; position: absolute; left: 50%; bottom: -5px; width: 8px; height: 8px; background: #fff; border-right: 1px solid #0C2E60; border-bottom: 1px solid #0C2E60; transform: translateX(-50%) rotate(45deg); }\n.office-app .chatbar {display: flex; gap: 8px; }\n.office-app .chatbar input {flex: 1; min-width: 0; font: inherit; font-size: 20px; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }\n.office-app .hint {color: var(--muted); font-size: 16px; }\n.office-app .banner {background: var(--panel-2); border: 1px dashed rgba(237, 242, 248, .35); border-radius: 6px; padding: 8px 12px; color: var(--muted); }\n.office-app .banner b {color: var(--accent-ink); font-weight: 400; }\n.office-app .btn {font-family: var(--font-display); font-weight: 700; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; cursor: pointer; padding: 8px 12px; border-radius: 5px; border: 1px solid #081f42; box-shadow: 0 2px 0 #051632; }\n.office-app .btn.primary {background: var(--accent); color: #fff; border-color: #8f1a1f; }\n.office-app .btn.primary:hover {background: #e03a40; }\n.office-app .btn.ghost {background: var(--panel-2); color: var(--ink); border-color: var(--line); }\n.office-app .btn:active {transform: translateY(2px); box-shadow: none; }\n.office-app .btn:disabled {opacity: .45; cursor: not-allowed; }\n.office-app button:focus-visible, .office-app input:focus-visible, .office-app summary:focus-visible {outline: 2px solid #fff; outline-offset: 2px; }\n.office-app .me-row {display: flex; align-items: center; gap: 10px; min-width: 0; }\n.office-app .me-row img {width: 32px; height: 48px; image-rendering: pixelated; flex: none; background: var(--panel-2); border-radius: 4px; }\n.office-app .me-row div {min-width: 0; }\n.office-app .me-row strong {display: block; font-weight: 400; font-size: 21px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.office-app .me-row span {color: var(--muted); font-size: 16px; }\n.office-app .picks {display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }\n.office-app .pick {font: inherit; font-size: 17px; text-align: left; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px;\n  padding: 4px 8px; cursor: pointer; display: grid; grid-template-columns: 9px minmax(0, 1fr); column-gap: 7px; align-items: center; min-width: 0; line-height: 1; }\n.office-app .pick i {width: 9px; height: 9px; border-radius: 2px; grid-row: span 2; }\n.office-app .pick small {color: var(--muted); font-size: 14px; }\n.office-app .pick[aria-pressed=\"true\"] {border-color: var(--accent); background: var(--accent-soft); }\n.office-app .lbl {display: grid; gap: 4px; color: var(--muted); font-size: 16px; }\n.office-app .lbl input {font: inherit; font-size: 19px; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 5px 8px; width: 100%; }\n.office-app .row {display: flex; flex-wrap: wrap; gap: 8px; }\n.office-app .chips {display: flex; flex-wrap: wrap; gap: 4px; }\n.office-app .chips button {font: inherit; font-size: 15px; color: var(--ink); background: transparent; border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; cursor: pointer; }\n.office-app .chips button:hover {border-color: var(--accent); background: var(--accent-soft); }\n.office-app .detect {font-size: 16px; color: var(--muted); min-height: 1.2em; }\n.office-app .detect b {color: var(--ink); font-weight: 400; }\n.office-app .msg {min-height: 1.2em; color: var(--muted); font-size: 16px; }\n.office-app .msg.err {color: var(--danger); }\n.office-app details.editor {border-top: 1px solid var(--line); padding-top: 8px; }\n.office-app details.editor summary {cursor: pointer; font-family: var(--font-display); font-weight: 700; font-size: 13px; letter-spacing: .03em; list-style: none; display: flex; justify-content: space-between; }\n.office-app details.editor summary::after {content: \"+\"; color: var(--muted); }\n.office-app details.editor[open] summary::after {content: \"\u2013\"; }\n.office-app .edit-body {display: grid; gap: 8px; margin-top: 10px; }\n.office-app #of-preview {width: 100%; max-width: 260px; height: auto; image-rendering: pixelated; background: var(--panel-2); border-radius: 5px; justify-self: center; }\n.office-app .opt {display: grid; gap: 3px; }\n.office-app .opt > span {color: var(--muted); font-size: 15px; }\n.office-app .opts {display: flex; flex-wrap: wrap; gap: 4px; }\n.office-app .sw {width: 22px; height: 22px; border-radius: 4px; border: 2px solid transparent; cursor: pointer; padding: 0; box-shadow: inset 0 0 0 1px rgba(0,0,0,.5); }\n.office-app .sw[aria-pressed=\"true\"] {border-color: #fff; box-shadow: 0 0 0 2px var(--accent); }\n.office-app .word {font: inherit; font-size: 15px; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 2px 7px; cursor: pointer; }\n.office-app .word[aria-pressed=\"true\"] {border-color: var(--accent); color: #fff; background: var(--accent-soft); }\n.office-app .group {display: grid; gap: 2px; }\n.office-app .group h3 {margin: 4px 0 2px; font-family: var(--font-display); font-weight: 700; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; }\n.office-app .person {font: inherit; color: inherit; width: 100%; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 5px; cursor: pointer;\n  display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 0 9px; align-items: center; padding: 4px 6px; }\n.office-app .person:hover {background: var(--panel-2); }\n.office-app .person.sel {border-color: var(--accent); background: var(--panel-2); }\n.office-app .person img {width: 22px; height: 33px; image-rendering: pixelated; grid-row: span 2; }\n.office-app .person .nm {overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 19px; }\n.office-app .person .nm.live::before {content: \"\"; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--live); margin-right: 5px; vertical-align: 3px; }\n.office-app .person .ago {color: var(--muted); font-size: 15px; font-variant-numeric: tabular-nums; }\n.office-app .person .st {grid-column: 2 / 4; color: var(--muted); font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.office-app .person .st i {display: inline-block; width: 7px; height: 7px; border-radius: 2px; margin-right: 5px; }\n.office-app .feed {max-height: 230px; overflow-y: auto; display: grid; gap: 0; align-content: start; }\n.office-app .feed .ln {display: grid; grid-template-columns: 70px 16px minmax(60px, 120px) minmax(0, 1fr); gap: 8px; align-items: center; padding: 3px 2px; border-bottom: 1px solid rgba(237, 242, 248, .08); font-size: 17px; }\n.office-app .feed .ln time {color: var(--muted); font-variant-numeric: tabular-nums; }\n.office-app .feed .ln img {width: 16px; height: 24px; image-rendering: pixelated; }\n.office-app .feed .ln b {font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.office-app .feed .ln span {color: #dbe4f1; overflow-wrap: anywhere; }\n.office-app .feed .ln span.say {color: #fff; }\n.office-app .feed .ln span.say::before {content: \"\u201c\"; }\n.office-app .feed .ln span.say::after {content: \"\u201d\"; }\n.office-app .empty {color: var(--muted); }\n@container office (max-width: 560px) {.office-app .feed .ln {grid-template-columns: 58px 14px minmax(0, 1fr); }\n.office-app .feed .ln b {display: none; }\n}\n/* arcade */\n.office-app .games {display: grid; gap: 6px; }\n.office-app .game {font: inherit; color: var(--ink); text-align: left; background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px; padding: 6px 8px; cursor: pointer;\n  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 8px; align-items: baseline; }\n.office-app .game:hover {border-color: var(--accent); }\n.office-app .game b {font-family: var(--font-display); font-weight: 700; font-size: 14px; }\n.office-app .game em {font-style: normal; color: var(--accent-ink); font-variant-numeric: tabular-nums; font-size: 17px; }\n.office-app .game span {grid-column: 1 / 3; color: var(--muted); font-size: 15px; }\n.office-app .tabs {display: flex; gap: 4px; flex-wrap: wrap; }\n.office-app .tabs button {font: inherit; font-size: 16px; color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 4px; padding: 1px 8px; cursor: pointer; }\n.office-app .tabs button[aria-selected=\"true\"] {color: var(--ink); border-color: var(--accent); }\n.office-app .lb {list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }\n.office-app .lb li {display: grid; grid-template-columns: 20px 14px minmax(0, 1fr) auto; gap: 8px; align-items: center; font-size: 18px; }\n.office-app .lb li .rk {color: var(--muted); font-variant-numeric: tabular-nums; }\n.office-app .lb li img {width: 14px; height: 21px; image-rendering: pixelated; }\n.office-app .lb li .n {overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.office-app .lb li .v {color: var(--accent-ink); font-variant-numeric: tabular-nums; }\n.office-app .lb li.me .n {color: var(--accent-ink); }\n.office-app .arcade {position: fixed; inset: 0; z-index: 50; background: rgba(5, 18, 40, .8); display: flex; align-items: center; justify-content: center; padding-inline: 16px; padding-block: 16px; }\n.office-app .cab {width: min(520px, 100%); max-height: 100%; overflow-y: auto; background: var(--panel); border: 2px solid #081f42; border-radius: 10px; box-shadow: 0 0 0 4px var(--accent), 0 18px 40px rgba(0,0,0,.6); padding: 12px; display: grid; gap: 10px; }\n.office-app .cab header {display: flex; align-items: center; gap: 10px; }\n.office-app .cab h2 {margin: 0; font-family: var(--font-display); font-weight: 800; font-size: 18px; text-transform: uppercase; letter-spacing: .04em; flex: 1; min-width: 0; }\n.office-app .cab #of-ag-score {font-family: var(--font-display); font-weight: 700; color: var(--accent-ink); font-size: 18px; font-variant-numeric: tabular-nums; }\n.office-app #of-agc {width: 100%; height: auto; aspect-ratio: 1; image-rendering: pixelated; background: #081f42; border-radius: 6px; touch-action: none; cursor: pointer; }\n.office-app #of-ag-msg {margin: 0; color: var(--muted); font-size: 18px; min-height: 1.2em; }\n.office-app #of-ag-msg b {color: var(--ink); font-weight: 400; }\n.office-app .pad {display: grid; grid-template-columns: repeat(3, 56px); grid-template-rows: repeat(2, 44px); gap: 6px; justify-content: center; }\n.office-app .pad button {font-family: var(--font-display); font-size: 18px; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; touch-action: manipulation; }\n.office-app .pad button:active {background: var(--accent-soft); }\n.office-app .pad .u {grid-column: 2; grid-row: 1; }\n.office-app .pad .l {grid-column: 1; grid-row: 2; }\n.office-app .pad .d {grid-column: 2; grid-row: 2; }\n.office-app .pad .r {grid-column: 3; grid-row: 2; }\n.office-app .pad.flap {grid-template-columns: 1fr; grid-template-rows: 52px; }\n.office-app .pad.flap button {width: 100%; }\n.office-app #of-ag-panel {display: grid; gap: 10px; }\n.office-app .duel-score {display: flex; justify-content: center; gap: 18px; font-family: var(--font-display); font-size: 26px; font-variant-numeric: tabular-nums; }\n.office-app .duel-score span {color: var(--muted); font-size: 15px; font-family: var(--font-body); display: block; text-align: center; }\n.office-app .duel-picks {display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }\n.office-app .duel-picks button {font: inherit; font-size: 18px; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 4px; cursor: pointer; display: grid; justify-items: center; gap: 4px; }\n.office-app .duel-picks button img {width: 48px; height: 48px; image-rendering: pixelated; }\n.office-app .duel-picks button[aria-pressed=\"true\"] {border-color: var(--accent); background: var(--accent-soft); }\n.office-app .duel-picks button:disabled {cursor: default; }\n.office-app .duel-picks button:disabled:not([aria-pressed=\"true\"]) {opacity: .45; }\n.office-app .reveal {text-align: center; font-size: 20px; min-height: 1.3em; }\n.office-app .opps {display: grid; gap: 4px; }\n.office-app .opps .person {grid-template-columns: 22px minmax(0, 1fr) auto; }\n.office-app .toasts {position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 60; display: grid; gap: 8px; width: min(420px, calc(100% - 32px)); }\n.office-app .toast {background: var(--panel); border: 2px solid var(--accent); border-radius: 8px; padding: 10px 12px; display: grid; gap: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.5); }\n\n/* Hub page integration */\n.office-app .clockrow { display: flex; flex-wrap: wrap; gap: 6px; }\n.office-app .shiftline { font-size: 16px; color: var(--muted); }\n.office-app .shiftline b { color: var(--ink); font-weight: 400; }\n.office-app .pick small { color: var(--muted); }\n\n/* the Hub has no global [hidden] reset; the Office relies on it */\n.office-app [hidden] { display: none !important; }\n/* the Hub colours headings navy; on the Office's navy panels they need the light ink */\n.office-app h1, .office-app h2, .office-app h3 { color: var(--ink); letter-spacing: normal; }\n.office-app .group h3 { color: var(--muted); }\n\n/* Deadline Race */\n.office-app .race h2 .race-day { color: var(--muted); font-weight: 500; text-transform: none; letter-spacing: 0; }\n.office-app .race-note { color: var(--muted); font-size: 16px; }\n.office-app .race-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }\n.office-app .race-list li.row-r { display: grid; grid-template-columns: 30px minmax(110px, 170px) minmax(0, 1fr) minmax(86px, auto); gap: 4px 10px; align-items: center; padding: 6px 8px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; }\n.office-app .race-list li.row-r.me { border-color: var(--accent); }\n.office-app .medal { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-family: var(--font-display); font-weight: 800; font-size: 13px; color: #081f42; background: #b8c7de; box-shadow: inset 0 -2px 0 rgba(0,0,0,.25); }\n.office-app .medal.g1 { background: #f2c94c; } .office-app .medal.g2 { background: #d5dbe3; } .office-app .medal.g3 { background: #d08a4a; }\n.office-app .rname { min-width: 0; }\n.office-app .rname b { display: block; font-weight: 400; font-size: 19px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.office-app .rname span { display: block; color: var(--muted); font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.office-app .race-list canvas { width: 100%; height: auto; image-rendering: pixelated; border-radius: 4px; display: block; }\n.office-app .rstat { text-align: right; font-variant-numeric: tabular-nums; line-height: 1.1; }\n.office-app .rstat b { display: block; font-weight: 400; font-size: 18px; }\n.office-app .rstat span { font-size: 15px; color: var(--muted); }\n.office-app .rstat .ahead { color: var(--live); } .office-app .rstat .behind { color: var(--danger); }\n@container office (max-width: 560px) { .office-app .race-list li.row-r { grid-template-columns: 30px minmax(0, 1fr) auto; } .office-app .race-list li.row-r canvas { grid-column: 1 / -1; grid-row: 2; } }\n\n/* Type Race */\n.office-app .tr-count { text-align: center; font-family: var(--font-display); font-weight: 800; font-size: 40px; color: var(--accent-ink); min-height: 1.1em; }\n.office-app .tr-phrase { font-size: 22px; line-height: 1.35; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; overflow-wrap: anywhere; }\n.office-app .tr-phrase .ok { color: #4ade80; }\n.office-app .tr-phrase .cur { background: var(--accent); color: #fff; }\n.office-app .tr-phrase .rest { color: var(--muted); }\n.office-app .tr-input { font: inherit; font-size: 22px; width: 100%; color: var(--ink); background: var(--bg); border: 2px solid var(--line); border-radius: 6px; padding: 8px 10px; }\n.office-app .tr-input.bad { border-color: var(--danger); background: rgba(203, 37, 43, .18); }\n.office-app .tr-rows { display: grid; gap: 4px; }\n.office-app .tr-row { display: grid; grid-template-columns: minmax(60px, 90px) minmax(0, 1fr) minmax(90px, auto); gap: 8px; align-items: center; }\n.office-app .tr-row b { font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.office-app .tr-row.me b { color: var(--accent-ink); }\n.office-app .tr-row canvas { width: 100%; height: auto; image-rendering: pixelated; border-radius: 4px; }\n.office-app .tr-stat { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }\n";
+const OFFICE_HTML = "<div class=\"wrap\">\n  <header class=\"hud\">\n        <div class=\"stat\"><b id=\"of-s-in\">0</b><span>in office</span></div>\n    <div class=\"stat\"><b id=\"of-s-meet\">0</b><span>in meetings</span></div>\n    <div class=\"stat\"><b id=\"of-s-break\">0</b><span>on break</span></div>\n    <div class=\"stat\"><b id=\"of-s-out\">0</b><span>out of office</span></div>\n    <div class=\"stat live\"><b id=\"of-s-live\">0</b><span>here now</span></div>\n    \n  </header>\n\n  <div class=\"main\">\n    <section class=\"mapcol\" aria-label=\"Office\">\n      <div class=\"screen\">\n        <canvas id=\"of-office\" width=\"688\" height=\"304\" tabindex=\"0\" role=\"img\" aria-label=\"Pixel office map. Click the floor to walk your character there; arrow keys also move.\"></canvas>\n        <div class=\"overlay\" id=\"of-overlay\"></div>\n      </div>\n      <div class=\"banner\" id=\"of-banner\" hidden></div>\n      <form class=\"chatbar\" id=\"of-chatform\" autocomplete=\"off\">\n        <input id=\"of-say\" type=\"text\" maxlength=\"120\" placeholder=\"Say something\u2026 (press Enter)\" aria-label=\"Say something\">\n        <button class=\"btn primary\" type=\"submit\" id=\"of-saybtn\">Say</button>\n      </form>\n      <div class=\"hint\">Click the floor to walk. Arrow keys or WASD work when the map is focused. Your character follows your Hub clock and your In Progress task.</div>\n      <section class=\"card\" aria-labelledby=\"of-h-feed\">\n        <h2 id=\"of-h-feed\">Activity</h2>\n        <div class=\"feed\" id=\"of-feed\"><div class=\"empty\">Nothing yet. Status changes, chat and room moves show up here.</div></div>\n      </section>\n      <section class=\"card race\" aria-labelledby=\"of-h-race\">\n        <h2 id=\"of-h-race\">Deadline Race <span class=\"race-day\" id=\"of-race-day\">\u00b7 today</span></h2>\n        <div class=\"race-note\">Everyone with time blocks today. The runner shows how much of their blocked time is done; the white flag is where their schedule says they should be. Finishing ahead of your deadlines puts you in front.</div>\n        <ol class=\"race-list\" id=\"of-race\"><li class=\"empty\">Loading the race\u2026</li></ol>\n      </section>\n    </section>\n\n    <aside class=\"side\">\n      <section class=\"card\" aria-labelledby=\"of-h-me\">\n        <h2 id=\"of-h-me\">You</h2>\n        <div class=\"me-row\" id=\"of-merow\"><img id=\"of-meimg\" alt=\"\"><div><strong id=\"of-mename\">Connecting\u2026</strong><span id=\"of-mesub\"></span></div></div>\n        <div class=\"picks\" id=\"of-picks\" role=\"group\" aria-label=\"Status\"></div>\n        <div class=\"shiftline\" id=\"of-shiftline\"></div>\n        <div class=\"clockrow\" id=\"of-clockrow\"></div>\n        <label class=\"lbl\" for=\"of-note\">Note (optional, shows instead of your Hub task)\n          <input id=\"of-note\" type=\"text\" maxlength=\"80\" placeholder=\"e.g. Calling sellers, showing 88 Elm St\">\n        </label>\n        <div class=\"chips\" id=\"of-chips\" aria-label=\"Quick tasks\"></div>\n        <div class=\"detect\" id=\"of-detect\"></div>\n        <div class=\"row\">\n          <button class=\"btn primary\" id=\"of-save\" type=\"button\">Save</button>\n        </div>\n        <div class=\"msg\" id=\"of-msg\" role=\"status\"></div>\n        <details class=\"editor\" id=\"of-editor\">\n          <summary>Customize character</summary>\n          <div class=\"edit-body\">\n            <canvas id=\"of-preview\" width=\"48\" height=\"16\" aria-label=\"Character preview from four sides\"></canvas>\n            <div id=\"of-optrows\"></div>\n            <div class=\"row\">\n              <button class=\"btn primary\" id=\"of-savelook\" type=\"button\">Save character</button>\n              <button class=\"btn ghost\" id=\"of-randlook\" type=\"button\">Shuffle</button>\n            </div>\n          </div>\n        </details>\n      </section>\n\n      <section class=\"card\" aria-labelledby=\"of-h-arcade\">\n        <h2 id=\"of-h-arcade\">Arcade <span style=\"color:var(--muted);font-weight:500\">\u00b7 Break room</span></h2>\n        <div class=\"games\" id=\"of-games\"></div>\n        <div class=\"tabs\" id=\"of-lbtabs\" role=\"tablist\" aria-label=\"Leaderboard\"></div>\n        <ol class=\"lb\" id=\"of-lb\"></ol>\n      </section>\n\n      <section class=\"card\" aria-labelledby=\"of-h-roster\">\n        <h2 id=\"of-h-roster\">Who's where</h2>\n        <div id=\"of-roster\"></div>\n      </section>\n    </aside>\n  </div>\n</div>\n\n<div class=\"arcade\" id=\"of-arcade\" hidden role=\"dialog\" aria-modal=\"true\" aria-labelledby=\"of-ag-title\">\n  <div class=\"cab\">\n    <header><h2 id=\"of-ag-title\">Arcade</h2><span id=\"of-ag-score\"></span><button class=\"btn ghost\" id=\"of-ag-close\" type=\"button\">Close</button></header>\n    <canvas id=\"of-agc\" width=\"240\" height=\"240\" tabindex=\"0\" aria-label=\"Game screen\"></canvas>\n    <div id=\"of-ag-panel\" hidden></div>\n    <p id=\"of-ag-msg\" role=\"status\"></p>\n    <div class=\"pad\" id=\"of-ag-pad\"></div>\n  </div>\n</div>\n<div class=\"toasts\" id=\"of-toasts\" aria-live=\"polite\"></div>";
 
 // eslint-disable-next-line no-unused-vars
 async function pageOffice(page) {
@@ -19,16 +19,16 @@ async function pageOffice(page) {
   // same shape backed by the Hub: /api/office/state is polled every second for people, positions, chat and duels.
   const HUB = (() => {
     let last = null, seq = 0, timer = null, stopped = false, first = true;
-    const subs = { desks: [], scores: [], config: [], peers: [], say: [], duel: [] };
+    const subs = { desks: [], scores: [], config: [], peers: [], say: [], duel: [], type: [] };
     const pres = { x: null, y: null, g: null }; let presTimer = null;
     const statusOf = (p) => p.shift === 'off' ? 'out' : p.shift === 'lunch' ? 'lunch' : p.shift === 'break' ? 'break'
       : p.mode === 'meeting' ? 'meeting' : p.mode === 'social' ? 'social' : (p.note || p.task) ? 'focus' : 'available';
     function deliver(kind) {
-      if (!last) return;
+      if (!last || stopped) return;
       const s = last;
       if (kind === 'desks' || !kind) { const docs = s.people.map((p) => ({ id: p.id, exists: true, data: () => ({ status: statusOf(p), note: p.note || (p.task ? p.task.title : ''), updatedAt: Date.now(), joinedAt: p.id, look: p.look, hub: p }) })); subs.desks.forEach((f) => f({ docs })); }
       if (kind === 'scores' || !kind) { const docs = Object.entries(s.scores).map(([id, v]) => ({ id: Number(id), exists: true, data: () => v })); subs.scores.forEach((f) => f({ docs })); }
-      if (kind === 'config' || !kind) subs.config.forEach((f) => f({ exists: true, data: () => ({ ownerId: s.owner_id }) }));
+      if (kind === 'config' || !kind) subs.config.forEach((f) => f({ exists: true, data: () => ({ ownerId: s.owner_id, execIds: s.exec_ids || [] }) }));
       if (kind === 'peers' || !kind) { const peers = s.people.filter((p) => p.pos).map((p) => ({ kind: 'viewer', isMe: p.id === s.me, sameTab: p.id === s.me, by: p.id, peer: 'u' + p.id, guest: false, presence: p.pos })); subs.peers.forEach((f) => f({ peers, joined: [], left: [], updated: [] })); }
     }
     async function poll() {
@@ -39,7 +39,10 @@ async function pageOffice(page) {
         if (stopped) return;
         last = s; deliver();
         if (!first) {
-          for (const e of s.events) if (e.uid !== s.me) subs.say.forEach((f) => f({ by: e.uid, isMe: false, data: { text: e.text } }));
+          for (const e of s.events) {
+            if (e.kind === 'type') subs.type.forEach((f) => f(e, s.me));
+            else if (e.uid !== s.me) subs.say.forEach((f) => f({ by: e.uid, isMe: false, data: { text: e.text } }));
+          }
           for (const m of s.inbox) subs.duel.forEach((f) => f({ by: m.from, isMe: false, data: { ...m.data, to: s.me } }));
         }
         first = false; seq = Math.max(seq, s.seq || 0);
@@ -75,7 +78,7 @@ async function pageOffice(page) {
   })();
 
   // ================= constants =================
-  const TS = 8, MW = 72, MH = 38, W = MW * TS, H = MH * TS;
+  const TS = 8, MW = 86, MH = 38, W = MW * TS, H = MH * TS;
   const RM = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const $ = (id) => document.getElementById('of-' + id);
   const cv = $('office'), ctx = cv.getContext('2d');
@@ -99,11 +102,13 @@ async function pageOffice(page) {
   // What people type in "What are you working on?" decides where they go and what they do.
   // Checked in order; the first match wins.
   const TASKS = [
+    // scheduling is desk work even when it mentions showings or appointments, so it is checked first
+    { id: 'mail',    label: 'Scheduling',        room: 'desk',    does: 'handles scheduling in the Ops Assistant Office', words: ['schedul', 'calendar', 'booking', 'book a', 'reschedul', 'confirm the appointment', 'confirming appointments'] },
     { id: 'field',   label: 'In the field',      room: 'field',   does: 'drives out to the property',          words: ['showing', 'walkthrough', 'walk-through', 'walk through', 'site visit', 'property visit', 'driving', 'drive to', 'inspection', 'appraisal', 'in the field', 'door knock', 'knocking doors', 'photos at', 'meeting a seller', 'meeting the seller', 'seller appointment', 'appointment', 'at the property', 'closing table', 'd4d', 'driving for dollars'] },
     { id: 'meeting', label: 'In a meeting',      room: 'meeting', does: 'heads to the meeting room',           words: ['meeting', 'sync', 'standup', 'stand-up', 'huddle', 'interview', 'training', '1:1', 'one on one', 'one-on-one', 'zoom', 'team call', 'review with'] },
     { id: 'call',    label: 'On the phone',      room: 'desk',    does: 'gets on the phone at the desk',       words: ['call', 'dial', 'phone', 'follow up', 'follow-up', 'followup', 'voicemail', 'negotiat', 'talking to', 'speaking with'] },
     { id: 'paper',   label: 'Doing paperwork',   room: 'desk',    does: 'stamps contracts at the desk',        words: ['contract', 'offer', 'paperwork', 'docs', 'document', 'sign', 'closing', 'title', 'escrow', 'assignment', 'purchase agreement', 'psa', 'loi', 'addendum', 'disclosure', 'emd'] },
-    { id: 'mail',    label: 'Messaging',         room: 'desk',    does: 'fires off emails at the desk',        words: ['email', 'e-mail', 'inbox', 'text', 'sms', 'ghl', 'gohighlevel', 'high level', 'campaign', 'newsletter', 'message', 'dm', 'replying', 'respond'] },
+    { id: 'mail',    label: 'Messaging',         room: 'desk',    does: 'answers messages in the Ops Assistant Office', words: ['schedul', 'calendar', 'admin', 'data entry', 'filing', 'organiz', 'email', 'e-mail', 'inbox', 'text', 'sms', 'ghl', 'gohighlevel', 'high level', 'campaign', 'newsletter', 'message', 'dm', 'replying', 'respond'] },
     { id: 'data',    label: 'Crunching numbers', room: 'desk',    does: 'crunches numbers at the desk',        words: ['comp', 'arv', 'number', 'spreadsheet', 'report', 'data', 'crm', 'lead', 'skip trac', 'list', 'underwrit', 'analy', 'budget', 'bookkeep', 'invoice', 'payroll', 'pipeline', 'repair estimate', 'rehab', 'zillow', 'propstream', 'mls', 'deal analysis'] },
     { id: 'content', label: 'Making content',    room: 'social',  does: 'films in the Social Media room',      words: ['instagram', 'insta', 'tiktok', 'reel', 'post', 'content', 'film', 'video', 'youtube', 'facebook', 'social', 'story', 'stories', 'photo', 'marketing', 'shoot', 'livestream', 'podcast'] },
     { id: 'design',  label: 'Designing',         room: 'social',  does: 'paints at the easel',                 words: ['design', 'canva', 'logo', 'flyer', 'graphic', 'thumbnail', 'paint', 'brochure', 'mailer', 'postcard', 'branding', 'banner'] },
@@ -193,24 +198,26 @@ async function pageOffice(page) {
     { id: 'social',  name: 'Social Media room', x0: 5,  y0: 4,  x1: 20, y1: 13, floor: 'studio' },
     { id: 'lunch',   name: 'Lunch room',        x0: 22, y0: 4,  x1: 37, y1: 13, floor: 'checker' },
     { id: 'meeting', name: 'Meeting room',      x0: 39, y0: 4,  x1: 54, y1: 13, floor: 'carpet' },
-    { id: 'hall',    name: 'Hallway',           x0: 5,  y0: 15, x1: 68, y1: 17, floor: 'hall' },
+    { id: 'hall',    name: 'Hallway',           x0: 5,  y0: 15, x1: 82, y1: 17, floor: 'hall' },
     { id: 'exec',    name: 'Executive Office',  x0: 56, y0: 4,  x1: 68, y1: 13, floor: 'exec' },
+    { id: 'exec2',   name: 'Executive Office 2', x0: 70, y0: 4, x1: 82, y1: 13, floor: 'exec' },
+    { id: 'ops',     name: 'Ops Assistant Office', x0: 56, y0: 19, x1: 82, y1: 28, floor: 'ops' },
     { id: 'data',    name: 'Data Room',         x0: 5,  y0: 19, x1: 29, y1: 28, floor: 'data' },
     { id: 'break',   name: 'Break room',        x0: 31, y0: 19, x1: 54, y1: 28, floor: 'break' },
-    { id: 'parking', name: 'Parking lot',       x0: 0,  y0: 31, x1: 71, y1: 36, floor: 'asphalt' },
+    { id: 'parking', name: 'Parking lot',       x0: 0,  y0: 31, x1: 85, y1: 36, floor: 'asphalt' },
   ];
   const zoneAt = (x, y) => ZONES.find((z) => x >= z.x0 && x <= z.x1 && y >= z.y0 && y <= z.y1) || { id: 'outside', name: 'Outside' };
 
   floor(1, 15, 3, 30, 'path');
   ZONES.forEach((z) => floor(z.x0, z.y0, z.x1, z.y1, z.floor));
-  wall(4, 3, 69, 3); wall(4, 29, 55, 29); wall(4, 3, 4, 29); wall(69, 3, 69, 18);
-  wall(55, 4, 55, 13); wall(55, 19, 55, 29);
-  wall(5, 14, 68, 14); wall(5, 18, 68, 18);
+  wall(4, 3, 83, 3); wall(4, 29, 83, 29); wall(4, 3, 4, 29); wall(83, 3, 83, 29);
+  wall(55, 4, 55, 13); wall(55, 19, 55, 29); wall(69, 4, 69, 13);
+  wall(5, 14, 82, 14); wall(5, 18, 82, 18);
   wall(21, 4, 21, 13); wall(38, 4, 38, 13); wall(30, 19, 30, 28);
   gap(4, 15, 4, 17);
-  gap(12, 14, 13, 14); gap(29, 14, 30, 14); gap(46, 14, 47, 14); gap(61, 14, 62, 14);
-  gap(16, 18, 17, 18); gap(36, 18, 37, 18); gap(49, 18, 50, 18);
-  const STALLS = []; for (let x = 6; x <= 64; x += 2) STALLS.push(x);
+  gap(12, 14, 13, 14); gap(29, 14, 30, 14); gap(46, 14, 47, 14); gap(61, 14, 62, 14); gap(75, 14, 76, 14);
+  gap(16, 18, 17, 18); gap(36, 18, 37, 18); gap(49, 18, 50, 18); gap(68, 18, 69, 18);
+  const STALLS = []; for (let x = 6; x <= 78; x += 2) STALLS.push(x);
   const DOOR_Y = 34;
 
   // ================= furniture (depth-sorted objects) =================
@@ -289,33 +296,38 @@ async function pageOffice(page) {
   add(54, 7, 1, 3, true, () => { R(434, 52, 5, 24, '#2b2b33'); R(435, 54, 3, 20, '#3b5b8c'); R(435, 60, 3, 1, '#d94a4a'); R(435, 64, 2, 1, '#d94a4a'); });
   plant(39, 4); plant(39, 13); plant(54, 13);
 
-  // --- Executive Office (the artifact owner's)
-  FURN.push({ z: 4 * TS + 0.5, draw: () => { // framed Her Haus logo on the wall
-    const X = 470, Y = 15;
-    R(X, Y, 60, 16, '#d4af37'); R(X + 1, Y + 1, 58, 14, '#ffffff');
-    for (let i = 0; i < 5; i++) R(X + 20 - i * 2, Y + 2 + i, 8 + i * 4 + 6, 1, '#0C2E60');
-    for (let i = 0; i < 4; i++) { R(X + 33 - i, Y + 3 + i, 1, 1, '#CB252B'); R(X + 34 + i, Y + 3 + i, 1, 1, '#CB252B'); }
-    ptext('HER', X + 6, Y + 9, '#CB252B'); ptext('HAUS', X + 20, Y + 9, '#0C2E60'); ptext('LLC', X + 39, Y + 9, '#0C2E60');
-  } });
-  add(56, 4, 2, 1, true, () => { R(448, 18, 16, 22, '#3d2416'); for (let r = 0; r < 3; r++) for (let k = 0; k < 4; k++) R(450 + k * 3, 20 + r * 7, 2, 6, ['#CB252B', '#0C2E60', '#EDF2F8', '#d4af37'][(k + r) % 4]); });
-  add(60, 7, 5, 2, true, () => {
-    const X = 480, Y = 56;
-    R(X, Y - 3, 40, 16, '#4a2116'); R(X, Y - 3, 40, 10, '#7a3a28'); R(X, Y - 3, 40, 1, '#94503a'); R(X, Y + 6, 40, 1, '#d4af37');
-    R(X + 26, Y - 13, 12, 9, '#e5e5e5'); R(X + 27, Y - 12, 10, 6, '#0C2E60');
-    for (let i = 0; i < 9; i++) R(X + 28 + i, Y - 8 - Math.round((Math.sin(NOW / 600 + i) * 0.5 + 0.5) * 3), 1, 1, '#CB252B');
-    R(X + 31, Y - 4, 2, 2, '#c9c2b8');
-    R(X + 3, Y + 7, 13, 7, '#0C2E60'); ptext('CEO', X + 4, Y + 8, '#d4af37');
-    R(X + 19, Y - 1, 5, 3, '#2b2b33'); R(X + 3, Y - 2, 3, 3, '#f4f7fb'); R(X + 4, Y - 3, 1, 1, 'rgba(255,255,255,.7)');
-  });
-  add(61, 6, 1, 1, false, () => { const X = 488, Y = 48; R(X - 1, Y - 7, 10, 8, '#CB252B'); R(X, Y - 6, 8, 1, '#e03a40'); R(X, Y + 1, 8, 4, '#8f1a1f'); }, 6 * TS + 1);
-  seat(61, 6, 'down');
-  for (const x of [61, 63]) { seat(x, 10, 'up'); chair(x, 10, 'up'); }
-  add(64, 12, 4, 1, false, () => { const X = 512, Y = 96; R(X - 2, Y - 6, 36, 7, '#0C2E60'); R(X - 2, Y - 6, 36, 2, '#1B4BA8'); R(X, Y + 1, 32, 5, '#143b75'); R(X - 3, Y - 4, 3, 10, '#081f42'); R(X + 32, Y - 4, 3, 10, '#081f42'); }, 12 * TS + 2);
-  for (let x = 64; x <= 67; x++) seat(x, 12, 'down');
-  add(65, 9, 2, 1, true, () => { R(520, 74, 16, 5, '#2b2b33'); R(520, 74, 16, 1, '#5a5a66'); R(524, 72, 3, 3, '#d4af37'); });
-  add(68, 6, 1, 2, true, () => { R(544, 42, 8, 22, '#2b2b33'); R(545, 44, 6, 8, '#3a3a44'); R(546, 45, 1, 3, '#CB252B'); R(548, 45, 1, 3, '#d4af37'); R(550, 45, 1, 3, '#7bd389'); });
-  plant(56, 13); plant(68, 4); plant(68, 13);
-  const EXEC_SEAT = [61, 6];
+  // --- Executive Offices: one each for the first two executive accounts (the second is 14 tiles to the right)
+  const EXEC_SEATS = [];
+  function execOffice(ox) {
+    const dx = ox * TS, n = EXEC_SEATS.length;
+    FURN.push({ z: 4 * TS + 0.5, draw: () => { // framed Her Haus logo on the wall
+      const X = 470 + dx, Y = 15;
+      R(X, Y, 60, 16, '#d4af37'); R(X + 1, Y + 1, 58, 14, '#ffffff');
+      for (let i = 0; i < 5; i++) R(X + 20 - i * 2, Y + 2 + i, 8 + i * 4 + 6, 1, '#0C2E60');
+      for (let i = 0; i < 4; i++) { R(X + 33 - i, Y + 3 + i, 1, 1, '#CB252B'); R(X + 34 + i, Y + 3 + i, 1, 1, '#CB252B'); }
+      ptext('HER', X + 6, Y + 9, '#CB252B'); ptext('HAUS', X + 20, Y + 9, '#0C2E60'); ptext('LLC', X + 39, Y + 9, '#0C2E60');
+    } });
+    add(56 + ox, 4, 2, 1, true, () => { R(448 + dx, 18, 16, 22, '#3d2416'); for (let r = 0; r < 3; r++) for (let k = 0; k < 4; k++) R(450 + dx + k * 3, 20 + r * 7, 2, 6, ['#CB252B', '#0C2E60', '#EDF2F8', '#d4af37'][(k + r + n) % 4]); });
+    add(60 + ox, 7, 5, 2, true, () => {
+      const X = 480 + dx, Y = 56;
+      R(X, Y - 3, 40, 16, '#4a2116'); R(X, Y - 3, 40, 10, '#7a3a28'); R(X, Y - 3, 40, 1, '#94503a'); R(X, Y + 6, 40, 1, '#d4af37');
+      R(X + 26, Y - 13, 12, 9, '#e5e5e5'); R(X + 27, Y - 12, 10, 6, '#0C2E60');
+      for (let i = 0; i < 9; i++) R(X + 28 + i, Y - 8 - Math.round((Math.sin(NOW / 600 + i + n * 2) * 0.5 + 0.5) * 3), 1, 1, '#CB252B');
+      R(X + 31, Y - 4, 2, 2, '#c9c2b8');
+      R(X + 3, Y + 7, 13, 7, '#0C2E60'); ptext('EXEC', X + 2, Y + 8, '#d4af37');
+      R(X + 19, Y - 1, 5, 3, '#2b2b33'); R(X + 3, Y - 2, 3, 3, '#f4f7fb'); R(X + 4, Y - 3, 1, 1, 'rgba(255,255,255,.7)');
+    });
+    add(61 + ox, 6, 1, 1, false, () => { const X = 488 + dx, Y = 48; R(X - 1, Y - 7, 10, 8, '#CB252B'); R(X, Y - 6, 8, 1, '#e03a40'); R(X, Y + 1, 8, 4, '#8f1a1f'); }, 6 * TS + 1);
+    seat(61 + ox, 6, 'down');
+    for (const x of [61, 63]) { seat(x + ox, 10, 'up'); chair(x + ox, 10, 'up'); }
+    add(64 + ox, 12, 4, 1, false, () => { const X = 512 + dx, Y = 96; R(X - 2, Y - 6, 36, 7, '#0C2E60'); R(X - 2, Y - 6, 36, 2, '#1B4BA8'); R(X, Y + 1, 32, 5, '#143b75'); R(X - 3, Y - 4, 3, 10, '#081f42'); R(X + 32, Y - 4, 3, 10, '#081f42'); }, 12 * TS + 2);
+    for (let x = 64; x <= 67; x++) seat(x + ox, 12, 'down');
+    add(65 + ox, 9, 2, 1, true, () => { R(520 + dx, 74, 16, 5, '#2b2b33'); R(520 + dx, 74, 16, 1, '#5a5a66'); R(524 + dx, 72, 3, 3, '#d4af37'); });
+    add(68 + ox, 6, 1, 2, true, () => { R(544 + dx, 42, 8, 22, '#2b2b33'); R(545 + dx, 44, 6, 8, '#3a3a44'); R(546 + dx, 45, 1, 3, '#CB252B'); R(548 + dx, 45, 1, 3, '#d4af37'); R(550 + dx, 45, 1, 3, '#7bd389'); });
+    plant(56 + ox, 13); plant(68 + ox, 4); plant(68 + ox, 13);
+    EXEC_SEATS.push([61 + ox, 6]);
+  }
+  execOffice(0); execOffice(14);
 
   // --- Hallway
   add(54, 15, 1, 1, true, () => { R(434, 112, 6, 8, '#d6dde6'); R(435, 104, 4, 8, '#7fd3ff'); R(435, 104, 4, 2, '#bfe8ff'); });
@@ -365,11 +377,12 @@ async function pageOffice(page) {
   add(54, 26, 1, 2, true, () => { R(432, 202, 8, 22, '#3b5b8c'); R(433, 205, 6, 10, '#bfe8ff'); for (let k = 0; k < 3; k++) { R(434, 206 + k * 3, 1, 2, '#f2c14e'); R(436, 206 + k * 3, 1, 2, '#d94a4a'); } });
   plant(31, 19); plant(54, 28); plant(31, 23);
   // arcade cabinets (walk up and click to play)
-  const ARCADES = [[33, 'snake'], [34, 'dash'], [35, 'duel']];
+  const ARCADES = [[32, 'type'], [33, 'snake'], [34, 'dash'], [35, 'duel']];
   ARCADES.forEach(([x, key], i) => add(x, 19, 1, 1, true, () => {
     const X = x * 8, Y = 19 * 8, f = Math.floor(NOW / 200);
-    R(X, Y - 13, 8, 21, ['#0C2E60', '#CB252B', '#1B4BA8'][i]); R(X, Y - 13, 8, 3, '#f4f7fb'); R(X + 2, Y - 12, 4, 1, i === 1 ? '#0C2E60' : '#CB252B'); R(X, Y - 13, 1, 21, 'rgba(0,0,0,.3)');
+    R(X, Y - 13, 8, 21, ['#143b75', '#0C2E60', '#CB252B', '#1B4BA8'][i]); R(X, Y - 13, 8, 3, '#f4f7fb'); R(X + 2, Y - 12, 4, 1, i === 2 ? '#0C2E60' : '#CB252B'); R(X, Y - 13, 1, 21, 'rgba(0,0,0,.3)');
     R(X + 1, Y - 9, 6, 6, '#0b1020');
+    if (key === 'type') { R(X + 1, Y - 7, 1 + (f % 4), 2, '#4ade80'); if (f % 2) R(X + 2 + (f % 4), Y - 7, 1, 2, '#ffffff'); }
     if (key === 'snake') { R(X + 1 + (f % 4), Y - 6, 2, 1, '#7cf29a'); R(X + 5, Y - 8, 1, 1, '#f2c14e'); }
     if (key === 'dash') { R(X + 2, Y - 7 + (f % 3), 2, 2, '#ffb44c'); R(X + 6 - (f % 5), Y - 9, 1, 2, '#9aa3ad'); R(X + 6 - (f % 5), Y - 5, 1, 2, '#9aa3ad'); }
     if (key === 'duel') { R(X + 2, Y - 7, 1, 3, f % 2 ? '#ff6f7a' : '#7fe0ff'); R(X + 5, Y - 7, 1, 3, f % 2 ? '#7fe0ff' : '#ff6f7a'); }
@@ -378,8 +391,26 @@ async function pageOffice(page) {
   }));
   const arcadeAt = (x, y) => (y === 20 ? ARCADES.find(([ax]) => ax === x)?.[1] : null);
 
+  // --- Ops Assistant Office: where messaging and admin work happens
+  const OPS_DESKS = [];
+  for (const y of [22, 26]) for (const x of [58, 64, 71, 77]) {
+    OPS_DESKS.push([x + 1, y - 1]);
+    add(x, y, 4, 1, true, deskDraw(x, y, 4, -1)); seat(x + 1, y - 1, 'down'); chair(x + 1, y - 1, 'down', '#1B4BA8');
+  }
+  FURN.push({ z: 19 * TS + 0.5, draw: () => { // sticky-note board and a "messages sent" screen on the back wall
+    R(455, 137, 58, 12, '#0C2E60'); R(456, 138, 56, 10, '#f4f7fb');
+    ptext('TO DO', 458, 140, '#0C2E60'); ptext('DONE', 494, 140, '#2f6e3c');
+    const notes = ['#f2c94c', '#ff9eb5', '#9ad0e6', '#b6e3a1'];
+    for (let k = 0; k < 6; k++) R(480 + (k % 3) * 4, 139 + Math.floor(k / 3) * 4, 3, 3, notes[k % 4]);
+    R(587, 137, 50, 12, '#000'); R(588, 138, 48, 10, '#12202e');
+    ptext('SENT ' + (120 + Math.floor(NOW / 2500) % 880), 591, 140, '#4ade80');
+  } });
+  add(81, 19, 2, 1, true, () => { for (const k of [0, 1]) { const X = 648 + k * 8; R(X, 148, 7, 16, '#9aa3ad'); R(X, 148, 7, 1, '#b8c0c8'); R(X + 2, 152, 3, 1, '#5a5a66'); R(X + 2, 158, 3, 1, '#5a5a66'); } });
+  add(56, 23, 1, 2, true, () => { R(448, 178, 8, 14, '#d6d0c4'); R(449, 176, 6, 3, '#2b2b33'); R(450, 184, 4, 1, '#7fe0ff'); R(449, 188, 6, 1, '#f6f3ee'); });
+  plant(56, 19); plant(56, 28); plant(82, 28); plant(82, 23);
+
   // --- outside
-  add(5, 30, 50, 1, true, () => { for (let x = 5; x < 55; x++) { R(x * 8, 240, 8, 7, '#3f7a3a'); R(x * 8 + 1, 238, 6, 4, '#4f8f45'); R(x * 8 + 2, 239, 2, 1, '#67a85a'); } });
+  add(5, 30, 78, 1, true, () => { for (let x = 5; x < 83; x++) { R(x * 8, 240, 8, 7, '#3f7a3a'); R(x * 8 + 1, 238, 6, 4, '#4f8f45'); R(x * 8 + 2, 239, 2, 1, '#67a85a'); } });
   FURN.push({ z: 31 * TS + 1, draw: () => {
     const X = 216, Y = 226;
     R(X + 2, Y + 16, 2, 6, '#0C2E60'); R(X + 44, Y + 16, 2, 6, '#0C2E60');
@@ -389,14 +420,14 @@ async function pageOffice(page) {
     R(X - 1, Y + 8, 50, 11, '#0C2E60'); R(X, Y + 9, 48, 9, '#f4f7fb');
     ptext('HER', X + 3, Y + 11, '#CB252B'); ptext('HAUS', X + 17, Y + 11, '#0C2E60'); ptext('HQ', X + 36, Y + 11, '#CB252B');
   } });
-  const TREES = [[1, 1], [7, 1], [14, 2], [26, 1], [33, 2], [41, 1], [49, 2], [57, 1], [64, 2], [71, 1], [71, 7], [70, 12], [58, 20], [63, 23], [68, 21], [60, 27], [66, 28], [70, 26], [0, 5], [2, 10], [0, 19], [0, 27], [5, 37], [16, 37], [29, 37], [44, 37], [55, 37], [68, 37]];
+  const TREES = [[1, 1], [7, 1], [14, 2], [26, 1], [33, 2], [41, 1], [49, 2], [57, 1], [64, 2], [71, 1], [78, 2], [85, 1], [85, 8], [84, 13], [85, 19], [84, 24], [85, 29], [0, 5], [2, 10], [0, 19], [0, 27], [5, 37], [16, 37], [29, 37], [44, 37], [55, 37], [68, 37], [80, 37]];
   TREES.forEach(([x, y]) => { const pine = hash(x + ':' + y) % 2;
     add(x, y, 1, 1, true, () => { const X = x * 8, Y = y * 8;
       R(X - 1, Y + 6, 10, 2, 'rgba(0,0,0,.2)'); R(X + 3, Y + 1, 2, 7, '#6b4a2e');
       if (pine) { R(X - 2, Y - 2, 12, 4, '#2f6e3c'); R(X - 1, Y - 6, 10, 4, '#357a42'); R(X, Y - 10, 8, 4, '#3f8f4f'); R(X + 2, Y - 13, 4, 3, '#4a9a58'); }
       else { R(X - 3, Y - 12, 14, 12, '#2f6e3c'); R(X - 2, Y - 13, 12, 9, '#3f8f4f'); R(X, Y - 12, 5, 4, '#57a862'); }
     }); });
-  const LAMPS = [3, 12, 21, 30, 39, 48, 57, 65];
+  const LAMPS = [3, 12, 21, 30, 39, 48, 57, 65, 74, 83];
   LAMPS.forEach((x) => add(x, 37, 1, 1, true, () => { const X = x * 8, Y = 37 * 8; R(X + 3, Y - 12, 2, 18, '#0C2E60'); R(X + 1, Y - 14, 6, 3, '#2b2b33'); R(X + 2, Y - 12, 4, 1, night() ? '#ffe9a8' : '#c9c2b8'); }));
 
   // --- cars
@@ -460,6 +491,7 @@ async function pageOffice(page) {
         case 'hall': P(X, Y, 8, 8, '#EDF2F8'); if (y === 16) P(X, Y + 2, 8, 4, '#c9d6e8'); break;
         case 'data': P(X, Y, 8, 8, '#0f2c58'); P(X, Y + 7, 8, 1, '#0b2550'); P(X + 7, Y, 1, 8, '#0b2550'); break;
         case 'break': P(X, Y, 8, 8, (x + y) % 2 ? '#d3deec' : '#c4d2e6'); break;
+        case 'ops': P(X, Y, 8, 8, '#e3eaf4'); P(X + 7, Y, 1, 8, '#d3deec'); P(X, Y + 7, 8, 1, '#d3deec'); break;
         case 'exec': P(X, Y, 8, 8, '#6b4a2e'); P(X, Y + 7, 8, 1, '#5b3d24'); if ((x * 3 + y) % 4 === 0) P(X + 7, Y, 1, 7, '#5b3d24'); break;
       }
     }
@@ -469,7 +501,8 @@ async function pageOffice(page) {
     P(40 * 8, 5 * 8 + 4, 14 * 8, 6 * 8, '#173f8f');
     // executive rug
     P(58 * 8, 5 * 8, 9 * 8, 7 * 8, '#d4af37'); P(58 * 8 + 2, 5 * 8 + 2, 9 * 8 - 4, 7 * 8 - 4, '#a01e23'); P(58 * 8 + 5, 5 * 8 + 5, 9 * 8 - 10, 7 * 8 - 10, '#CB252B');
-    P(61 * 8, 14 * 8 + 1, 16, 6, '#CB252B');
+    P(72 * 8, 5 * 8, 9 * 8, 7 * 8, '#d4af37'); P(72 * 8 + 2, 5 * 8 + 2, 9 * 8 - 4, 7 * 8 - 4, '#a01e23'); P(72 * 8 + 5, 5 * 8 + 5, 9 * 8 - 10, 7 * 8 - 10, '#CB252B');
+    P(61 * 8, 14 * 8 + 1, 16, 6, '#CB252B'); P(75 * 8, 14 * 8 + 1, 16, 6, '#CB252B'); P(68 * 8, 18 * 8 + 1, 16, 6, '#0C2E60');
     // breakdance cardboard
     P(37 * 8, 23 * 8, 4 * 8, 3 * 8, '#c49a6c'); P(37 * 8 + 2, 23 * 8 + 2, 4 * 8 - 4, 3 * 8 - 4, '#b88d5f'); P(37 * 8, 24 * 8 + 4, 4 * 8, 1, '#a07a50');
     // break room mess
@@ -513,7 +546,8 @@ async function pageOffice(page) {
     visit: [[7, 16], [9, 16], [11, 16], [19, 16], [23, 16], [26, 16], [33, 16], [40, 16]],
     over: [],
   };
-  for (let x = 8; x < 67; x += 3) if (!SOLID[idx(x, 15)]) SPOTS.over.push([x, 15]);
+  for (let x = 8; x < 81; x += 3) if (!SOLID[idx(x, 15)]) SPOTS.over.push([x, 15]);
+  SPOTS.ops = OPS_DESKS.slice();
 
   // ================= state =================
   const SAMPLE = [];
@@ -521,7 +555,7 @@ async function pageOffice(page) {
   const state = {
     real: [], profiles: {}, myId: null,
     peerPos: new Map(), peerGame: new Map(), online: new Set(), watching: 0, scores: new Map(),
-    selected: null, deskOwners: [], spots: new Map(), stalls: new Map(), staff: [], sample: false, ownerId: null,
+    selected: null, deskOwners: [], spots: new Map(), stalls: new Map(), staff: [], sample: false, ownerId: null, execIds: [],
   };
   const chars = new Map();
   const exiting = new Set(), arriving = new Set(), spawnAt = new Map(), lastEff = new Map();
@@ -718,18 +752,24 @@ async function pageOffice(page) {
 
   // ================= placement =================
   function reconcile() {
+    if (!root.isConnected) return;
     const list = people();
     const staff = list.filter((p) => !p.visitor).sort((a, b) => (a.joinedAt || 0) - (b.joinedAt || 0) || String(a.id).localeCompare(String(b.id)));
     const pools = Object.fromEntries(Object.entries(SPOTS).map(([k, v]) => [k, v.slice()]));
     const spots = new Map(), stalls = new Map();
-    const deskers = staff.filter((p) => p.id !== state.ownerId);
+    const deskers = staff.filter((p) => !state.execIds.includes(p.id));
+    const isOps = (p) => /operation|\bops\b/i.test((p.hub && p.hub.position) || '');
     const deskIdx = new Map(deskers.map((p, i) => [p.id, i]));
     const deskAnim = (p) => ({ call: 'call', paper: 'paper', mail: 'mail', data: 'data' }[taskOf(p)?.id] || null);
     const place = (p) => {
       if (isGone(p)) return null;
       const room = roomFor(p);
-      if (room === 'desk' || (p.visitor && p.id === state.ownerId && room !== 'meeting' && room !== 'lunch' && room !== 'break' && room !== 'social')) {
-        if (p.id === state.ownerId) return [...EXEC_SEAT, deskAnim(p) || 'boss'];
+      if (room === 'desk') {
+        const ei = state.execIds.indexOf(p.id);
+        if (ei >= 0 && ei < EXEC_SEATS.length) return [...EXEC_SEATS[ei], deskAnim(p) || 'boss'];
+        if (taskOf(p)?.id === 'mail' || isOps(p)) {          // messaging work and ops assistants: Ops Assistant Office
+          const o = pools.ops.shift(); if (o) return [...o, deskAnim(p) || 'mail'];
+        }
         if (p.visitor) return pools.visit.shift() || pools.over.shift();
         const i = deskIdx.get(p.id);
         return i < DESKS.length ? [...DESKS[i], deskAnim(p) || 'type'] : pools.over.shift();
@@ -855,7 +895,7 @@ async function pageOffice(page) {
           const sk = LOOKS.skin[lookOf(p).skin];
           R(X + (k % 2), FY - 5, 2, 1, sk); R(X + 6 - (k % 2), FY - 5, 2, 1, sk);
           const g = c.id === state.myId ? arcade.open : state.peerGame.get(c.id);
-          if ((t / 1000 + h) % 4 < 1.2) wordBubble(X + 4, FY - 13, { snake: 'SNAKE', dash: 'DASH', duel: 'DUEL' }[g] || 'GAME', '#0C2E60');
+          if ((t / 1000 + h) % 4 < 1.2) wordBubble(X + 4, FY - 13, { snake: 'SNAKE', dash: 'DASH', duel: 'DUEL', type: 'TYPE' }[g] || 'GAME', '#0C2E60');
         };
         break;
       }
@@ -975,6 +1015,8 @@ async function pageOffice(page) {
     stepParts(dt);
     sim(dt);
     if (arcade.game) { arcade.game.update(dt); arcade.game.draw(); }
+    if (RACE.rows.size) drawRace(t);
+    if (arcade.open === 'type') { drawTypeLanes(t); if (TR.race && TR.race.state === 'countdown') { const c = $('ag-panel').querySelector('.tr-count'); if (c) c.textContent = String(Math.max(1, Math.ceil(TR.race.start_at - trNow()))); } }
     draw(t, dt);
     positionOverlay();
     requestAnimationFrame(loop);
@@ -1023,11 +1065,17 @@ async function pageOffice(page) {
     s.style.top = ((z.y0 * TS - (z.id === 'parking' ? 4 : 6)) / H * 100) + '%';
     overlay.appendChild(s);
   });
-  { const s = document.createElement('div'); s.className = 'sign'; s.textContent = 'Arcade'; s.style.left = (34.5 * TS / W * 100) + '%'; s.style.top = ((19 * TS - 16) / H * 100) + '%'; overlay.appendChild(s); }
-  const execSign = document.createElement('div'); execSign.className = 'sign'; execSign.style.left = (62.5 * TS / W * 100) + '%'; execSign.style.top = ((14 * TS + 4) / H * 100) + '%'; execSign.style.background = '#CB252B'; overlay.appendChild(execSign);
+  { const s = document.createElement('div'); s.className = 'sign'; s.textContent = 'Arcade'; s.style.left = (34 * TS / W * 100) + '%'; s.style.top = ((19 * TS - 16) / H * 100) + '%'; overlay.appendChild(s); }
+  const execSigns = EXEC_SEATS.map((_, k) => {
+    const el = document.createElement('div'); el.className = 'sign'; el.style.background = '#CB252B';
+    el.style.left = ((62.5 + 14 * k) * TS / W * 100) + '%'; el.style.top = ((14 * TS + 4) / H * 100) + '%';
+    overlay.appendChild(el); return el;
+  });
   function renderExecSign() {
-    const o = state.ownerId && personById(state.ownerId);
-    execSign.textContent = o ? (o.id === state.myId ? 'Your office' : firstName(o) + '’s office') : 'Executive Office';
+    execSigns.forEach((el, k) => {
+      const id = state.execIds[k], o = id && personById(id);
+      el.textContent = o ? (o.id === state.myId ? 'Your office' : firstName(o) + '’s office') : 'Executive Office';
+    });
   }
   function buildTags() {
     tags.forEach((el) => el.remove()); tags.clear();
@@ -1076,7 +1124,7 @@ async function pageOffice(page) {
     const sig = list.map((p) => p.id + ':' + where(p) + ':' + labelOf(p) + ':' + p.note + ':' + (state.ownerId || '') + ':' + (state.online.has(p.id) ? 1 : 0) + ':' + (state.selected === p.id ? 1 : 0) + ':' + nameOf(p) + ':' + ago(p.updatedAt)).join('|');
     if (sig === rosterSig && !force) return; rosterSig = sig;
     const box = $('roster'); box.textContent = '';
-    const order = ['exec', 'data', 'meeting', 'social', 'lunch', 'break', 'hall', 'parking', 'field', 'outside', 'out'];
+    const order = ['exec', 'exec2', 'ops', 'data', 'meeting', 'social', 'lunch', 'break', 'hall', 'parking', 'field', 'outside', 'out'];
     const names = { out: 'Drove home', field: 'In the field', ...Object.fromEntries(ZONES.map((z) => [z.id, z.name])), outside: 'Outside' };
     for (const zid of order) {
       const ps = list.filter((p) => where(p) === zid).sort((a, b) => firstName(a).localeCompare(firstName(b)));
@@ -1341,6 +1389,7 @@ async function pageOffice(page) {
     snake: { name: 'Data Snake',    blurb: 'Eat the coins. Don’t hit the walls or yourself.', unit: 'coins' },
     dash:  { name: 'Deadline Dash', blurb: 'Flap through the filing cabinets.',               unit: 'cabinets' },
     duel:  { name: 'Office Duel',   blurb: 'Stapler, Memo, Scissors. First to 3.',            unit: 'wins' },
+    type:  { name: 'Type Race',     blurb: 'Race your teammates typing a seller script. 2+ players.', unit: 'WPM' },
   };
   const arcade = { open: null, game: null };
   let pendingGame = null, lbTab = 'snake';
@@ -1370,7 +1419,7 @@ async function pageOffice(page) {
     $('ag-title').textContent = GAMES[key].name;
     setScore('');
     const pad = $('ag-pad'); pad.textContent = ''; pad.className = 'pad';
-    const isDuel = key === 'duel';
+    const isDuel = key === 'duel' || key === 'type';   // panel games (no canvas, no d-pad)
     ag.hidden = isDuel; $('ag-panel').hidden = !isDuel;
     if (key === 'snake') {
       [['u', '▲', 'up'], ['l', '◀', 'left'], ['d', '▼', 'down'], ['r', '▶', 'right']].forEach(([c, t, k]) => {
@@ -1383,12 +1432,13 @@ async function pageOffice(page) {
       const b = document.createElement('button'); b.type = 'button'; b.textContent = 'FLAP';
       b.addEventListener('pointerdown', (e) => { e.preventDefault(); arcade.game?.key('action'); }); pad.appendChild(b);
       arcade.game = Dash();
-    } else { arcade.game = null; duelReset(); }
+    } else if (key === 'type') { arcade.game = null; typeOpen(); } else { arcade.game = null; duelReset(); }
     pad.hidden = isDuel;
     if (room) room.presence({ g: key }).catch(() => {});
     (isDuel ? $('ag-close') : ag).focus();
   }
   function closeGame() {
+    if (arcade.open === 'type') typeClose();
     if (arcade.open === 'duel' && duel.view === 'match' && !duel.cpu) duelSend('bye');
     if (arcade.open === 'duel' && duel.view === 'waiting') duelSend('bye');
     arcade.open = null; arcade.game = null; duel.view = 'lobby';
@@ -1655,6 +1705,163 @@ async function pageOffice(page) {
     const timer = setTimeout(done, 25000);
   }
 
+  // ---- Type Race: everyone types the same seller script; the server keeps the race and the results
+  const TR = { race: null, offset: 0, key: '', poll: null, sentPos: 0, pending: 0, sendTimer: null, rows: new Map(), err: '' };
+  async function trCall(method, url, body) {
+    try { const r = await api(method, url, body); TR.offset = r.now - Date.now() / 1000; TR.race = r.race; TR.err = ''; return r; }
+    catch (e) { TR.err = e.message || 'Connection problem'; return null; }
+  }
+  const trNow = () => Date.now() / 1000 + TR.offset;
+  const trMine = () => TR.race && TR.race.players.find((p) => p.id === state.myId);
+  async function typeOpen() {
+    TR.key = ''; TR.sentPos = 0; TR.pending = 0; $('ag-panel').textContent = '';
+    agMsg('Joining the race…');
+    await trCall('POST', '/api/office/type/join', {});
+    renderType();
+    clearInterval(TR.poll);
+    TR.poll = setInterval(async () => {
+      if (arcade.open !== 'type' || cleaned) { clearInterval(TR.poll); return; }
+      await trCall('GET', '/api/office/type'); renderType();
+    }, 450);
+  }
+  function typeClose() {
+    clearInterval(TR.poll); clearTimeout(TR.sendTimer); TR.sendTimer = null;
+    const mine = trMine();
+    if (mine && !mine.done) api('POST', '/api/office/type/leave', {}).catch(() => {});
+    TR.key = '';
+  }
+  function sendPos(pos) {
+    TR.pending = pos;
+    const go = async () => {
+      TR.sendTimer = null;
+      if (TR.pending <= TR.sentPos) return;
+      TR.sentPos = TR.pending;
+      const r = await trCall('POST', '/api/office/type/progress', { pos: TR.sentPos });
+      if (r) { renderType(); if (r.won) toast('You won the Type Race!', 'ok'); }
+    };
+    if (TR.race && pos >= TR.race.length) { clearTimeout(TR.sendTimer); go(); return; }   // the last key goes out at once
+    if (!TR.sendTimer) TR.sendTimer = setTimeout(go, 160);
+  }
+  function renderType() {
+    if (arcade.open !== 'type') return;
+    const r = TR.race, mine = trMine(), box = $('ag-panel');
+    const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+    const btn = (label, cls, fn) => { const b = el('button', 'btn ' + cls, label); b.type = 'button'; b.addEventListener('click', fn); return b; };
+    const key = r ? r.id + ':' + r.state + ':' + !!mine : 'none:' + TR.err;
+    const rebuild = key !== TR.key; TR.key = key;
+    if (!r) {
+      if (rebuild) { box.textContent = ''; box.append(el('div', 'reveal', TR.err || 'No race right now.'), btn('Open a new race', 'primary', typeOpen)); }
+      agMsg(TR.err ? '' : 'Open a race and everyone in the Office gets an invite.'); setScore(''); return;
+    }
+    if (rebuild) {
+      box.textContent = ''; TR.rows.clear();
+      if (r.state === 'lobby') {
+        box.append(el('div', 'reveal', 'Waiting for racers…'));
+        box.append(el('div', 'tr-rows', null));
+        const row = el('div', 'row');
+        if (mine) row.append(btn('Start race', 'primary', async () => { await trCall('POST', '/api/office/type/start', {}); renderType(); }));
+        row.append(btn('Leave', 'ghost', closeGame));
+        box.append(row);
+      } else if (r.state === 'countdown' || r.state === 'racing') {
+        box.append(el('div', 'tr-count', ''));
+        if (mine) {
+          const ph = el('div', 'tr-phrase'); ph.id = 'of-tr-phrase'; box.append(ph);
+          const inp = el('input', 'tr-input'); inp.id = 'of-tr-input'; inp.type = 'text'; inp.autocomplete = 'off'; inp.spellcheck = false;
+          inp.setAttribute('autocapitalize', 'off'); inp.setAttribute('aria-label', 'Type the script'); inp.placeholder = 'Get ready…';
+          inp.disabled = r.state !== 'racing';
+          inp.addEventListener('paste', (e) => e.preventDefault());
+          inp.addEventListener('input', () => {
+            const ph2 = TR.race && TR.race.phrase; if (!ph2) return;
+            const v = inp.value, ok = ph2.startsWith(v);
+            inp.classList.toggle('bad', !ok);
+            let n = 0; while (n < v.length && v[n] === ph2[n]) n++;
+            drawPhrase(n);
+            if (n > TR.sentPos || n > TR.pending) sendPos(n);           // the correctly typed part counts, even with a typo after it
+            if (ok && v.length >= ph2.length) inp.disabled = true;
+          });
+          box.append(inp);
+          if (r.state === 'racing') setTimeout(() => inp.focus(), 0);
+        } else box.append(el('div', 'reveal', 'This race already started. Watch, then join the next one.'));
+        box.append(el('div', 'tr-rows', null));
+      } else {
+        box.append(el('div', 'reveal', 'Results'));
+        box.append(el('div', 'tr-rows', null));
+        box.append(el('div', 'row', null));
+        box.lastChild.append(btn('Race again', 'primary', typeOpen), btn('Close', 'ghost', closeGame));
+      }
+    }
+    // live bits
+    const rowsBox = box.querySelector('.tr-rows');
+    const players = r.state === 'done' ? r.players.slice().sort((a, b) => (a.place || 99) - (b.place || 99) || b.pos - a.pos) : r.players;
+    const sig = players.map((p) => p.id).join(',');
+    if (rowsBox && rowsBox.dataset.sig !== sig) {
+      rowsBox.dataset.sig = sig; rowsBox.textContent = ''; TR.rows.clear();
+      players.forEach((p) => {
+        const person = personById(p.id);
+        const row = el('div', 'tr-row' + (p.id === state.myId ? ' me' : ''));
+        const nm = el('b', null, p.id === state.myId ? 'You' : person ? firstName(person) : 'Someone');
+        const cvs = el('canvas'); cvs.width = 200; cvs.height = 24; cvs.setAttribute('aria-hidden', 'true');
+        const st = el('span', 'tr-stat', '');
+        row.append(nm, cvs, st); rowsBox.append(row);
+        TR.rows.set(p.id, { g: cvs.getContext('2d'), st });
+      });
+    }
+    const t = trNow();
+    players.forEach((p) => {
+      const row = TR.rows.get(p.id); if (!row) return;
+      const live = r.state === 'racing' && !p.done ? Math.round((p.pos / 5) / Math.max(1 / 60, (t - r.start_at) / 60)) : p.wpm;
+      row.st.textContent = p.done ? (p.place === 1 ? '1st · ' : p.place === 2 ? '2nd · ' : p.place === 3 ? '3rd · ' : '#' + p.place + ' · ') + p.wpm + ' WPM'
+        : r.state === 'lobby' ? (p.id === r.host ? 'host' : 'ready') : r.state === 'done' ? 'did not finish' : (live || 0) + ' WPM';
+      row.p = p;
+    });
+    const cnt = box.querySelector('.tr-count');
+    if (cnt) cnt.textContent = r.state === 'countdown' ? String(Math.max(1, Math.ceil(r.start_at - t))) : r.state === 'racing' ? 'GO!' : '';
+    const inp = $('tr-input');
+    if (inp && r.state === 'racing' && inp.disabled && !(mine && mine.done) && inp.value.length < r.length) { inp.disabled = false; inp.placeholder = 'Type here'; inp.focus(); }
+    if ($('tr-phrase') && !$('tr-phrase').dataset.ready && r.phrase) { $('tr-phrase').dataset.ready = '1'; drawPhrase(0); }
+    setScore(r.state === 'lobby' ? r.players.length + ' in' : r.state === 'done' ? 'Finished' : mine ? Math.round((mine.pos / Math.max(1, r.length)) * 100) + '%' : '');
+    agMsg(r.state === 'lobby' ? (mine && r.players.length < 2 ? 'Everyone with the Office open got an invite. You can start alone, but it’s more fun with 2+.' : 'Start when everyone’s in.')
+      : r.state === 'done' ? 'Best WPM goes on the Type Race leaderboard.' : 'Type the script exactly. Mistakes turn the box red until you fix them.');
+  }
+  function drawPhrase(n) {
+    const el = $('tr-phrase'), ph = TR.race && TR.race.phrase; if (!el || !ph) return;
+    el.textContent = '';
+    const a = document.createElement('span'); a.className = 'ok'; a.textContent = ph.slice(0, n);
+    const c = document.createElement('span'); c.className = 'cur'; c.textContent = ph.slice(n, n + 1);
+    const b = document.createElement('span'); b.className = 'rest'; b.textContent = ph.slice(n + 1);
+    el.append(a, c, b);
+  }
+  function drawTypeLanes(t) {
+    const r = TR.race; if (!r) return;
+    TR.rows.forEach((row, id) => {
+      const p = row.p; if (!p) return;
+      const g = row.g; g.imageSmoothingEnabled = false;
+      const P = (x, y, w, h, c) => { g.fillStyle = c; g.fillRect(x, y, w, h); };
+      P(0, 0, 200, 24, '#0b2550'); P(0, 3, 200, 18, '#143b75'); P(0, 3, 200, 1, '#f4f7fb'); P(0, 20, 200, 1, '#f4f7fb');
+      for (let x = 14; x < 186; x += 12) P(x, 11, 5, 1, 'rgba(255,255,255,.3)');
+      P(10, 3, 1, 18, '#f4f7fb');
+      for (let y = 3; y < 21; y += 2) { P(186, y, 2, 2, (y / 2) % 2 ? '#fff' : '#111'); P(188, y, 2, 2, (y / 2) % 2 ? '#111' : '#fff'); }
+      const frac = Math.min(1, p.pos / Math.max(1, r.length)), x = Math.round(6 + frac * 170);
+      const person = personById(id), L = person ? lookOf(person) : defaultLook(id);
+      const running = r.state === 'racing' && !p.done && !RM;
+      drawChar(g, x, 21 + (p.done && !RM && Math.floor(t / 300) % 2 ? -1 : 0), L, p.done ? 'down' : 'right', running ? 'walk' : 'stand', Math.floor(t / 90), { armsUp: p.done, mouth: p.done });
+      if (p.place === 1) { P(x + 10, 6, 5, 4, '#f2c94c'); P(x + 11, 10, 3, 2, '#f2c94c'); P(x + 10, 12, 5, 1, '#d4af37'); }
+    });
+  }
+  function typeToast(from) {
+    const p = personById(from); if (!p || arcade.open === 'type') return;
+    const t = document.createElement('div'); t.className = 'toast';
+    const tx = document.createElement('div'); tx.textContent = firstName(p) + ' opened a Type Race. Want in?';
+    const row = document.createElement('div'); row.className = 'row';
+    const ok = document.createElement('button'); ok.type = 'button'; ok.className = 'btn primary'; ok.textContent = 'Join race';
+    const no = document.createElement('button'); no.type = 'button'; no.className = 'btn ghost'; no.textContent = 'Not now';
+    const done = () => { clearTimeout(timer); t.remove(); };
+    ok.addEventListener('click', () => { done(); goPlay('type'); });
+    no.addEventListener('click', done);
+    row.append(ok, no); t.append(tx, row); $('toasts').appendChild(t);
+    const timer = setTimeout(done, 30000);
+  }
+
   // ---- scores + leaderboard
   let scoreChain = Promise.resolve();
   function writeScore(key, value) {
@@ -1666,6 +1873,7 @@ async function pageOffice(page) {
   }
   const topScores = (key) => [...state.scores.entries()].map(([id, s]) => ({ id, v: num(s[key]) })).filter((r) => r.v > 0).sort((a, b) => b.v - a.v).slice(0, 5);
   function renderArcade() {
+    if (!root.isConnected) return;   // a late update for an Office page that's already closed
     const gbox = $('games'); gbox.textContent = '';
     for (const [, key] of ARCADES) {
       const b = document.createElement('button'); b.type = 'button'; b.className = 'game';
@@ -1763,12 +1971,12 @@ async function pageOffice(page) {
         reconcile();
       }, (e) => { if (e && e.code !== 'revoked') msg('Live updates stopped. Reload the page to reconnect.', true); });
       db.doc('config/office').onSnapshot((d) => {
-        const id = d.data()?.ownerId;
-        if (id && id !== state.ownerId) { state.ownerId = id; reconcile(); }
+        const id = d.data()?.ownerId, ex = d.data()?.execIds || [];
+        if (id !== state.ownerId || ex.join() !== state.execIds.join()) { state.ownerId = id; state.execIds = ex; reconcile(); }
       });
       db.collection('scores').onSnapshot(async (snap) => {
         const m = new Map();
-        for (const d of snap.docs) if (d.exists) { const v = d.data() || {}; m.set(d.id, { snake: num(v.snake), dash: num(v.dash), duel: num(v.duel) }); }
+        for (const d of snap.docs) if (d.exists) { const v = d.data() || {}; m.set(d.id, { snake: num(v.snake), dash: num(v.dash), duel: num(v.duel), type: num(v.type) }); }
         state.scores = m;
         await resolveProfiles();
         renderArcade();
@@ -1794,6 +2002,7 @@ async function pageOffice(page) {
         if (arcade.open === 'duel' && duel.view === 'lobby') renderDuel();
       }, () => {});
       room.on('duel', onDuelMsg, () => {});
+      room.on('type', (e, me) => { const p = personById(e.uid); if (!p) return; log(p, e.text); if (e.what === 'open' && e.uid !== me) typeToast(e.uid); if (e.what === 'win') HUB.refresh(); }, () => {});
       room.on('say', (m) => {
         if (m.isMe || !m.by) return;
         const text = String(m.data?.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
@@ -1806,8 +2015,79 @@ async function pageOffice(page) {
     }
   }
 
+
+  // ================= Deadline Race =================
+  const RACE = { data: null, rows: new Map(), timer: null, prev: new Map() };
+  const hm = (v) => { if (!v) return ''; const [h, mm] = v.split(':').map(Number); return ((h % 12) || 12) + ':' + String(mm).padStart(2, '0') + (h < 12 ? ' AM' : ' PM'); };
+  const mins = (m) => { m = Math.abs(m); return m >= 60 ? Math.floor(m / 60) + 'h ' + (m % 60) + 'm' : m + 'm'; };
+  async function loadRace() {
+    if (cleaned) return;
+    try {
+      const d = await api('GET', '/api/office/race');
+      for (const r of d.racers) {   // announce finishers in the activity feed
+        const was = RACE.prev.get(r.id);
+        if (RACE.data && was && was !== 'finished' && r.state === 'finished') { const p = personById(r.id); if (p) log(p, 'crossed the Deadline Race finish line' + (r.ahead_min > 0 ? ', ' + mins(r.ahead_min) + ' ahead' : '')); }
+        RACE.prev.set(r.id, r.state);
+      }
+      RACE.data = d; renderRace();
+    } catch (_) { /* try again next round */ }
+    if (!cleaned) RACE.timer = setTimeout(loadRace, 20000);
+  }
+  function renderRace() {
+    const box = $('race'); box.textContent = ''; RACE.rows.clear();
+    const d = RACE.data;
+    try { $('race-day').textContent = '· ' + new Date(d.date + 'T12:00:00').toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' }); } catch (_) { /* keep "today" */ }
+    if (!d.racers.length) {
+      const li = document.createElement('li'); li.className = 'empty';
+      li.textContent = 'Nobody has time blocks today. Add a time block to a task (open the task, set the date and start and end time) to join the race.';
+      box.appendChild(li); return;
+    }
+    for (const r of d.racers) {
+      const li = document.createElement('li'); li.className = 'row-r' + (r.id === state.myId ? ' me' : '');
+      const medal = document.createElement('span'); medal.className = 'medal' + (r.rank <= 3 ? ' g' + r.rank : ''); medal.textContent = r.rank;
+      const nm = document.createElement('div'); nm.className = 'rname';
+      const b = document.createElement('b'); b.textContent = r.id === state.myId ? 'You' : r.name;
+      const sub = document.createElement('span');
+      sub.textContent = r.state === 'finished' ? 'All ' + r.blocks + ' blocks done' : r.now ? 'Now: ' + r.now.title + ' (' + hm(r.now.start) + '–' + hm(r.now.end) + ')' : r.next ? 'Next: ' + r.next.title + ' at ' + hm(r.next.start) : 'Between blocks';
+      sub.title = sub.textContent; nm.append(b, sub);
+      const cvs = document.createElement('canvas'); cvs.width = 200; cvs.height = 24; cvs.setAttribute('aria-hidden', 'true');
+      const st = document.createElement('div'); st.className = 'rstat';
+      const top = document.createElement('b'); top.textContent = r.done + '/' + r.blocks + ' blocks';
+      const ah = document.createElement('span');
+      if (r.ahead_min > 0) { ah.className = 'ahead'; ah.textContent = mins(r.ahead_min) + ' ahead'; }
+      else if (r.ahead_min < 0) { ah.className = 'behind'; ah.textContent = mins(r.ahead_min) + ' behind'; }
+      else ah.textContent = r.state === 'finished' ? 'right on time' : 'on schedule';
+      st.append(top, ah);
+      li.append(medal, nm, cvs, st);
+      li.title = (r.id === state.myId ? 'You' : r.name) + ': ' + Math.round(r.progress * 100) + '% of today’s blocked time done, plan says ' + Math.round(r.pace * 100) + '% by now';
+      li.addEventListener('click', () => { if (chars.has(r.id) || personById(r.id)) select(r.id); });
+      box.appendChild(li);
+      RACE.rows.set(r.id, { r, g: cvs.getContext('2d') });
+    }
+  }
+  function drawRace(t) {
+    RACE.rows.forEach(({ r, g }) => {
+      g.imageSmoothingEnabled = false;
+      const P = (x, y, w, h, c) => { g.fillStyle = c; g.fillRect(x, y, w, h); };
+      P(0, 0, 200, 24, '#9c2a26'); P(0, 3, 200, 18, '#b8322d'); P(0, 3, 200, 1, '#f4f7fb'); P(0, 20, 200, 1, '#f4f7fb');
+      for (let x = 14; x < 186; x += 12) P(x, 11, 5, 1, 'rgba(255,255,255,.35)');
+      P(10, 3, 1, 18, '#f4f7fb');                                     // start line
+      for (let y = 3; y < 21; y += 2) { P(186, y, 2, 2, (y / 2) % 2 ? '#fff' : '#111'); P(188, y, 2, 2, (y / 2) % 2 ? '#111' : '#fff'); }   // finish
+      const span = 170, x0 = 10;
+      const px = Math.round(x0 + Math.min(1, r.pace) * span);            // where the plan says they should be
+      if (r.state !== 'finished') { P(px, 3, 1, 9, '#fff'); P(px + 1, 3, 4, 3, '#fff'); }
+      const p = personById(r.id), L = p ? lookOf(p) : defaultLook(r.id);
+      const x = Math.round(x0 - 4 + Math.min(1, r.progress) * span);
+      const running = r.state !== 'finished' && !!r.now && !RM;
+      const hop = r.state === 'finished' && !RM && Math.floor(t / 300) % 2 ? -1 : 0;
+      drawChar(g, x, 21 + hop, L, r.state === 'finished' ? 'down' : 'right', running ? 'walk' : 'stand', Math.floor(t / 110), { armsUp: r.state === 'finished', mouth: r.state === 'finished', pale: r.state === 'late', noShadow: false });
+      if (r.state === 'finished' && r.rank === 1) { P(x + 10, 6, 5, 4, '#f2c94c'); P(x + 11, 10, 3, 2, '#f2c94c'); P(x + 10, 12, 5, 1, '#d4af37'); }
+      if (r.state === 'late' && Math.floor(t / 400) % 2) { P(x + 9, 5, 1, 4, '#ff6b70'); P(x + 9, 10, 1, 1, '#ff6b70'); }
+    });
+  }
   const tick = setInterval(() => { if (!root.isConnected) return cleanup(); renderRoster(); renderStats(); renderMe(); }, 2000);
   let cleaned = false;
-  function cleanup() { if (cleaned) return; cleaned = true; HUB.stop(); window.removeEventListener('keydown', onKey); clearInterval(tick); ro.disconnect(); }
+  function cleanup() { if (cleaned) return; cleaned = true; HUB.stop(); window.removeEventListener('keydown', onKey); clearInterval(tick); clearTimeout(RACE.timer); ro.disconnect(); }
   boot();
+  loadRace();
 }
