@@ -150,6 +150,9 @@ CREATE TABLE IF NOT EXISTS metrics(
 CREATE TABLE IF NOT EXISTS resources(
   id INTEGER PRIMARY KEY, owner_id INTEGER, title TEXT, url TEXT DEFAULT '', category TEXT DEFAULT 'General',
   description TEXT DEFAULT '', shared INTEGER DEFAULT 0, file_id INTEGER, created_at TEXT);
+CREATE TABLE IF NOT EXISTS resource_shares(
+  resource_id INTEGER NOT NULL REFERENCES resources(id) ON DELETE CASCADE, user_id INTEGER NOT NULL, created_at TEXT,
+  PRIMARY KEY(resource_id, user_id));
 CREATE TABLE IF NOT EXISTS task_followers(
   task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, user_id INTEGER NOT NULL, created_at TEXT,
   PRIMARY KEY(task_id, user_id));
@@ -227,6 +230,9 @@ CREATE TABLE IF NOT EXISTS metrics(
 CREATE TABLE IF NOT EXISTS resources(
   id SERIAL PRIMARY KEY, owner_id INTEGER, title TEXT, url TEXT DEFAULT '', category TEXT DEFAULT 'General',
   description TEXT DEFAULT '', shared INTEGER DEFAULT 0, file_id INTEGER, created_at TEXT);
+CREATE TABLE IF NOT EXISTS resource_shares(
+  resource_id INTEGER NOT NULL REFERENCES resources(id) ON DELETE CASCADE, user_id INTEGER NOT NULL, created_at TEXT,
+  PRIMARY KEY(resource_id, user_id));
 CREATE TABLE IF NOT EXISTS task_followers(
   task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, user_id INTEGER NOT NULL, created_at TEXT,
   PRIMARY KEY(task_id, user_id));
@@ -253,13 +259,13 @@ CREATE TABLE IF NOT EXISTS recurring_rules(
 # Copy order respects foreign keys (parents first).
 PG_TABLES = ["users", "clients", "time_entries", "breaks", "tasks", "task_links", "files", "eods", "incidents", "kpis",
              "wins", "metrics", "resources", "settings", "task_comments", "notifications", "recurring_rules",
-             "task_followers", "comment_reactions"]
+             "task_followers", "comment_reactions", "resource_shares"]
 PG_MIGRATIONS = ["ALTER TABLE tasks ADD COLUMN IF NOT EXISTS deadline_reminded TEXT",
                  "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS actor_label TEXT",
                  "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS chat_space_id INTEGER"]
 PG_MIGRATIONS += gchat.PG_MIGRATIONS
 PG_MIGRATIONS += office.PG_MIGRATIONS
-_NO_ID_TABLES = {"settings", "task_followers", "comment_reactions"} | gchat.NO_ID_TABLES | office.NO_ID_TABLES
+_NO_ID_TABLES = {"settings", "task_followers", "comment_reactions", "resource_shares"} | gchat.NO_ID_TABLES | office.NO_ID_TABLES
 # Google Chat sync tables (see google_chat.py)
 SCHEMA += gchat.SCHEMA_SQLITE
 PG_SCHEMA += gchat.SCHEMA_PG
@@ -270,7 +276,8 @@ PG_TABLES += gchat.TABLES
 _PG_PARENTS = {"time_entries": ("user_id", "users"), "breaks": ("entry_id", "time_entries"),
                "tasks": ("client_id", "clients"), "task_links": ("task_id", "tasks"),
                "task_comments": ("task_id", "tasks"), "recurring_rules": ("client_id", "clients"),
-               "task_followers": ("task_id", "tasks"), "comment_reactions": ("comment_id", "task_comments")}
+               "task_followers": ("task_id", "tasks"), "comment_reactions": ("comment_id", "task_comments"),
+               "resource_shares": ("resource_id", "resources")}
 
 
 def _to_pg(sql):
@@ -1472,6 +1479,38 @@ def create_task():
     return jsonify(_task_full(tid))
 
 
+@app.post("/api/tasks/<int:tid>/duplicate")
+@login_required
+def duplicate_task(tid):
+    """A fresh copy of a task (details, links, files, followers) in the same column, without comments or history."""
+    t = q("SELECT * FROM tasks WHERE id=?", (tid,), one=True)
+    if not t:
+        abort(404)
+    u, now = current_user(), iso(now_utc())
+    status = "Not Started" if t["status"] == "Done" else t["status"]
+    pos = (q("SELECT MAX(position) m FROM tasks WHERE client_id=? AND status=?", (t["client_id"], status), one=True)["m"] or 0) + 1
+    title = t["title"] if t["title"].endswith("(copy)") else f"{t['title']} (copy)"
+    nid = ex("INSERT INTO tasks(client_id,title,description,notes,priority,assignee_id,deadline,deadline_time,status,"
+             "position,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+             (t["client_id"], title, t["description"] or "", t["notes"] or "", t["priority"], t["assignee_id"],
+              t["deadline"], t["deadline_time"], status, pos, u["id"], now, now))
+    for link in q("SELECT * FROM task_links WHERE task_id=?", (tid,)):
+        ex("INSERT INTO task_links(task_id,url,label,created_at) VALUES(?,?,?,?)", (nid, link["url"], link["label"], now))
+    for src in q("SELECT * FROM files WHERE kind='task' AND ref_id=?", (tid,)):
+        stored = f"{uuid.uuid4().hex}_{secure_filename(src['original_name']) or 'file'}"
+        try:   # a separate copy, so deleting it from one task never affects the other
+            shutil.copyfile(os.path.join(UPLOAD_DIR, src["stored_name"]), os.path.join(UPLOAD_DIR, stored))
+        except OSError:
+            continue
+        ex("INSERT INTO files(kind,ref_id,owner_id,original_name,stored_name,mime,size,created_at) VALUES(?,?,?,?,?,?,?,?)",
+           ("task", nid, u["id"], src["original_name"], stored, src["mime"], src["size"], now))
+    for f in q("SELECT user_id FROM task_followers WHERE task_id=?", (tid,)):
+        ex("INSERT OR IGNORE INTO task_followers(task_id,user_id,created_at) VALUES(?,?,?)", (nid, f["user_id"], now))
+    notify(t["assignee_id"], "assigned", nid, actor_id=u["id"])
+    task_chat_event("created", nid, actor=u["name"])
+    return jsonify(_task_full(nid))
+
+
 @app.post("/api/tasks/<int:tid>/announce")
 @login_required
 def announce_task(tid):
@@ -2274,8 +2313,8 @@ def _can_access_file(f):
     if f["kind"] in ("task", "avatar", "comment"):
         return True
     if f["kind"] == "resource":
-        r = q("SELECT shared FROM resources WHERE file_id=?", (f["id"],), one=True)
-        return bool(r and r["shared"])
+        r = q("SELECT * FROM resources WHERE file_id=?", (f["id"],), one=True)
+        return bool(r and _can_see_resource(r))
     return False  # bank QR: owner + executives only
 
 
@@ -2295,7 +2334,7 @@ def import_resources(tid):
     added_links = added_files = 0
     for rid in ids:
         r = q("SELECT * FROM resources WHERE id=?", (rid,), one=True)
-        if not r or not (r["shared"] or r["owner_id"] == u["id"] or is_exec()):
+        if not r or not (_can_see_resource(r) or is_exec()):
             continue  # only resources this person can see
         if only != "files" and r["url"] and r["url"] not in have_urls:
             ex("INSERT INTO task_links(task_id,url,label,created_at) VALUES(?,?,?,?)",
@@ -2539,13 +2578,48 @@ def profile_delete(uid, table, rid):
 
 
 # ---------------------------------------------------------------- resources
+def _can_see_resource(r):
+    """Whole team (shared), the owner, or someone it was shared with directly."""
+    uid = current_user()["id"]
+    return bool(r["shared"] or r["owner_id"] == uid or q(
+        "SELECT 1 FROM resource_shares WHERE resource_id=? AND user_id=?", (r["id"], uid), one=True))
+
+
+def _share_ids(d):
+    """user_ids from a JSON list or form field (comma separated) -> active people other than me."""
+    raw = d.get("user_ids") or []
+    if isinstance(raw, str):
+        raw = raw.split(",")
+    ids = {int(i) for i in raw if str(i).strip().isdigit()} - {current_user()["id"]}
+    active = {r["id"] for r in q("SELECT id FROM users WHERE active=1")}
+    return sorted(ids & active)
+
+
+def _set_resource_shares(r, ids):
+    """Replace who this resource is shared with; newly added people get a notification."""
+    before = {x["user_id"] for x in q("SELECT user_id FROM resource_shares WHERE resource_id=?", (r["id"],))}
+    ex("DELETE FROM resource_shares WHERE resource_id=?", (r["id"],))
+    for uid in ids:
+        ex("INSERT OR IGNORE INTO resource_shares(resource_id,user_id,created_at) VALUES(?,?,?)", (r["id"], uid, iso(now_utc())))
+        if uid not in before:
+            notify(uid, "resource_shared", None, actor_id=current_user()["id"], snippet=r["title"] or "")
+
+
 @app.get("/api/resources")
 @login_required
 def list_resources():
     u = current_user()
     rows = q("SELECT r.*, u.name owner_name, f.original_name file_name FROM resources r "
              "LEFT JOIN users u ON u.id=r.owner_id LEFT JOIN files f ON f.id=r.file_id "
-             "WHERE r.shared=1 OR r.owner_id=? ORDER BY r.category, r.title", (u["id"],))
+             "WHERE r.shared=1 OR r.owner_id=? OR r.id IN (SELECT resource_id FROM resource_shares WHERE user_id=?) "
+             "ORDER BY r.category, r.title", (u["id"], u["id"]))
+    shares = {}
+    for x in q("SELECT s.resource_id, s.user_id, u.name FROM resource_shares s JOIN users u ON u.id=s.user_id "
+               "ORDER BY u.name"):
+        shares.setdefault(x["resource_id"], []).append({"id": x["user_id"], "name": x["name"]})
+    for r in rows:
+        r["shared_with"] = shares.get(r["id"], [])
+        r["shared_with_me"] = any(p["id"] == u["id"] for p in r["shared_with"])
     return jsonify(rows)
 
 
@@ -2568,6 +2642,24 @@ def create_resource():
     if not url and not fid:
         ex("DELETE FROM resources WHERE id=?", (rid,))
         return bad("Add a link or attach a file")
+    if not shared:
+        _set_resource_shares(q("SELECT * FROM resources WHERE id=?", (rid,), one=True), _share_ids(d))
+    return jsonify(ok=True)
+
+
+@app.put("/api/resources/<int:rid>/sharing")
+@login_required
+def share_resource(rid):
+    """Who can see a resource: just me, specific people, or the whole team."""
+    r = q("SELECT * FROM resources WHERE id=?", (rid,), one=True)
+    if not r:
+        abort(404)
+    if not (is_exec() or r["owner_id"] == current_user()["id"]):
+        abort(403)
+    d = body()
+    team = d.get("shared") in ("1", "true", True, 1)
+    ex("UPDATE resources SET shared=? WHERE id=?", (1 if team else 0, rid))
+    _set_resource_shares(r, [] if team else _share_ids(d))
     return jsonify(ok=True)
 
 
@@ -2583,6 +2675,7 @@ def delete_resource(rid):
         f = q("SELECT * FROM files WHERE id=?", (r["file_id"],), one=True)
         if f:
             _remove_file(f)
+    ex("DELETE FROM resource_shares WHERE resource_id=?", (rid,))
     ex("DELETE FROM resources WHERE id=?", (rid,))
     return jsonify(ok=True)
 

@@ -333,7 +333,7 @@ table.tbl { width: 100%; border-collapse: collapse; }
 .modal-head { display: flex; justify-content: space-between; align-items: center; padding: 20px 24px; border-bottom: 1px solid var(--line); }
 .modal-head h2 { font-size: 16px; }
 .modal-body { padding: 22px 24px; }
-.modal-foot { display: flex; justify-content: flex-end; align-items: center; gap: 10px; padding: 14px 24px; border-top: 1px solid var(--line); background: rgba(237, 242, 248, .5); }
+.modal-foot { display: flex; justify-content: flex-end; align-items: center; gap: 10px; flex-wrap: wrap; padding: 14px 24px; border-top: 1px solid var(--line); background: rgba(237, 242, 248, .5); }
 @keyframes fade { from { opacity: 0; } }
 @keyframes pop { from { transform: translateY(14px) scale(.98); opacity: 0; } }
 @keyframes rise { from { transform: translateY(6px); opacity: 0; } }
@@ -1641,3 +1641,23 @@ body:has(#hud-bar) #chat-pops { bottom: 0; }
 /* the Chat page box grows with your message */
 #cm-comp .ccomp-box { align-items: flex-end; }
 #cm-comp .ccomp-box textarea { max-height: none; }
+
+/* resources: who can see it */
+.share-vis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 6px; }
+.share-vis label { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 11px 6px; border-radius: 12px; border: 1px solid rgba(12, 46, 96, .12); background: rgba(255, 255, 255, .6); cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--muted); text-align: center; transition: all .15s; }
+.share-vis label:hover { border-color: rgba(12, 46, 96, .3); }
+.share-vis label.on { border-color: var(--navy); color: var(--navy); background: #fff; box-shadow: 0 0 0 1px var(--navy); }
+.share-vis input { position: absolute; opacity: 0; pointer-events: none; }
+.share-vis svg { width: 18px; height: 18px; }
+.share-people { margin-top: 10px; }
+.share-people[hidden] { display: none; }
+.share-list { max-height: 210px; overflow-y: auto; margin-top: 8px; border: 1px solid rgba(12, 46, 96, .1); border-radius: 12px; padding: 4px; background: rgba(255, 255, 255, .6); }
+.share-list .check { padding: 7px 8px; border-radius: 9px; }
+.share-list .check:hover { background: rgba(12, 46, 96, .05); }
+.share-list .check[hidden] { display: none; }
+.res-acts { display: flex; flex-direction: column; gap: 2px; }
+.res .badge svg { vertical-align: -1px; }
+
+/* kanban: add a task from the top of a column */
+.col-head .col-add { width: 24px; height: 24px; border-radius: 8px; color: var(--muted); }
+.col-head .col-add:hover { background: rgba(255, 255, 255, .85); color: var(--navy); }

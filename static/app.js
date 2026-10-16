@@ -224,6 +224,7 @@ const I = {
   smile: svg('<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5s1.3 1.8 3.5 1.8 3.5-1.8 3.5-1.8"/><path d="M9 9.5h.01M15 9.5h.01" stroke-width="2.6"/>'),
   doc: svg('<path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4M9 12h6M9 16h6"/>'),
   folder: svg('<path d="M3 6h6l2 2h10v11H3z"/>'),
+  copy: svg('<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 00-1-1H5a1 1 0 00-1 1v10a1 1 0 001 1h3"/>'),
   brief: svg('<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V4h6v3M3 13h18"/>'),
   gear: svg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/>'),
   clip: svg('<path d="M21 11l-8.5 8.5a5 5 0 01-7-7L14 4a3.5 3.5 0 015 5l-8.5 8.5a2 2 0 01-3-3L15 7"/>'),
@@ -1123,7 +1124,7 @@ async function pageBoard(page, [cid], alive) {
     <div class="board" id="board">
       ${S.statuses.map((s) => `<div class="col" data-status="${esc(s)}">
         <div class="col-head"><span class="t"><i style="background:${STATUS_META[s].c}"></i>${esc(s)}</span>
-          <span class="row" style="gap:4px;flex-wrap:nowrap">${s === 'Done' ? `<button class="icon-btn" id="archive-done" title="Archive all done tasks">${I.archive}</button>` : ''}<span class="count">0</span></span></div>
+          <span class="row" style="gap:4px;flex-wrap:nowrap">${s === 'Done' ? `<button class="icon-btn" id="archive-done" title="Archive all done tasks">${I.archive}</button>` : ''}<span class="count">0</span><button class="icon-btn col-add" data-add="${esc(s)}" title="Add a task to ${esc(s)}" aria-label="Add a task to ${esc(s)}">${I.plus}</button></span></div>
         <div class="col-body"></div>
         ${s === 'Done' ? '<div class="done-more"></div>' : ''}
         <button class="add-card" data-add="${esc(s)}">+ Add task</button></div>`).join('')}
@@ -1494,6 +1495,7 @@ async function openTask(id, onChange) {
       </aside></div>`,
     foot: `${isExec() ? `<button class="btn ghost" id="t-del" style="color:var(--red)">${I.trash} Delete</button>` : ''}
       ${t.archived_at ? `<button class="btn ghost" id="t-restore">${I.restore} Restore to board</button>` : `<button class="btn ghost" id="t-archive">${I.archive} Archive</button>`}
+      <button class="btn ghost" id="t-dup" title="Make a copy with the same details, links, files and followers">${I.copy} Duplicate</button>
       <span style="flex:1"></span><button class="btn ghost" data-close>Close</button><button class="btn" id="t-save">Save changes</button>`,
   });
   $$('[data-close]', el).forEach((b) => b.addEventListener('click', () => onChange && onChange()));
@@ -1602,6 +1604,14 @@ async function openTask(id, onChange) {
   };
   if ($('#t-restore', el)) $('#t-restore', el).onclick = async () => {
     await api('POST', `/api/tasks/${id}/restore`, {}); toast('Restored to the board', 'ok'); close(); onChange && onChange();
+  };
+  $('#t-dup', el).onclick = async (e) => {
+    const b = e.currentTarget; b.disabled = true;
+    try {
+      const copy = await api('POST', `/api/tasks/${id}/duplicate`, {});
+      toast('Task duplicated — opening the copy', 'ok'); close(); onChange && onChange();
+      openTask(copy.id, onChange);
+    } catch (err) { toast(err.message, 'err'); b.disabled = false; }
   };
   if ($('#t-del', el)) $('#t-del', el).onclick = async () => {
     if (!await confirmModal(`Delete "${t.title}"? Its files, links, and comments will be removed too.`)) return;
@@ -1868,6 +1878,7 @@ function alertPlain(n) {
     follow: [`${who} added you as a follower`, task],
     chat_dm: [`${who} · Google Chat`, n.snippet || 'New message'],
     huddle_invite: [`${who} invited you to a huddle`, n.chat_title || 'Tap to join'],
+    resource_shared: [`${who} shared a resource with you`, n.snippet || 'Open Resources'],
     chat_mention: [`${who} mentioned you${n.chat_title ? ` in ${n.chat_title}` : ''}`, n.snippet || ''] }[n.kind] || ['Her Haus Hub', task];
 }
 const inviteNotes = new Map();   // chat space id -> desktop pop-ups for huddle invites (closed when the ring stops)
@@ -1924,13 +1935,14 @@ function notifText(n) {
   if (n.kind === 'assigned') return n.actor_id ? `${who} assigned you ${task}` : `New recurring task for you: ${task}`;
   if (n.kind === 'deadline') return `${task} is due in 15 minutes`;
   if (n.kind === 'follow') return `${who} added you as a follower on ${task}`;
+  if (n.kind === 'resource_shared') return `${who} shared a resource with you: <b>${esc(n.snippet || 'Resource')}</b>`;
   if (n.kind === 'huddle_invite') return `${who} invited you to a huddle${n.chat_title ? ` in <b>${esc(n.chat_title)}</b>` : ''}`;
   if (n.kind === 'chat_dm') return `${who} sent you a message${n.chat_title ? ` in <b>${esc(n.chat_title)}</b>` : ''}`;
   if (n.kind === 'chat_mention') return `${who} mentioned you in ${n.chat_title ? `<b>${esc(n.chat_title)}</b>` : 'Google Chat'}`;
   return task;
 }
 function notifItemHTML(n) {
-  const icon = { mention: I.at, comment: I.chat, deadline: I.clock, follow: I.eye, chat_mention: I.at, chat_dm: I.chat, huddle_invite: I.headset }[n.kind] || I.brief;
+  const icon = { mention: I.at, comment: I.chat, deadline: I.clock, follow: I.eye, chat_mention: I.at, chat_dm: I.chat, huddle_invite: I.headset, resource_shared: I.folder }[n.kind] || I.brief;
   return `<button class="notif ${n.read_at ? '' : 'unread'}" data-n="${n.id}">
     <span class="notif-av">${n.actor_name ? av(n.actor_name, n.actor_avatar) : `<span class="avatar">${n.kind === 'deadline' ? I.clock : I.repeat}</span>`}<span class="notif-kind k-${n.kind}">${icon}</span></span>
     <span class="notif-main"><span class="notif-text">${notifText(n)}</span>
@@ -1948,6 +1960,7 @@ async function openNotification(n) {
     return;
   }
   if (n.chat_space_id) { location.hash = `#/chat/${n.chat_space_id}`; return; }
+  if (n.kind === 'resource_shared') { if (location.hash === '#/resources') route(); else location.hash = '#/resources'; return; }
   if (!n.task_title || !n.client_id) { toast('That task was deleted', 'err'); return; }
   S.openTaskOnLoad = n.task_id;
   if (location.hash === `#/board/${n.client_id}`) route(); else location.hash = `#/board/${n.client_id}`;
@@ -2455,6 +2468,54 @@ async function renderTimesheetInto(box, uid, editable, ref) {
 }
 
 // ============================================================ resources
+// Who can see a resource: just me, specific teammates, or the whole team.
+const visOf = (r) => (r.shared ? 'team' : (r.shared_with || []).length ? 'people' : 'me');
+function shareFieldsHTML(vis, chosen = []) {
+  const people = S.users.filter((u) => u.active && u.id !== S.me.id);
+  return `<div class="share-vis" role="radiogroup">${[['me', I.user, 'Only me'], ['people', I.users, 'Specific people'], ['team', I.users, 'Whole team']]
+    .map(([v, ic, l]) => `<label class="${vis === v ? 'on' : ''}"><input type="radio" name="vis" value="${v}" ${vis === v ? 'checked' : ''}>${ic}<span>${l}</span></label>`).join('')}</div>
+    <div class="share-people" ${vis === 'people' ? '' : 'hidden'}>
+      <input class="input" data-share-q placeholder="Search teammates…">
+      <div class="share-list">${people.map((u) => `<label class="check" data-name="${esc(u.name.toLowerCase())}"><input type="checkbox" name="share_uid" value="${u.id}" ${chosen.includes(u.id) ? 'checked' : ''}>${av(u.name, u.avatar_file_id, 'xs')}<span>${esc(u.name)}</span></label>`).join('')}</div>
+    </div>`;
+}
+function bindShareFields(root) {
+  const box = $('.share-people', root);
+  $$('.share-vis input', root).forEach((i) => i.addEventListener('change', () => {
+    $$('.share-vis label', root).forEach((l) => l.classList.toggle('on', l.contains(i) ? i.checked : false));
+    box.hidden = i.value !== 'people';
+  }));
+  $('[data-share-q]', root).addEventListener('input', (e) => {
+    const qv = e.target.value.trim().toLowerCase();
+    $$('.share-list label', root).forEach((l) => { l.hidden = qv && !l.dataset.name.includes(qv); });
+  });
+  return () => {   // read the choice: { shared, user_ids }
+    const vis = $('.share-vis input:checked', root)?.value || 'me';
+    const ids = vis === 'people' ? $$('.share-list input:checked', root).map((i) => Number(i.value)) : [];
+    return { vis, shared: vis === 'team', user_ids: ids };
+  };
+}
+function shareResourceModal(r, onDone) {
+  const { el, close } = openModal({
+    title: `Share “${r.title}”`,
+    body: `<p class="small muted" style="margin-bottom:12px">Choose who can see and open this resource.</p>${shareFieldsHTML(visOf(r), (r.shared_with || []).map((p) => p.id))}`,
+    foot: '<span style="flex:1"></span><button class="btn ghost" data-close>Cancel</button><button class="btn" data-ok>Save</button>',
+  });
+  const read = bindShareFields(el);
+  $('[data-ok]', el).onclick = async () => {
+    const c = read();
+    if (c.vis === 'people' && !c.user_ids.length) { toast('Pick at least one teammate', 'err'); return; }
+    try { await api('PUT', `/api/resources/${r.id}/sharing`, { shared: c.shared, user_ids: c.user_ids }); close(); toast('Sharing updated', 'ok'); onDone(); }
+    catch (err) { toast(err.message, 'err'); }
+  };
+}
+function shareBadge(r) {
+  if (r.shared) return '<span class="badge b-green">Team</span>';
+  if (r.owner_id !== S.me.id) return `<span class="badge b-navy" title="${esc(r.owner_name || '')} shared this with you">Shared with you</span>`;
+  const who = r.shared_with || [];
+  if (!who.length) return '<span class="badge b-gray">Personal</span>';
+  return `<span class="badge b-navy" title="${esc(who.map((p) => p.name).join(', '))}">${I.users.replace('width="18" height="18"', 'width="11" height="11"')} ${who.length === 1 ? esc(who[0].name.split(' ')[0]) : `${who.length} people`}</span>`;
+}
 async function pageResources(page, _a, alive) {
   setTitle('Resources', 'Links and files for quick retrieval');
   const rows = await api('GET', '/api/resources');
@@ -2463,26 +2524,30 @@ async function pageResources(page, _a, alive) {
   page.innerHTML = `
     <div class="board-bar"><input class="input" id="r-q" placeholder="Search resources…">
       <select class="input" id="r-cat"><option value="">All categories</option>${cats.map((c) => `<option>${esc(c)}</option>`).join('')}</select>
-      <select class="input" id="r-scope"><option value="">Shared + mine</option><option value="shared">Team shared</option><option value="mine">Only mine</option></select>
+      <select class="input" id="r-scope"><option value="">Everything I can see</option><option value="shared">Team shared</option><option value="withme">Shared with me</option><option value="mine">Added by me</option></select>
       <span style="flex:1"></span><button class="btn red" id="r-add">${I.plus} Add resource</button></div>
     <div class="res-grid" id="r-grid"></div>`;
   const draw = () => {
     const qv = $('#r-q').value.toLowerCase(), cat = $('#r-cat').value, scope = $('#r-scope').value;
     const list = rows.filter((r) => (!qv || `${r.title} ${r.description} ${r.url}`.toLowerCase().includes(qv)) && (!cat || r.category === cat)
-      && (!scope || (scope === 'shared' ? r.shared : r.owner_id === S.me.id)));
+      && (!scope || (scope === 'shared' ? r.shared : scope === 'withme' ? r.shared_with_me : r.owner_id === S.me.id)));
     $('#r-grid').innerHTML = list.length ? list.map((r) => `<div class="card res">
       <span class="ic ${r.file_id ? 'file' : ''}">${r.file_id ? I.clip : I.link}</span>
       <div class="body"><b>${esc(r.title)}</b>
-        <div class="row" style="gap:6px;margin:6px 0"><span class="badge b-navy">${esc(r.category)}</span><span class="badge ${r.shared ? 'b-green' : 'b-gray'}">${r.shared ? 'Team' : 'Personal'}</span></div>
+        <div class="row" style="gap:6px;margin:6px 0"><span class="badge b-navy">${esc(r.category)}</span>${shareBadge(r)}</div>
         ${r.description ? `<p class="small muted" style="margin-bottom:8px">${esc(r.description)}</p>` : ''}
         <div class="row" style="gap:8px">${r.url ? `<a class="btn sm soft" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">Open link</a>` : ''}${r.file_id ? `<a class="btn sm soft" href="/api/files/${r.file_id}">${I.download} ${esc((r.file_name || 'File').slice(0, 22))}</a>` : ''}</div>
         <p class="small muted" style="margin-top:8px">Added by ${esc(r.owner_name || '—')}</p></div>
-      ${r.owner_id === S.me.id || isExec() ? `<button class="icon-btn" data-del="${r.id}" aria-label="Delete">${I.trash}</button>` : ''}</div>`).join('')
+      ${r.owner_id === S.me.id || isExec() ? `<span class="res-acts"><button class="icon-btn" data-share="${r.id}" title="Share" aria-label="Share">${I.users}</button><button class="icon-btn" data-del="${r.id}" aria-label="Delete">${I.trash}</button></span>` : ''}</div>`).join('')
       : '<div class="card empty" style="grid-column:1/-1"><b>No resources yet</b>Save SOPs, scripts, templates, and handy links here.</div>';
   };
   ['r-q', 'r-cat', 'r-scope'].forEach((i) => { $(`#${i}`).addEventListener('input', draw); });
-  $('#r-grid').onclick = async (e) => { const b = e.target.closest('[data-del]'); if (b && await confirmModal('Delete this resource?')) { await api('DELETE', `/api/resources/${b.dataset.del}`); route(); } };
-  $('#r-add').onclick = () => formModal({
+  $('#r-grid').onclick = async (e) => {
+    const sh = e.target.closest('[data-share]');
+    if (sh) { shareResourceModal(rows.find((r) => r.id === Number(sh.dataset.share)), route); return; }
+    const b = e.target.closest('[data-del]'); if (b && await confirmModal('Delete this resource?')) { await api('DELETE', `/api/resources/${b.dataset.del}`); route(); }
+  };
+  $('#r-add').onclick = () => { let readShare; const m = formModal({
     title: 'Add resource', submit: 'Save resource',
     fields: [
       { name: 'title', label: 'Title', required: true, full: true },
@@ -2490,10 +2555,17 @@ async function pageResources(page, _a, alive) {
       { name: 'url', label: 'Link', placeholder: 'https://…' },
       { name: 'file', label: 'Or attach a file', type: 'file', full: true },
       { name: 'description', label: 'Description', type: 'textarea', full: true, rows: 2 },
-      { name: 'shared', label: 'Share with the whole team', type: 'checkbox', value: isExec(), full: true },
+      { type: 'info', html: `<div class="field"><span class="field-label">Who can see this</span>${shareFieldsHTML(isExec() ? 'team' : 'me')}</div>` },
     ],
-    onSubmit: async (fd, close) => { await api('POST', '/api/resources', fd); close(); toast('Resource saved', 'ok'); route(); },
-  });
+    onSubmit: async (fd, close) => {
+      const c = readShare();
+      if (c.vis === 'people' && !c.user_ids.length) { toast('Pick at least one teammate to share with', 'err'); return; }
+      fd.delete('vis'); fd.delete('share_uid');
+      fd.set('shared', c.shared ? '1' : '0'); fd.set('user_ids', c.user_ids.join(','));
+      await api('POST', '/api/resources', fd); close();
+      toast(c.vis === 'people' ? `Resource shared with ${c.user_ids.length === 1 ? S.users.find((u) => u.id === c.user_ids[0])?.name : `${c.user_ids.length} people`}` : 'Resource saved', 'ok'); route();
+    },
+  }); readShare = bindShareFields(m.el); };
   draw();
 }
 
