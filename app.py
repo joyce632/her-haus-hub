@@ -2370,9 +2370,14 @@ def get_file(fid):
     f = q("SELECT * FROM files WHERE id=?", (fid,), one=True)
     if not f or not _can_access_file(f):
         abort(404)
-    inline = request.args.get("inline") == "1"
-    return send_file(os.path.join(UPLOAD_DIR, f["stored_name"]), mimetype=f["mime"],
-                     as_attachment=not inline, download_name=f["original_name"])
+    mime = (f["mime"] or "application/octet-stream").split(";")[0].lower()
+    # Shown in the browser only when it can't carry script (images, PDFs, media); everything else downloads.
+    inline = request.args.get("inline") == "1" and (mime in SAFE_IMAGE_TYPES or mime == "application/pdf"
+                                                     or mime.startswith(("video/", "audio/")))
+    resp = send_file(os.path.join(UPLOAD_DIR, f["stored_name"]), mimetype=mime if inline else "application/octet-stream",
+                     as_attachment=not inline, download_name=f["original_name"], conditional=True)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    return resp
 
 
 @app.delete("/api/files/<int:fid>")

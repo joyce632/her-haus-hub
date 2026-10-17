@@ -1502,7 +1502,8 @@ async function openTask(id, onChange) {
 
   const renderAttachments = (task) => {
     $('#t-files', el).innerHTML = task.files.length ? task.files.map((f) => `<div class="att"><span class="ic">${I.clip}</span>
-      <a href="/api/files/${f.id}" target="_blank" rel="noopener">${esc(f.original_name)}</a><span class="small muted">${fmtSize(f.size)}</span>
+      <a href="/api/files/${f.id}" target="_blank" rel="noopener" ${previewAttrs(`/api/files/${f.id}`, f.original_name, f.mime)} title="${canPreview(f.original_name, f.mime) ? 'Preview' : 'Download'}">${esc(f.original_name)}</a><span class="small muted">${fmtSize(f.size)}</span>
+      <a class="icon-btn" href="/api/files/${f.id}" download aria-label="Download" title="Download">${I.download}</a>
       <button class="icon-btn" data-del-file="${f.id}" aria-label="Remove file">${I.trash}</button></div>`).join('') : '<p class="small muted">No files yet.</p>';
     $('#t-links', el).innerHTML = task.links.length ? task.links.map((l) => `<div class="att"><span class="ic">${I.link}</span>
       <a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.label || l.url)}</a>
@@ -1679,6 +1680,148 @@ function attachMentionPicker(ta, pop) {
 
 const REACTION_EMOJI = ['👍', '❤️', '😂', '🎉', '👀', '🙏', '✅', '🔥', '💯', '🙌', '👏', '🚀', '💪', '🤝', '😮', '😅', '🤔', '😢', '⭐', '📌', '❗', '❓', '👌', '🏡'];
 const fileUrl = (id) => `/api/files/${id}?inline=1`;
+// ============================================================ file previewer
+// Opens files inside the hub instead of downloading them: PDFs, images, video/audio, text and CSV,
+// Word (.docx), Excel (.xlsx/.xls/.ods) and PowerPoint (.pptx, simplified). Readers load only when needed.
+const VENDOR = {};
+function loadVendor(file) {
+  return VENDOR[file] || (VENDOR[file] = new Promise((ok, fail) => {
+    const s = document.createElement('script');
+    s.src = `/static/vendor/${file}?v=1`; s.onload = ok;
+    s.onerror = () => { delete VENDOR[file]; fail(new Error('Could not load the previewer — check your connection')); };
+    document.head.appendChild(s);
+  }));
+}
+const PREVIEW_MAX = 40 * 1024 * 1024;
+function previewKind(name, type) {
+  const ext = (String(name).toLowerCase().match(/\.([a-z0-9]+)$/) || [])[1] || '';
+  const t = String(type || '').toLowerCase().split(';')[0];
+  if (ext === 'pdf' || t === 'application/pdf') return 'pdf';
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'avif'].includes(ext) || (t.startsWith('image/') && t !== 'image/svg+xml')) return 'image';
+  if (['mp4', 'webm', 'mov', 'm4v', 'ogv'].includes(ext) || t.startsWith('video/')) return 'video';
+  if (['mp3', 'wav', 'm4a', 'ogg', 'oga', 'aac', 'flac', 'opus'].includes(ext) || t.startsWith('audio/')) return 'audio';
+  if (ext === 'docx' || t.includes('wordprocessingml')) return 'docx';
+  if (['xlsx', 'xlsm', 'xls', 'ods', 'csv', 'tsv'].includes(ext) || t.includes('spreadsheetml') || t === 'text/csv' || t === 'application/vnd.ms-excel') return 'sheet';
+  if (ext === 'pptx' || t.includes('presentationml')) return 'pptx';
+  if (['txt', 'md', 'json', 'log', 'xml', 'yaml', 'yml', 'html', 'htm', 'css', 'js', 'ts', 'py', 'sql', 'svg', 'rtf', 'ini'].includes(ext) || t.startsWith('text/')) return 'text';
+  return '';
+}
+const canPreview = (name, type) => !!previewKind(name, type);
+// Turns a file link into "click to preview" (Ctrl/Cmd-click still opens or downloads as before).
+const previewAttrs = (url, name, type) => (canPreview(name, type) ? `data-preview="${esc(url)}" data-pname="${esc(name)}" data-ptype="${esc(type || '')}"` : '');
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('[data-preview]');
+  if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;
+  e.preventDefault(); e.stopPropagation();
+  previewFile(a.dataset.preview, a.dataset.pname, a.dataset.ptype);
+}, true);
+
+async function previewFile(url, name, type) {
+  const kind = previewKind(name, type);
+  const dl = url + (url.includes('?') ? '&' : '?') + 'download=1';
+  const { el, close } = openModal({
+    title: name, wide: true,
+    body: '<div class="pv-body"><div class="pv-loading"><span class="spinner"></span>Opening preview…</div></div>',
+    foot: `<span class="small muted pv-note"></span><span style="flex:1"></span><a class="btn ghost" id="pv-tab" target="_blank" rel="noopener" hidden>${I.link} Open in new tab</a><a class="btn" href="${esc(dl)}" download="${esc(name)}">${I.download} Download</a>`,
+  });
+  el.classList.add('pv-modal');
+  const body = $('.pv-body', el), note = $('.pv-note', el);
+  const urls = [];
+  const blobUrl = (b) => { const u = URL.createObjectURL(b); urls.push(u); return u; };
+  new MutationObserver((_, obs) => { if (!el.isConnected) { urls.forEach((u) => URL.revokeObjectURL(u)); obs.disconnect(); } })
+    .observe($('#modal-root'), { childList: true });
+  const fail = (msg) => { body.innerHTML = `<div class="pv-empty">${I.doc}<b>${esc(msg)}</b><span>Use Download to open it on your computer.</span></div>`; };
+  if (!kind) { fail('This file type can’t be previewed'); return; }
+  try {
+    const res = await fetch(url, { credentials: 'same-origin' });
+    if (!res.ok) throw new Error(res.status === 404 ? 'This file is no longer available' : `Couldn’t open the file (${res.status})`);
+    if (Number(res.headers.get('Content-Length') || 0) > PREVIEW_MAX) { fail('This file is too large to preview'); return; }
+    const raw = await res.blob();
+    if (!el.isConnected) return;
+    if (raw.size > PREVIEW_MAX) { fail('This file is too large to preview'); return; }
+    const blob = kind === 'pdf' ? new Blob([raw], { type: 'application/pdf' }) : raw;
+    if (kind === 'pdf') {
+      const u = blobUrl(blob);
+      body.innerHTML = `<iframe class="pv-frame" src="${u}" title="${esc(name)}"></iframe>`;
+      const tab = $('#pv-tab', el); tab.href = u; tab.hidden = false;
+    } else if (kind === 'image') {
+      body.innerHTML = `<div class="pv-media"><img src="${blobUrl(blob)}" alt="${esc(name)}"></div>`;
+    } else if (kind === 'video') {
+      body.innerHTML = `<div class="pv-media"><video src="${blobUrl(blob)}" controls playsinline></video></div>`;
+    } else if (kind === 'audio') {
+      body.innerHTML = `<div class="pv-media pv-audio">${I.headset}<audio src="${blobUrl(blob)}" controls></audio></div>`;
+    } else if (kind === 'text') {
+      const text = await blob.slice(0, 2 * 1024 * 1024).text();
+      body.innerHTML = '<pre class="pv-text"></pre>';
+      $('.pv-text', body).textContent = text;   // shown as plain text, never run
+      if (blob.size > 2 * 1024 * 1024) note.textContent = 'Showing the first 2 MB';
+    } else if (kind === 'docx') {
+      await Promise.all([loadVendor('mammoth.browser.min.js'), loadVendor('purify.min.js')]);
+      const r = await window.mammoth.convertToHtml({ arrayBuffer: await blob.arrayBuffer() });
+      body.innerHTML = `<div class="pv-doc"><div class="pv-page">${cleanHTML(r.value) || '<p class="muted">This document is empty.</p>'}</div></div>`;
+      note.textContent = 'Preview — some layout may differ from Word';
+    } else if (kind === 'sheet') {
+      await Promise.all([loadVendor('xlsx.full.min.js'), loadVendor('purify.min.js')]);
+      const wb = window.XLSX.read(await blob.arrayBuffer(), { type: 'array', dense: true, cellStyles: false, sheetRows: 2001 });
+      body.innerHTML = `${wb.SheetNames.length > 1 ? `<div class="pv-tabs">${wb.SheetNames.map((n, i) => `<button type="button" data-sheet="${i}" class="${i ? '' : 'on'}">${esc(n)}</button>`).join('')}</div>` : ''}<div class="pv-sheet"></div>`;
+      const show = (i) => {
+        const ws = wb.Sheets[wb.SheetNames[i]];
+        const rows = ws && ws['!ref'] ? window.XLSX.utils.decode_range(ws['!ref']).e.r + 1 : 0;
+        $('.pv-sheet', body).innerHTML = rows ? cleanHTML(window.XLSX.utils.sheet_to_html(ws, { header: '', footer: '' })) : '<p class="muted" style="padding:20px">This sheet is empty.</p>';
+        note.textContent = rows >= 2001 ? 'Showing the first 2,000 rows' : '';
+        $$('[data-sheet]', body).forEach((b) => b.classList.toggle('on', Number(b.dataset.sheet) === i));
+      };
+      $$('[data-sheet]', body).forEach((b) => { b.onclick = () => show(Number(b.dataset.sheet)); });
+      show(0);
+    } else if (kind === 'pptx') {
+      await loadVendor('jszip.min.js');
+      const slides = await readSlides(await blob.arrayBuffer(), blobUrl);
+      body.innerHTML = slides.length ? `<div class="pv-slides">${slides.map((s, i) => `<section class="pv-slide"><span class="pv-slide-n">${i + 1}</span>
+        ${s.paras.map((p, j) => (j === 0 ? `<h3>${esc(p)}</h3>` : `<p>${esc(p)}</p>`)).join('')}
+        ${s.images.map((u) => `<img src="${u}" alt="">`).join('')}${!s.paras.length && !s.images.length ? '<p class="muted">(No text on this slide)</p>' : ''}</section>`).join('')}</div>`
+        : '<div class="pv-empty"><b>No slides found</b></div>';
+      note.textContent = 'Simplified preview — text and pictures only. Download to see the full design.';
+    }
+  } catch (err) {
+    if (el.isConnected) fail(err.message && !/is not defined|undefined/.test(err.message) ? err.message : 'This file couldn’t be previewed');
+  }
+}
+function cleanHTML(html) {   // documents are shown, never run: strip scripts, handlers and unsafe links
+  return window.DOMPurify.sanitize(html, { FORBID_TAGS: ['style', 'form', 'input', 'button', 'iframe'], ADD_ATTR: ['target'] })
+    .replace(/<a /g, '<a target="_blank" rel="noopener noreferrer" ');
+}
+async function readSlides(buf, blobUrl) {
+  const zip = await window.JSZip.loadAsync(buf);
+  const parse = async (path) => { const f = zip.file(path); return f ? new DOMParser().parseFromString(await f.async('string'), 'application/xml') : null; };
+  // slide order comes from the presentation, falling back to file names
+  let order = [];
+  const pres = await parse('ppt/presentation.xml'), presRels = await parse('ppt/_rels/presentation.xml.rels');
+  if (pres && presRels) {
+    const target = {}; [...presRels.getElementsByTagName('Relationship')].forEach((r) => { target[r.getAttribute('Id')] = r.getAttribute('Target'); });
+    order = [...pres.getElementsByTagNameNS('*', 'sldId')].map((s) => target[s.getAttribute('r:id') || s.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id')])
+      .filter(Boolean).map((t) => `ppt/${t.replace(/^\/?ppt\//, '')}`);
+  }
+  if (!order.length) order = Object.keys(zip.files).filter((p) => /^ppt\/slides\/slide\d+\.xml$/.test(p)).sort((a, b) => Number(a.match(/\d+/g).pop()) - Number(b.match(/\d+/g).pop()));
+  const out = [];
+  for (const path of order.slice(0, 200)) {
+    const doc = await parse(path); if (!doc) continue;
+    const paras = [...doc.getElementsByTagNameNS('*', 'p')].filter((p) => p.namespaceURI && p.namespaceURI.includes('drawingml'))
+      .map((p) => [...p.getElementsByTagNameNS('*', 't')].map((t) => t.textContent).join('').trim()).filter(Boolean);
+    const rels = await parse(path.replace(/slides\/(slide\d+\.xml)$/, 'slides/_rels/$1.rels'));
+    const relTarget = {}; if (rels) [...rels.getElementsByTagName('Relationship')].forEach((r) => { relTarget[r.getAttribute('Id')] = r.getAttribute('Target'); });
+    const images = [];
+    for (const b of [...doc.getElementsByTagNameNS('*', 'blip')].slice(0, 6)) {
+      const id = b.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'embed');
+      const t = relTarget[id]; if (!t || !/\.(png|jpe?g|gif|webp)$/i.test(t)) continue;
+      const f = zip.file(`ppt/${t.replace(/^\.\.\//, '')}`); if (!f) continue;
+      const ext = t.split('.').pop().toLowerCase().replace('jpg', 'jpeg');
+      images.push(blobUrl(new Blob([await f.async('uint8array')], { type: `image/${ext}` })));
+    }
+    out.push({ paras, images });
+  }
+  return out;
+}
+
 function lightbox(src, name, download) {   // full-size view of a comment image
   const box = document.createElement('div');
   box.className = 'lightbox';
@@ -2536,7 +2679,7 @@ async function pageResources(page, _a, alive) {
       <div class="body"><b>${esc(r.title)}</b>
         <div class="row" style="gap:6px;margin:6px 0"><span class="badge b-navy">${esc(r.category)}</span>${shareBadge(r)}</div>
         ${r.description ? `<p class="small muted" style="margin-bottom:8px">${esc(r.description)}</p>` : ''}
-        <div class="row" style="gap:8px">${r.url ? `<a class="btn sm soft" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">Open link</a>` : ''}${r.file_id ? `<a class="btn sm soft" href="/api/files/${r.file_id}">${I.download} ${esc((r.file_name || 'File').slice(0, 22))}</a>` : ''}</div>
+        <div class="row" style="gap:8px">${r.url ? `<a class="btn sm soft" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">Open link</a>` : ''}${r.file_id ? (canPreview(r.file_name || '', '') ? `<a class="btn sm soft" href="/api/files/${r.file_id}" ${previewAttrs(`/api/files/${r.file_id}`, r.file_name || r.title, '')} title="${esc(r.file_name || '')}">${I.eye} Preview</a><a class="btn sm ghost" href="/api/files/${r.file_id}" download title="${esc(r.file_name || '')}">${I.download} ${esc((r.file_name || 'File').slice(0, 18))}</a>` : `<a class="btn sm soft" href="/api/files/${r.file_id}">${I.download} ${esc((r.file_name || 'File').slice(0, 22))}</a>`) : ''}</div>
         <p class="small muted" style="margin-top:8px">Added by ${esc(r.owner_name || '—')}</p></div>
       ${r.owner_id === S.me.id || isExec() ? `<span class="res-acts"><button class="icon-btn" data-share="${r.id}" title="Share" aria-label="Share">${I.users}</button><button class="icon-btn" data-del="${r.id}" aria-label="Delete">${I.trash}</button></span>` : ''}</div>`).join('')
       : '<div class="card empty" style="grid-column:1/-1"><b>No resources yet</b>Save SOPs, scripts, templates, and handy links here.</div>';
@@ -3252,7 +3395,7 @@ function chatMsgHTML(m, prev, opts = {}) {
       ${albumHTML(imgs)}
       ${audios.map((a) => voiceHTML(a)).join('')}
       ${meetHTML(m.text)}
-      ${files.length ? `<div class="cmsg-files">${files.map((a) => `<a class="cmsg-file" href="${esc(a.url)}${a.drive ? '' : '?download=1'}" target="_blank" rel="noopener">${I.clip.replace('width="18" height="18"', 'width="14" height="14"')}<span>${esc(a.name)}</span></a>`).join('')}</div>` : ''}`}
+      ${files.length ? `<div class="cmsg-files">${files.map((a) => `<a class="cmsg-file" href="${esc(a.url)}${a.drive ? '' : '?download=1'}" target="_blank" rel="noopener" ${a.drive ? '' : previewAttrs(a.url, a.name, a.type)}>${I.clip.replace('width="18" height="18"', 'width="14" height="14"')}<span>${esc(a.name)}</span></a>`).join('')}</div>` : ''}`}
       ${rx.length ? `<div class="rx-row">${rx.map((r) => `<button type="button" class="rx ${r.mine ? 'mine' : ''}" data-react="${esc(r.emoji)}"><span class="rx-e">${esc(r.emoji)}</span><span>${r.count}</span></button>`).join('')}<button type="button" class="rx rx-add" data-react-add title="Add reaction">${I.smile}<span>+</span></button></div>` : ''}
       ${m.reply_count && !opts.thread ? `<button type="button" class="cmsg-replies" data-thread="${esc(m.thread)}">${I.chat.replace('width="18" height="18"', 'width="14" height="14"')}${m.reply_count} ${m.reply_count === 1 ? 'reply' : 'replies'}<span>· last ${timeAgo(m.last_reply.replace(/\.\d+Z$/, 'Z'))}</span></button>` : ''}
     </div>
@@ -4198,7 +4341,7 @@ async function chatPopup(sid, n, opts = {}) {
       const rx = (m.reactions || []).filter((x) => x.count);
       // text goes in the bubble; photos, GIFs and voice notes stand on their own (no bubble around them)
       const textHTML = m.deleted ? `<i>${unsentText(m)}</i>` : (chatTextHTML(m, myGid) || '')
-        + m.attachments.filter((a) => !a.is_image && !a.is_audio).map((a) => `<a href="${esc(a.url)}" target="_blank" rel="noopener">📎 ${esc(a.name)}</a>`).join('');
+        + m.attachments.filter((a) => !a.is_image && !a.is_audio).map((a) => `<a href="${esc(a.url)}" target="_blank" rel="noopener" ${a.drive ? '' : previewAttrs(a.url, a.name, a.type)}>📎 ${esc(a.name)}</a>`).join('');
       const media = m.deleted ? '' : albumHTML(m.attachments.filter((a) => a.is_image)) + m.attachments.filter((a) => a.is_audio).map((a) => voiceHTML(a)).join('') + meetHTML(m.text);
       const time = new Date(m.create_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
       items.push({ key: m.key || `m:${m.id}`, msg: true, html: `<div class="cp-msg ${m.sender.is_me ? 'me' : ''} ${first ? 'first' : 'cont'} ${m.pending ? 'pending' : ''} ${m.deleted ? 'unsent' : ''}" data-mid="${m.id}">
