@@ -22,13 +22,19 @@ EVENTS = []       # [{"seq", "uid", "text", "t"}]  chat bubbles, everyone sees t
 INBOX = {}        # uid -> [{"seq", "from", "data", "t"}]   duel moves addressed to one person
 _seq = [0]
 
-MAP_W, MAP_H = 72, 38
+MAP_W, MAP_H = 106, 38
 POS_TTL = 25          # seconds without a poll before someone's live position is dropped
 EVENT_TTL = 90
 GAMES = ("snake", "dash", "duel", "type")
 SCORE_COLS = {"snake": "snake", "dash": "dash", "duel": "duel", "type": "typerace"}   # game -> office_scores column
 LOOK = {"skin": 6, "hairStyle": 5, "hair": 8, "shirt": 10, "pants": 5, "acc": 4}
 MODES = ("", "meeting", "social")
+CARRY = ("coffee", "drink", "snack", "water", "burger", "paper", "ball")   # what someone can be holding
+ACTS = ("toilet", "wash", "nurse", "grill", "hoop", "dance", "wave", "drive", "film", "paint", "present", "write", "kick")   # what someone is doing right now
+EMOTES = ("dance", "wave", "shout", "fart", "poop", "pee", "honk")
+MESSES = []           # [{"id", "kind": "poop"|"pee", "x", "y", "uid", "t"}] floor messes anyone can clean up
+MESS_TTL, MESS_MAX = 900, 40
+_last_emote = {}      # uid -> time of their last emote (a little rate limit)
 DUEL_TYPES = ("inv", "acc", "dec", "bye", "lock", "rev")
 
 SCHEMA_SQLITE = """
@@ -68,6 +74,7 @@ def _prune(now):
     for uid in [u for u, p in POS.items() if now - p["t"] > POS_TTL]:
         POS.pop(uid, None)
     EVENTS[:] = [e for e in EVENTS if now - e["t"] < EVENT_TTL][-200:]
+    MESSES[:] = [m for m in MESSES if now - m["t"] < MESS_TTL][-MESS_MAX:]
     for uid in list(INBOX):
         INBOX[uid] = [m for m in INBOX[uid] if now - m["t"] < EVENT_TTL][-100:]
         if not INBOX[uid]:
@@ -178,7 +185,7 @@ def _team():
             "task": tasks.get(uid), "note": p.get("note") or "", "mode": p.get("mode") or "",
             "look": _clean_look(p.get("look") or "") if p.get("look") else None,
             "online": now - last_seen.get(uid, 0) < 70,
-            "pos": {"x": pos["x"], "y": pos["y"], "g": pos.get("g")} if pos else None,
+            "pos": {k: pos.get(k) for k in ("x", "y", "g", "car", "carry", "act", "dir")} if pos else None,
         })
     return out
 
@@ -246,6 +253,33 @@ def _race():
     return {"date": today.isoformat(), "racers": racers}
 
 
+def _general_space(uid):
+    """The Google Chat space Office chat goes to: a space named 'General' that this person belongs to."""
+    if not getattr(H.gchat, "configured", lambda: False)():
+        return None
+    try:
+        return H.q("SELECT s.id, s.gname, s.display_name FROM chat_spaces s JOIN chat_members m ON m.space_id=s.id "
+                   "WHERE m.user_id=? AND s.space_type='SPACE' AND lower(s.display_name) LIKE ? "
+                   "AND EXISTS (SELECT 1 FROM google_accounts g WHERE g.user_id=m.user_id AND g.refresh_token IS NOT NULL AND g.refresh_token!='') "
+                   "ORDER BY CASE WHEN lower(s.display_name)='general' THEN 0 ELSE 1 END, s.last_active DESC LIMIT 1",
+                   (uid, "%general%"), one=True)
+    except Exception:
+        return None
+
+
+def _post_to_chat(uid, space, text, shout):
+    """Post an Office chat line into the General space as that person (runs in the background)."""
+    gc = H.gchat
+    try:
+        body = {"text": ("📣 " if shout else "🏢 ") + text + "  _(from the Office)_"}
+        m = gc.gapi(uid, "POST", f"/v1/{space['gname']}/messages", body=body)
+        gc._ingest(space["id"], uid, [m], notify=True)
+    except (gc.NotConnected, gc.GoogleError) as e:
+        print(f"[office] couldn't post to {space['display_name']} for user {uid}: {e}", flush=True)
+    except Exception as e:   # never let a chat hiccup break the Office
+        print(f"[office] chat post failed: {type(e).__name__}: {e}", flush=True)
+
+
 def register(module):
     global H
     H = module
@@ -267,7 +301,8 @@ def register(module):
         scores = {r["user_id"]: {g: r.get(col) or 0 for g, col in SCORE_COLS.items()}
                   for r in H.q("SELECT * FROM office_scores")}
         return jsonify(me=uid, owner_id=_owner_id(), exec_ids=_exec_ids(), people=_team(), scores=scores,
-                       events=events, inbox=inbox, seq=seq, server_time=time.time())
+                       events=events, inbox=inbox, seq=seq, server_time=time.time(),
+                       messes=[{k: m[k] for k in ("id", "kind", "x", "y", "uid")} for m in MESSES])
 
     @app.get("/api/office/race")
     @lr
@@ -280,11 +315,14 @@ def register(module):
         uid, d = H.current_user()["id"], H.body()
         x, y = _int(d.get("x"), 0, MAP_W - 1), _int(d.get("y"), 0, MAP_H - 1)
         g = d.get("g") if d.get("g") in GAMES else None
+        extra = {"car": bool(d.get("car")), "carry": d.get("carry") if d.get("carry") in CARRY else None,
+                 "act": d.get("act") if d.get("act") in ACTS else None,
+                 "dir": d.get("dir") if d.get("dir") in ("up", "down", "left", "right") else None}
         with _lock:
             if d.get("leave"):
                 POS.pop(uid, None)
             elif x is not None and y is not None:
-                POS[uid] = {"x": x, "y": y, "g": g, "t": time.time()}
+                POS[uid] = {"x": x, "y": y, "g": g, "t": time.time(), **extra}
         return jsonify(ok=True)
 
     @app.post("/api/office/profile")
@@ -310,13 +348,53 @@ def register(module):
     @app.post("/api/office/say")
     @lr
     def office_say():
-        uid = H.current_user()["id"]
-        text = " ".join(str(H.body().get("text") or "").split())[:120]
+        uid, d = H.current_user()["id"], H.body()
+        text = " ".join(str(d.get("text") or "").split())[:120]
         if not text:
             return H.bad("Say something first")
+        shout = bool(d.get("shout"))
         with _lock:
-            EVENTS.append({"seq": _next(), "uid": uid, "text": text, "t": time.time()})
+            EVENTS.append({"seq": _next(), "uid": uid, "text": text, "t": time.time(), "shout": shout})
             _prune(time.time())
+        space = _general_space(uid)
+        if space:
+            threading.Thread(target=_post_to_chat, args=(uid, space, text, shout), daemon=True).start()
+        return jsonify(ok=True, chat=space["display_name"] if space else None)
+
+    @app.post("/api/office/emote")
+    @lr
+    def office_emote():
+        uid, d, now = H.current_user()["id"], H.body(), time.time()
+        emote = d.get("emote")
+        if emote not in EMOTES or emote == "shout":
+            return H.bad("Unknown move")
+        with _lock:
+            if now - _last_emote.get(uid, 0) < 1.5:
+                return H.bad("Slow down a little", 429)
+            pos = POS.get(uid)
+            if not pos:
+                return H.bad("Walk into the Office first")
+            _last_emote[uid] = now
+            ev = {"seq": _next(), "uid": uid, "kind": "emote", "what": emote, "x": pos["x"], "y": pos["y"], "t": now}
+            if emote in ("poop", "pee"):
+                MESSES.append({"id": ev["seq"], "kind": emote, "x": pos["x"], "y": pos["y"], "uid": uid, "t": now})
+                ev["mess"] = ev["seq"]
+            EVENTS.append(ev)
+            _prune(now)
+        return jsonify(ok=True)
+
+    @app.post("/api/office/mess/clean")
+    @lr
+    def office_clean():
+        uid, now = H.current_user()["id"], time.time()
+        mid = _int(H.body().get("id"), 1, 10 ** 12)
+        with _lock:
+            m = next((m for m in MESSES if m["id"] == mid), None)
+            if not m:
+                return jsonify(ok=True, gone=True)
+            MESSES.remove(m)
+            EVENTS.append({"seq": _next(), "uid": uid, "kind": "emote", "what": "clean", "x": m["x"], "y": m["y"],
+                           "mess": mid, "by": m["uid"], "t": now})
         return jsonify(ok=True)
 
     @app.post("/api/office/duel")

@@ -3,8 +3,8 @@
    act out their In Progress task. Talks to /api/office/* (see office.py). Loaded after app.js, uses its helpers. */
 'use strict';
 
-const OFFICE_CSS = "/* Layout: game client. HUD bar on top; left rail = you + roster by room; right = the walkable office, chat bar, activity log. Stacks map-first on phones. Single committed dark look. */\n/* Her Haus brand: navy #0C2E60 \u00b7 red #CB252B \u00b7 white \u00b7 mist #EDF2F8 (from the Hub). Single committed navy look. */\n.office-app {--bg: #081f42;\n  --panel: #0C2E60;\n  --panel-2: #143b75;\n  --ink: #FFFFFF;\n  --muted: #b8c7de;\n  --line: rgba(237, 242, 248, .16);\n  --accent: #CB252B;\n  --accent-ink: #ff6b70;\n  --accent-soft: rgba(203, 37, 43, .28);\n  --mist: #EDF2F8;\n  --live: #4ade80;\n  --danger: #ff8a8e;\n  --font-display: \"Montserrat\", system-ui, -apple-system, \"Segoe UI\", sans-serif;\n  --font-body: \"VT323\", ui-monospace, \"SF Mono\", Menlo, monospace;\n  color-scheme: dark; container: office / inline-size; background: var(--bg); border-radius: 16px; padding: 12px; box-shadow: 0 20px 50px -24px rgba(8, 31, 66, .55); }\n.office-app * {box-sizing: border-box; }\n.office-app {background: var(--bg); }\n.office-app {color: var(--ink); font-family: var(--font-body); font-size: 19px; line-height: 1.2; }\n.office-app .wrap { display: grid; gap: 12px; }\n.office-app .hud {display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; }\n.office-app .brand {display: flex; align-items: center; gap: 10px; padding: 6px 14px 6px 10px; background: #fff; border: 1px solid #fff; border-radius: 6px; }\n.office-app .brand svg {width: 38px; height: 26px; flex: none; }\n.office-app .brand h1 .her {color: var(--accent); }\n.office-app .brand h1 {color: var(--panel); }\n.office-app .brand small {color: #4a6286 !important; }\n.office-app .brand h1 {margin: 0; font-family: var(--font-display); font-weight: 800; font-size: 20px; letter-spacing: .04em; line-height: 1; text-transform: uppercase; }\n.office-app .brand small {display: block; font-family: var(--font-body); font-size: 15px; color: var(--muted); }\n.office-app .stat {display: grid; align-content: center; min-width: 74px; padding: 4px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; font-variant-numeric: tabular-nums; }\n.office-app .stat b {font-family: var(--font-display); font-size: 20px; font-weight: 700; line-height: 1.1; }\n.office-app .stat span {color: var(--muted); font-size: 15px; }\n.office-app .stat.live b {color: var(--live); }\n.office-app .stat.clock {margin-left: auto; }\n.office-app .main {display: grid; grid-template-columns: 320px minmax(0, 1fr); grid-template-areas: \"side map\"; gap: 12px; align-items: start; }\n.office-app .side {grid-area: side; display: grid; gap: 12px; min-width: 0; }\n.office-app .mapcol {grid-area: map; display: grid; gap: 10px; min-width: 0; }\n@container office (max-width: 900px) {.office-app .main {grid-template-columns: minmax(0, 1fr); grid-template-areas: \"map\" \"side\"; }\n}\n.office-app .card {background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px; display: grid; gap: 10px; min-width: 0; }\n.office-app .card h2 {margin: 0; font-family: var(--font-display); font-size: 14px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }\n.office-app .screen {position: relative; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: #000; min-width: 0; }\n.office-app canvas#of-office {display: block; width: 100%; height: auto; image-rendering: pixelated; image-rendering: crisp-edges; cursor: pointer; }\n.office-app canvas#of-office:focus-visible {outline: 2px solid #fff; outline-offset: -2px; }\n.office-app .overlay {position: absolute; inset: 0; pointer-events: none; overflow: hidden; }\n.office-app .sign {position: absolute; transform: translate(-50%, -50%); font-family: var(--font-display); font-weight: 700; font-size: clamp(8px, 1vw, 13px);\n  color: #fff; background: rgba(12, 46, 96, .92); border: 1px solid #081f42; border-radius: 3px; padding: 1px 6px; white-space: nowrap; letter-spacing: .03em; }\n.office-app .tag {position: absolute; transform: translate(-50%, -100%); pointer-events: auto; cursor: pointer; font: inherit; font-size: clamp(11px, 1.1vw, 15px); line-height: 1;\n  padding: 1px 5px 2px; white-space: nowrap; background: rgba(8, 31, 66, .88); color: #fff; border: 1px solid #081f42; border-radius: 3px; }\n.office-app .tag.live::before {content: \"\"; display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--live); margin-right: 4px; vertical-align: 2px; }\n.office-app .tag.me {background: var(--accent); color: #fff; }\n.office-app .tag.sel {outline: 2px solid #fff; z-index: 3; }\n.office-app .tag.hide {display: none; }\n.office-app .tag small {display: block; max-width: 11em; overflow: hidden; text-overflow: ellipsis; font-size: .82em; color: #c9d6e8; margin-top: 1px; }\n.office-app .tag.me small {color: #ffe0e1; }\n.office-app .bubble {position: absolute; transform: translate(-50%, -100%); max-width: 34%; padding: 3px 7px 4px; background: #fff; color: #0C2E60; border: 1px solid #0C2E60;\n  border-radius: 6px; font-size: clamp(12px, 1.2vw, 16px); line-height: 1.05; z-index: 4; overflow-wrap: anywhere; text-align: center; }\n.office-app .bubble::after {content: \"\"; position: absolute; left: 50%; bottom: -5px; width: 8px; height: 8px; background: #fff; border-right: 1px solid #0C2E60; border-bottom: 1px solid #0C2E60; transform: translateX(-50%) rotate(45deg); }\n.office-app .chatbar {display: flex; gap: 8px; }\n.office-app .chatbar input {flex: 1; min-width: 0; font: inherit; font-size: 20px; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }\n.office-app .hint {color: var(--muted); font-size: 16px; }\n.office-app .banner {background: var(--panel-2); border: 1px dashed rgba(237, 242, 248, .35); border-radius: 6px; padding: 8px 12px; color: var(--muted); }\n.office-app .banner b {color: var(--accent-ink); font-weight: 400; }\n.office-app .btn {font-family: var(--font-display); font-weight: 700; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; cursor: pointer; padding: 8px 12px; border-radius: 5px; border: 1px solid #081f42; box-shadow: 0 2px 0 #051632; }\n.office-app .btn.primary {background: var(--accent); color: #fff; border-color: #8f1a1f; }\n.office-app .btn.primary:hover {background: #e03a40; }\n.office-app .btn.ghost {background: var(--panel-2); color: var(--ink); border-color: var(--line); }\n.office-app .btn:active {transform: translateY(2px); box-shadow: none; }\n.office-app .btn:disabled {opacity: .45; cursor: not-allowed; }\n.office-app button:focus-visible, .office-app input:focus-visible, .office-app summary:focus-visible {outline: 2px solid #fff; outline-offset: 2px; }\n.office-app .me-row {display: flex; align-items: center; gap: 10px; min-width: 0; }\n.office-app .me-row img {width: 32px; height: 48px; image-rendering: pixelated; flex: none; background: var(--panel-2); border-radius: 4px; }\n.office-app .me-row div {min-width: 0; }\n.office-app .me-row strong {display: block; font-weight: 400; font-size: 21px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.office-app .me-row span {color: var(--muted); font-size: 16px; }\n.office-app .picks {display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }\n.office-app .pick {font: inherit; font-size: 17px; text-align: left; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px;\n  padding: 4px 8px; cursor: pointer; display: grid; grid-template-columns: 9px minmax(0, 1fr); column-gap: 7px; align-items: center; min-width: 0; line-height: 1; }\n.office-app .pick i {width: 9px; height: 9px; border-radius: 2px; grid-row: span 2; }\n.office-app .pick small {color: var(--muted); font-size: 14px; }\n.office-app .pick[aria-pressed=\"true\"] {border-color: var(--accent); background: var(--accent-soft); }\n.office-app .lbl {display: grid; gap: 4px; color: var(--muted); font-size: 16px; }\n.office-app .lbl input {font: inherit; font-size: 19px; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 5px 8px; width: 100%; }\n.office-app .row {display: flex; flex-wrap: wrap; gap: 8px; }\n.office-app .chips {display: flex; flex-wrap: wrap; gap: 4px; }\n.office-app .chips button {font: inherit; font-size: 15px; color: var(--ink); background: transparent; border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; cursor: pointer; }\n.office-app .chips button:hover {border-color: var(--accent); background: var(--accent-soft); }\n.office-app .detect {font-size: 16px; color: var(--muted); min-height: 1.2em; }\n.office-app .detect b {color: var(--ink); font-weight: 400; }\n.office-app .msg {min-height: 1.2em; color: var(--muted); font-size: 16px; }\n.office-app .msg.err {color: var(--danger); }\n.office-app details.editor {border-top: 1px solid var(--line); padding-top: 8px; }\n.office-app details.editor summary {cursor: pointer; font-family: var(--font-display); font-weight: 700; font-size: 13px; letter-spacing: .03em; list-style: none; display: flex; justify-content: space-between; }\n.office-app details.editor summary::after {content: \"+\"; color: var(--muted); }\n.office-app details.editor[open] summary::after {content: \"\u2013\"; }\n.office-app .edit-body {display: grid; gap: 8px; margin-top: 10px; }\n.office-app #of-preview {width: 100%; max-width: 260px; height: auto; image-rendering: pixelated; background: var(--panel-2); border-radius: 5px; justify-self: center; }\n.office-app .opt {display: grid; gap: 3px; }\n.office-app .opt > span {color: var(--muted); font-size: 15px; }\n.office-app .opts {display: flex; flex-wrap: wrap; gap: 4px; }\n.office-app .sw {width: 22px; height: 22px; border-radius: 4px; border: 2px solid transparent; cursor: pointer; padding: 0; box-shadow: inset 0 0 0 1px rgba(0,0,0,.5); }\n.office-app .sw[aria-pressed=\"true\"] {border-color: #fff; box-shadow: 0 0 0 2px var(--accent); }\n.office-app .word {font: inherit; font-size: 15px; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 2px 7px; cursor: pointer; }\n.office-app .word[aria-pressed=\"true\"] {border-color: var(--accent); color: #fff; background: var(--accent-soft); }\n.office-app .group {display: grid; gap: 2px; }\n.office-app .group h3 {margin: 4px 0 2px; font-family: var(--font-display); font-weight: 700; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; }\n.office-app .person {font: inherit; color: inherit; width: 100%; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 5px; cursor: pointer;\n  display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 0 9px; align-items: center; padding: 4px 6px; }\n.office-app .person:hover {background: var(--panel-2); }\n.office-app .person.sel {border-color: var(--accent); background: var(--panel-2); }\n.office-app .person img {width: 22px; height: 33px; image-rendering: pixelated; grid-row: span 2; }\n.office-app .person .nm {overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 19px; }\n.office-app .person .nm.live::before {content: \"\"; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--live); margin-right: 5px; vertical-align: 3px; }\n.office-app .person .ago {color: var(--muted); font-size: 15px; font-variant-numeric: tabular-nums; }\n.office-app .person .st {grid-column: 2 / 4; color: var(--muted); font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.office-app .person .st i {display: inline-block; width: 7px; height: 7px; border-radius: 2px; margin-right: 5px; }\n.office-app .feed {max-height: 230px; overflow-y: auto; display: grid; gap: 0; align-content: start; }\n.office-app .feed .ln {display: grid; grid-template-columns: 70px 16px minmax(60px, 120px) minmax(0, 1fr); gap: 8px; align-items: center; padding: 3px 2px; border-bottom: 1px solid rgba(237, 242, 248, .08); font-size: 17px; }\n.office-app .feed .ln time {color: var(--muted); font-variant-numeric: tabular-nums; }\n.office-app .feed .ln img {width: 16px; height: 24px; image-rendering: pixelated; }\n.office-app .feed .ln b {font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.office-app .feed .ln span {color: #dbe4f1; overflow-wrap: anywhere; }\n.office-app .feed .ln span.say {color: #fff; }\n.office-app .feed .ln span.say::before {content: \"\u201c\"; }\n.office-app .feed .ln span.say::after {content: \"\u201d\"; }\n.office-app .empty {color: var(--muted); }\n@container office (max-width: 560px) {.office-app .feed .ln {grid-template-columns: 58px 14px minmax(0, 1fr); }\n.office-app .feed .ln b {display: none; }\n}\n/* arcade */\n.office-app .games {display: grid; gap: 6px; }\n.office-app .game {font: inherit; color: var(--ink); text-align: left; background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px; padding: 6px 8px; cursor: pointer;\n  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 8px; align-items: baseline; }\n.office-app .game:hover {border-color: var(--accent); }\n.office-app .game b {font-family: var(--font-display); font-weight: 700; font-size: 14px; }\n.office-app .game em {font-style: normal; color: var(--accent-ink); font-variant-numeric: tabular-nums; font-size: 17px; }\n.office-app .game span {grid-column: 1 / 3; color: var(--muted); font-size: 15px; }\n.office-app .tabs {display: flex; gap: 4px; flex-wrap: wrap; }\n.office-app .tabs button {font: inherit; font-size: 16px; color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 4px; padding: 1px 8px; cursor: pointer; }\n.office-app .tabs button[aria-selected=\"true\"] {color: var(--ink); border-color: var(--accent); }\n.office-app .lb {list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }\n.office-app .lb li {display: grid; grid-template-columns: 20px 14px minmax(0, 1fr) auto; gap: 8px; align-items: center; font-size: 18px; }\n.office-app .lb li .rk {color: var(--muted); font-variant-numeric: tabular-nums; }\n.office-app .lb li img {width: 14px; height: 21px; image-rendering: pixelated; }\n.office-app .lb li .n {overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.office-app .lb li .v {color: var(--accent-ink); font-variant-numeric: tabular-nums; }\n.office-app .lb li.me .n {color: var(--accent-ink); }\n.office-app .arcade {position: fixed; inset: 0; z-index: 50; background: rgba(5, 18, 40, .8); display: flex; align-items: center; justify-content: center; padding-inline: 16px; padding-block: 16px; }\n.office-app .cab {width: min(520px, 100%); max-height: 100%; overflow-y: auto; background: var(--panel); border: 2px solid #081f42; border-radius: 10px; box-shadow: 0 0 0 4px var(--accent), 0 18px 40px rgba(0,0,0,.6); padding: 12px; display: grid; gap: 10px; }\n.office-app .cab header {display: flex; align-items: center; gap: 10px; }\n.office-app .cab h2 {margin: 0; font-family: var(--font-display); font-weight: 800; font-size: 18px; text-transform: uppercase; letter-spacing: .04em; flex: 1; min-width: 0; }\n.office-app .cab #of-ag-score {font-family: var(--font-display); font-weight: 700; color: var(--accent-ink); font-size: 18px; font-variant-numeric: tabular-nums; }\n.office-app #of-agc {width: 100%; height: auto; aspect-ratio: 1; image-rendering: pixelated; background: #081f42; border-radius: 6px; touch-action: none; cursor: pointer; }\n.office-app #of-ag-msg {margin: 0; color: var(--muted); font-size: 18px; min-height: 1.2em; }\n.office-app #of-ag-msg b {color: var(--ink); font-weight: 400; }\n.office-app .pad {display: grid; grid-template-columns: repeat(3, 56px); grid-template-rows: repeat(2, 44px); gap: 6px; justify-content: center; }\n.office-app .pad button {font-family: var(--font-display); font-size: 18px; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; touch-action: manipulation; }\n.office-app .pad button:active {background: var(--accent-soft); }\n.office-app .pad .u {grid-column: 2; grid-row: 1; }\n.office-app .pad .l {grid-column: 1; grid-row: 2; }\n.office-app .pad .d {grid-column: 2; grid-row: 2; }\n.office-app .pad .r {grid-column: 3; grid-row: 2; }\n.office-app .pad.flap {grid-template-columns: 1fr; grid-template-rows: 52px; }\n.office-app .pad.flap button {width: 100%; }\n.office-app #of-ag-panel {display: grid; gap: 10px; }\n.office-app .duel-score {display: flex; justify-content: center; gap: 18px; font-family: var(--font-display); font-size: 26px; font-variant-numeric: tabular-nums; }\n.office-app .duel-score span {color: var(--muted); font-size: 15px; font-family: var(--font-body); display: block; text-align: center; }\n.office-app .duel-picks {display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }\n.office-app .duel-picks button {font: inherit; font-size: 18px; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 4px; cursor: pointer; display: grid; justify-items: center; gap: 4px; }\n.office-app .duel-picks button img {width: 48px; height: 48px; image-rendering: pixelated; }\n.office-app .duel-picks button[aria-pressed=\"true\"] {border-color: var(--accent); background: var(--accent-soft); }\n.office-app .duel-picks button:disabled {cursor: default; }\n.office-app .duel-picks button:disabled:not([aria-pressed=\"true\"]) {opacity: .45; }\n.office-app .reveal {text-align: center; font-size: 20px; min-height: 1.3em; }\n.office-app .opps {display: grid; gap: 4px; }\n.office-app .opps .person {grid-template-columns: 22px minmax(0, 1fr) auto; }\n.office-app .toasts {position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 60; display: grid; gap: 8px; width: min(420px, calc(100% - 32px)); }\n.office-app .toast {background: var(--panel); border: 2px solid var(--accent); border-radius: 8px; padding: 10px 12px; display: grid; gap: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.5); }\n\n/* Hub page integration */\n.office-app .clockrow { display: flex; flex-wrap: wrap; gap: 6px; }\n.office-app .shiftline { font-size: 16px; color: var(--muted); }\n.office-app .shiftline b { color: var(--ink); font-weight: 400; }\n.office-app .pick small { color: var(--muted); }\n\n/* the Hub has no global [hidden] reset; the Office relies on it */\n.office-app [hidden] { display: none !important; }\n/* the Hub colours headings navy; on the Office's navy panels they need the light ink */\n.office-app h1, .office-app h2, .office-app h3 { color: var(--ink); letter-spacing: normal; }\n.office-app .group h3 { color: var(--muted); }\n\n/* Deadline Race */\n.office-app .race h2 .race-day { color: var(--muted); font-weight: 500; text-transform: none; letter-spacing: 0; }\n.office-app .race-note { color: var(--muted); font-size: 16px; }\n.office-app .race-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }\n.office-app .race-list li.row-r { display: grid; grid-template-columns: 30px minmax(110px, 170px) minmax(0, 1fr) minmax(86px, auto); gap: 4px 10px; align-items: center; padding: 6px 8px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; }\n.office-app .race-list li.row-r.me { border-color: var(--accent); }\n.office-app .medal { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-family: var(--font-display); font-weight: 800; font-size: 13px; color: #081f42; background: #b8c7de; box-shadow: inset 0 -2px 0 rgba(0,0,0,.25); }\n.office-app .medal.g1 { background: #f2c94c; } .office-app .medal.g2 { background: #d5dbe3; } .office-app .medal.g3 { background: #d08a4a; }\n.office-app .rname { min-width: 0; }\n.office-app .rname b { display: block; font-weight: 400; font-size: 19px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.office-app .rname span { display: block; color: var(--muted); font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.office-app .race-list canvas { width: 100%; height: auto; image-rendering: pixelated; border-radius: 4px; display: block; }\n.office-app .rstat { text-align: right; font-variant-numeric: tabular-nums; line-height: 1.1; }\n.office-app .rstat b { display: block; font-weight: 400; font-size: 18px; }\n.office-app .rstat span { font-size: 15px; color: var(--muted); }\n.office-app .rstat .ahead { color: var(--live); } .office-app .rstat .behind { color: var(--danger); }\n@container office (max-width: 560px) { .office-app .race-list li.row-r { grid-template-columns: 30px minmax(0, 1fr) auto; } .office-app .race-list li.row-r canvas { grid-column: 1 / -1; grid-row: 2; } }\n\n/* Type Race */\n.office-app .tr-count { text-align: center; font-family: var(--font-display); font-weight: 800; font-size: 40px; color: var(--accent-ink); min-height: 1.1em; }\n.office-app .tr-phrase { font-size: 22px; line-height: 1.35; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; overflow-wrap: anywhere; }\n.office-app .tr-phrase .ok { color: #4ade80; }\n.office-app .tr-phrase .cur { background: var(--accent); color: #fff; }\n.office-app .tr-phrase .rest { color: var(--muted); }\n.office-app .tr-input { font: inherit; font-size: 22px; width: 100%; color: var(--ink); background: var(--bg); border: 2px solid var(--line); border-radius: 6px; padding: 8px 10px; }\n.office-app .tr-input.bad { border-color: var(--danger); background: rgba(203, 37, 43, .18); }\n.office-app .tr-rows { display: grid; gap: 4px; }\n.office-app .tr-row { display: grid; grid-template-columns: minmax(60px, 90px) minmax(0, 1fr) minmax(90px, auto); gap: 8px; align-items: center; }\n.office-app .tr-row b { font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.office-app .tr-row.me b { color: var(--accent-ink); }\n.office-app .tr-row canvas { width: 100%; height: auto; image-rendering: pixelated; border-radius: 4px; }\n.office-app .tr-stat { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }\n";
-const OFFICE_HTML = "<div class=\"wrap\">\n  <header class=\"hud\">\n        <div class=\"stat\"><b id=\"of-s-in\">0</b><span>in office</span></div>\n    <div class=\"stat\"><b id=\"of-s-meet\">0</b><span>in meetings</span></div>\n    <div class=\"stat\"><b id=\"of-s-break\">0</b><span>on break</span></div>\n    <div class=\"stat\"><b id=\"of-s-out\">0</b><span>out of office</span></div>\n    <div class=\"stat live\"><b id=\"of-s-live\">0</b><span>here now</span></div>\n    \n  </header>\n\n  <div class=\"main\">\n    <section class=\"mapcol\" aria-label=\"Office\">\n      <div class=\"screen\">\n        <canvas id=\"of-office\" width=\"688\" height=\"304\" tabindex=\"0\" role=\"img\" aria-label=\"Pixel office map. Click the floor to walk your character there; arrow keys also move.\"></canvas>\n        <div class=\"overlay\" id=\"of-overlay\"></div>\n      </div>\n      <div class=\"banner\" id=\"of-banner\" hidden></div>\n      <form class=\"chatbar\" id=\"of-chatform\" autocomplete=\"off\">\n        <input id=\"of-say\" type=\"text\" maxlength=\"120\" placeholder=\"Say something\u2026 (press Enter)\" aria-label=\"Say something\">\n        <button class=\"btn primary\" type=\"submit\" id=\"of-saybtn\">Say</button>\n      </form>\n      <div class=\"hint\">Click the floor to walk. Arrow keys or WASD work when the map is focused. Your character follows your Hub clock and your In Progress task.</div>\n      <section class=\"card\" aria-labelledby=\"of-h-feed\">\n        <h2 id=\"of-h-feed\">Activity</h2>\n        <div class=\"feed\" id=\"of-feed\"><div class=\"empty\">Nothing yet. Status changes, chat and room moves show up here.</div></div>\n      </section>\n      <section class=\"card race\" aria-labelledby=\"of-h-race\">\n        <h2 id=\"of-h-race\">Deadline Race <span class=\"race-day\" id=\"of-race-day\">\u00b7 today</span></h2>\n        <div class=\"race-note\">Everyone with time blocks today. The runner shows how much of their blocked time is done; the white flag is where their schedule says they should be. Finishing ahead of your deadlines puts you in front.</div>\n        <ol class=\"race-list\" id=\"of-race\"><li class=\"empty\">Loading the race\u2026</li></ol>\n      </section>\n    </section>\n\n    <aside class=\"side\">\n      <section class=\"card\" aria-labelledby=\"of-h-me\">\n        <h2 id=\"of-h-me\">You</h2>\n        <div class=\"me-row\" id=\"of-merow\"><img id=\"of-meimg\" alt=\"\"><div><strong id=\"of-mename\">Connecting\u2026</strong><span id=\"of-mesub\"></span></div></div>\n        <div class=\"picks\" id=\"of-picks\" role=\"group\" aria-label=\"Status\"></div>\n        <div class=\"shiftline\" id=\"of-shiftline\"></div>\n        <div class=\"clockrow\" id=\"of-clockrow\"></div>\n        <label class=\"lbl\" for=\"of-note\">Note (optional, shows instead of your Hub task)\n          <input id=\"of-note\" type=\"text\" maxlength=\"80\" placeholder=\"e.g. Calling sellers, showing 88 Elm St\">\n        </label>\n        <div class=\"chips\" id=\"of-chips\" aria-label=\"Quick tasks\"></div>\n        <div class=\"detect\" id=\"of-detect\"></div>\n        <div class=\"row\">\n          <button class=\"btn primary\" id=\"of-save\" type=\"button\">Save</button>\n        </div>\n        <div class=\"msg\" id=\"of-msg\" role=\"status\"></div>\n        <details class=\"editor\" id=\"of-editor\">\n          <summary>Customize character</summary>\n          <div class=\"edit-body\">\n            <canvas id=\"of-preview\" width=\"48\" height=\"16\" aria-label=\"Character preview from four sides\"></canvas>\n            <div id=\"of-optrows\"></div>\n            <div class=\"row\">\n              <button class=\"btn primary\" id=\"of-savelook\" type=\"button\">Save character</button>\n              <button class=\"btn ghost\" id=\"of-randlook\" type=\"button\">Shuffle</button>\n            </div>\n          </div>\n        </details>\n      </section>\n\n      <section class=\"card\" aria-labelledby=\"of-h-arcade\">\n        <h2 id=\"of-h-arcade\">Arcade <span style=\"color:var(--muted);font-weight:500\">\u00b7 Break room</span></h2>\n        <div class=\"games\" id=\"of-games\"></div>\n        <div class=\"tabs\" id=\"of-lbtabs\" role=\"tablist\" aria-label=\"Leaderboard\"></div>\n        <ol class=\"lb\" id=\"of-lb\"></ol>\n      </section>\n\n      <section class=\"card\" aria-labelledby=\"of-h-roster\">\n        <h2 id=\"of-h-roster\">Who's where</h2>\n        <div id=\"of-roster\"></div>\n      </section>\n    </aside>\n  </div>\n</div>\n\n<div class=\"arcade\" id=\"of-arcade\" hidden role=\"dialog\" aria-modal=\"true\" aria-labelledby=\"of-ag-title\">\n  <div class=\"cab\">\n    <header><h2 id=\"of-ag-title\">Arcade</h2><span id=\"of-ag-score\"></span><button class=\"btn ghost\" id=\"of-ag-close\" type=\"button\">Close</button></header>\n    <canvas id=\"of-agc\" width=\"240\" height=\"240\" tabindex=\"0\" aria-label=\"Game screen\"></canvas>\n    <div id=\"of-ag-panel\" hidden></div>\n    <p id=\"of-ag-msg\" role=\"status\"></p>\n    <div class=\"pad\" id=\"of-ag-pad\"></div>\n  </div>\n</div>\n<div class=\"toasts\" id=\"of-toasts\" aria-live=\"polite\"></div>";
+const OFFICE_CSS = "/* Layout: game client. HUD bar on top; left rail = you + roster by room; right = the walkable office, chat bar, activity log. Stacks map-first on phones. Single committed dark look. */\n/* Her Haus brand: navy #0C2E60 \u00b7 red #CB252B \u00b7 white \u00b7 mist #EDF2F8 (from the Hub). Single committed navy look. */\n.office-app {--bg: #081f42;\n  --panel: #0C2E60;\n  --panel-2: #143b75;\n  --ink: #FFFFFF;\n  --muted: #b8c7de;\n  --line: rgba(237, 242, 248, .16);\n  --accent: #CB252B;\n  --accent-ink: #ff6b70;\n  --accent-soft: rgba(203, 37, 43, .28);\n  --mist: #EDF2F8;\n  --live: #4ade80;\n  --danger: #ff8a8e;\n  --font-display: \"Montserrat\", system-ui, -apple-system, \"Segoe UI\", sans-serif;\n  --font-body: \"VT323\", ui-monospace, \"SF Mono\", Menlo, monospace;\n  color-scheme: dark; container: office / inline-size; background: var(--bg); border-radius: 16px; padding: 12px; box-shadow: 0 20px 50px -24px rgba(8, 31, 66, .55); }\n.office-app * {box-sizing: border-box; }\n.office-app {background: var(--bg); }\n.office-app {color: var(--ink); font-family: var(--font-body); font-size: 19px; line-height: 1.2; }\n.office-app .wrap { display: grid; gap: 12px; }\n.office-app .hud {display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; }\n.office-app .brand {display: flex; align-items: center; gap: 10px; padding: 6px 14px 6px 10px; background: #fff; border: 1px solid #fff; border-radius: 6px; }\n.office-app .brand svg {width: 38px; height: 26px; flex: none; }\n.office-app .brand h1 .her {color: var(--accent); }\n.office-app .brand h1 {color: var(--panel); }\n.office-app .brand small {color: #4a6286 !important; }\n.office-app .brand h1 {margin: 0; font-family: var(--font-display); font-weight: 800; font-size: 20px; letter-spacing: .04em; line-height: 1; text-transform: uppercase; }\n.office-app .brand small {display: block; font-family: var(--font-body); font-size: 15px; color: var(--muted); }\n.office-app .stat {display: grid; align-content: center; min-width: 74px; padding: 4px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; font-variant-numeric: tabular-nums; }\n.office-app .stat b {font-family: var(--font-display); font-size: 20px; font-weight: 700; line-height: 1.1; }\n.office-app .stat span {color: var(--muted); font-size: 15px; }\n.office-app .stat.live b {color: var(--live); }\n.office-app .stat.clock {margin-left: auto; }\n.office-app .main {display: grid; grid-template-columns: 320px minmax(0, 1fr); grid-template-areas: \"side map\"; gap: 12px; align-items: start; }\n.office-app .side {grid-area: side; display: grid; gap: 12px; min-width: 0; }\n.office-app .mapcol {grid-area: map; display: grid; gap: 10px; min-width: 0; }\n@container office (max-width: 900px) {.office-app .main {grid-template-columns: minmax(0, 1fr); grid-template-areas: \"map\" \"side\"; }\n}\n.office-app .card {background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px; display: grid; gap: 10px; min-width: 0; }\n.office-app .card h2 {margin: 0; font-family: var(--font-display); font-size: 14px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }\n.office-app .screen {position: relative; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: #000; min-width: 0; }\n.office-app canvas#of-office {display: block; width: 100%; height: auto; image-rendering: pixelated; image-rendering: crisp-edges; cursor: pointer; }\n.office-app canvas#of-office:focus-visible {outline: 2px solid #fff; outline-offset: -2px; }\n.office-app .overlay {position: absolute; inset: 0; pointer-events: none; overflow: hidden; }\n.office-app .sign {position: absolute; transform: translate(-50%, -50%); font-family: var(--font-display); font-weight: 700; font-size: clamp(8px, 1vw, 13px);\n  color: #fff; background: rgba(12, 46, 96, .92); border: 1px solid #081f42; border-radius: 3px; padding: 1px 6px; white-space: nowrap; letter-spacing: .03em; }\n.office-app .tag {position: absolute; transform: translate(-50%, -100%); pointer-events: auto; cursor: pointer; font: inherit; font-size: clamp(11px, 1.1vw, 15px); line-height: 1;\n  padding: 1px 5px 2px; white-space: nowrap; background: rgba(8, 31, 66, .88); color: #fff; border: 1px solid #081f42; border-radius: 3px; }\n.office-app .tag.live::before {content: \"\"; display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--live); margin-right: 4px; vertical-align: 2px; }\n.office-app .tag.me {background: var(--accent); color: #fff; }\n.office-app .tag.sel {outline: 2px solid #fff; z-index: 3; }\n.office-app .tag.hide {display: none; }\n.office-app .tag small {display: block; max-width: 11em; overflow: hidden; text-overflow: ellipsis; font-size: .82em; color: #c9d6e8; margin-top: 1px; }\n.office-app .tag.me small {color: #ffe0e1; }\n.office-app .bubble {position: absolute; transform: translate(-50%, -100%); max-width: 34%; padding: 3px 7px 4px; background: #fff; color: #0C2E60; border: 1px solid #0C2E60;\n  border-radius: 6px; font-size: clamp(12px, 1.2vw, 16px); line-height: 1.05; z-index: 4; overflow-wrap: anywhere; text-align: center; }\n.office-app .bubble::after {content: \"\"; position: absolute; left: 50%; bottom: -5px; width: 8px; height: 8px; background: #fff; border-right: 1px solid #0C2E60; border-bottom: 1px solid #0C2E60; transform: translateX(-50%) rotate(45deg); }\n.office-app .chatbar {display: flex; gap: 8px; }\n.office-app .chatbar input {flex: 1; min-width: 0; font: inherit; font-size: 20px; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }\n.office-app .hint {color: var(--muted); font-size: 16px; }\n.office-app .banner {background: var(--panel-2); border: 1px dashed rgba(237, 242, 248, .35); border-radius: 6px; padding: 8px 12px; color: var(--muted); }\n.office-app .banner b {color: var(--accent-ink); font-weight: 400; }\n.office-app .btn {font-family: var(--font-display); font-weight: 700; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; cursor: pointer; padding: 8px 12px; border-radius: 5px; border: 1px solid #081f42; box-shadow: 0 2px 0 #051632; }\n.office-app .btn.primary {background: var(--accent); color: #fff; border-color: #8f1a1f; }\n.office-app .btn.primary:hover {background: #e03a40; }\n.office-app .btn.ghost {background: var(--panel-2); color: var(--ink); border-color: var(--line); }\n.office-app .btn:active {transform: translateY(2px); box-shadow: none; }\n.office-app .btn:disabled {opacity: .45; cursor: not-allowed; }\n.office-app button:focus-visible, .office-app input:focus-visible, .office-app summary:focus-visible {outline: 2px solid #fff; outline-offset: 2px; }\n.office-app .me-row {display: flex; align-items: center; gap: 10px; min-width: 0; }\n.office-app .me-row img {width: 32px; height: 48px; image-rendering: pixelated; flex: none; background: var(--panel-2); border-radius: 4px; }\n.office-app .me-row div {min-width: 0; }\n.office-app .me-row strong {display: block; font-weight: 400; font-size: 21px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.office-app .me-row span {color: var(--muted); font-size: 16px; }\n.office-app .picks {display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }\n.office-app .pick {font: inherit; font-size: 17px; text-align: left; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px;\n  padding: 4px 8px; cursor: pointer; display: grid; grid-template-columns: 9px minmax(0, 1fr); column-gap: 7px; align-items: center; min-width: 0; line-height: 1; }\n.office-app .pick i {width: 9px; height: 9px; border-radius: 2px; grid-row: span 2; }\n.office-app .pick small {color: var(--muted); font-size: 14px; }\n.office-app .pick[aria-pressed=\"true\"] {border-color: var(--accent); background: var(--accent-soft); }\n.office-app .lbl {display: grid; gap: 4px; color: var(--muted); font-size: 16px; }\n.office-app .lbl input {font: inherit; font-size: 19px; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 5px 8px; width: 100%; }\n.office-app .row {display: flex; flex-wrap: wrap; gap: 8px; }\n.office-app .chips {display: flex; flex-wrap: wrap; gap: 4px; }\n.office-app .chips button {font: inherit; font-size: 15px; color: var(--ink); background: transparent; border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; cursor: pointer; }\n.office-app .chips button:hover {border-color: var(--accent); background: var(--accent-soft); }\n.office-app .detect {font-size: 16px; color: var(--muted); min-height: 1.2em; }\n.office-app .detect b {color: var(--ink); font-weight: 400; }\n.office-app .msg {min-height: 1.2em; color: var(--muted); font-size: 16px; }\n.office-app .msg.err {color: var(--danger); }\n.office-app details.editor {border-top: 1px solid var(--line); padding-top: 8px; }\n.office-app details.editor summary {cursor: pointer; font-family: var(--font-display); font-weight: 700; font-size: 13px; letter-spacing: .03em; list-style: none; display: flex; justify-content: space-between; }\n.office-app details.editor summary::after {content: \"+\"; color: var(--muted); }\n.office-app details.editor[open] summary::after {content: \"\u2013\"; }\n.office-app .edit-body {display: grid; gap: 8px; margin-top: 10px; }\n.office-app #of-preview {width: 100%; max-width: 260px; height: auto; image-rendering: pixelated; background: var(--panel-2); border-radius: 5px; justify-self: center; }\n.office-app .opt {display: grid; gap: 3px; }\n.office-app .opt > span {color: var(--muted); font-size: 15px; }\n.office-app .opts {display: flex; flex-wrap: wrap; gap: 4px; }\n.office-app .sw {width: 22px; height: 22px; border-radius: 4px; border: 2px solid transparent; cursor: pointer; padding: 0; box-shadow: inset 0 0 0 1px rgba(0,0,0,.5); }\n.office-app .sw[aria-pressed=\"true\"] {border-color: #fff; box-shadow: 0 0 0 2px var(--accent); }\n.office-app .word {font: inherit; font-size: 15px; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 2px 7px; cursor: pointer; }\n.office-app .word[aria-pressed=\"true\"] {border-color: var(--accent); color: #fff; background: var(--accent-soft); }\n.office-app .group {display: grid; gap: 2px; }\n.office-app .group h3 {margin: 4px 0 2px; font-family: var(--font-display); font-weight: 700; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; }\n.office-app .person {font: inherit; color: inherit; width: 100%; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 5px; cursor: pointer;\n  display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 0 9px; align-items: center; padding: 4px 6px; }\n.office-app .person:hover {background: var(--panel-2); }\n.office-app .person.sel {border-color: var(--accent); background: var(--panel-2); }\n.office-app .person img {width: 22px; height: 33px; image-rendering: pixelated; grid-row: span 2; }\n.office-app .person .nm {overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 19px; }\n.office-app .person .nm.live::before {content: \"\"; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--live); margin-right: 5px; vertical-align: 3px; }\n.office-app .person .ago {color: var(--muted); font-size: 15px; font-variant-numeric: tabular-nums; }\n.office-app .person .st {grid-column: 2 / 4; color: var(--muted); font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.office-app .person .st i {display: inline-block; width: 7px; height: 7px; border-radius: 2px; margin-right: 5px; }\n.office-app .feed {max-height: 230px; overflow-y: auto; display: grid; gap: 0; align-content: start; }\n.office-app .feed .ln {display: grid; grid-template-columns: 70px 16px minmax(60px, 120px) minmax(0, 1fr); gap: 8px; align-items: center; padding: 3px 2px; border-bottom: 1px solid rgba(237, 242, 248, .08); font-size: 17px; }\n.office-app .feed .ln time {color: var(--muted); font-variant-numeric: tabular-nums; }\n.office-app .feed .ln img {width: 16px; height: 24px; image-rendering: pixelated; }\n.office-app .feed .ln b {font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.office-app .feed .ln span {color: #dbe4f1; overflow-wrap: anywhere; }\n.office-app .feed .ln span.say {color: #fff; }\n.office-app .feed .ln span.say::before {content: \"\u201c\"; }\n.office-app .feed .ln span.say::after {content: \"\u201d\"; }\n.office-app .empty {color: var(--muted); }\n@container office (max-width: 560px) {.office-app .feed .ln {grid-template-columns: 58px 14px minmax(0, 1fr); }\n.office-app .feed .ln b {display: none; }\n}\n/* arcade */\n.office-app .games {display: grid; gap: 6px; }\n.office-app .game {font: inherit; color: var(--ink); text-align: left; background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px; padding: 6px 8px; cursor: pointer;\n  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 8px; align-items: baseline; }\n.office-app .game:hover {border-color: var(--accent); }\n.office-app .game b {font-family: var(--font-display); font-weight: 700; font-size: 14px; }\n.office-app .game em {font-style: normal; color: var(--accent-ink); font-variant-numeric: tabular-nums; font-size: 17px; }\n.office-app .game span {grid-column: 1 / 3; color: var(--muted); font-size: 15px; }\n.office-app .tabs {display: flex; gap: 4px; flex-wrap: wrap; }\n.office-app .tabs button {font: inherit; font-size: 16px; color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 4px; padding: 1px 8px; cursor: pointer; }\n.office-app .tabs button[aria-selected=\"true\"] {color: var(--ink); border-color: var(--accent); }\n.office-app .lb {list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }\n.office-app .lb li {display: grid; grid-template-columns: 20px 14px minmax(0, 1fr) auto; gap: 8px; align-items: center; font-size: 18px; }\n.office-app .lb li .rk {color: var(--muted); font-variant-numeric: tabular-nums; }\n.office-app .lb li img {width: 14px; height: 21px; image-rendering: pixelated; }\n.office-app .lb li .n {overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.office-app .lb li .v {color: var(--accent-ink); font-variant-numeric: tabular-nums; }\n.office-app .lb li.me .n {color: var(--accent-ink); }\n.office-app .arcade {position: fixed; inset: 0; z-index: 50; background: rgba(5, 18, 40, .8); display: flex; align-items: center; justify-content: center; padding-inline: 16px; padding-block: 16px; }\n.office-app .cab {width: min(520px, 100%); max-height: 100%; overflow-y: auto; background: var(--panel); border: 2px solid #081f42; border-radius: 10px; box-shadow: 0 0 0 4px var(--accent), 0 18px 40px rgba(0,0,0,.6); padding: 12px; display: grid; gap: 10px; }\n.office-app .cab header {display: flex; align-items: center; gap: 10px; }\n.office-app .cab h2 {margin: 0; font-family: var(--font-display); font-weight: 800; font-size: 18px; text-transform: uppercase; letter-spacing: .04em; flex: 1; min-width: 0; }\n.office-app .cab #of-ag-score {font-family: var(--font-display); font-weight: 700; color: var(--accent-ink); font-size: 18px; font-variant-numeric: tabular-nums; }\n.office-app #of-agc {width: 100%; height: auto; aspect-ratio: 1; image-rendering: pixelated; background: #081f42; border-radius: 6px; touch-action: none; cursor: pointer; }\n.office-app #of-ag-msg {margin: 0; color: var(--muted); font-size: 18px; min-height: 1.2em; }\n.office-app #of-ag-msg b {color: var(--ink); font-weight: 400; }\n.office-app .pad {display: grid; grid-template-columns: repeat(3, 56px); grid-template-rows: repeat(2, 44px); gap: 6px; justify-content: center; }\n.office-app .pad button {font-family: var(--font-display); font-size: 18px; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; touch-action: manipulation; }\n.office-app .pad button:active {background: var(--accent-soft); }\n.office-app .pad .u {grid-column: 2; grid-row: 1; }\n.office-app .pad .l {grid-column: 1; grid-row: 2; }\n.office-app .pad .d {grid-column: 2; grid-row: 2; }\n.office-app .pad .r {grid-column: 3; grid-row: 2; }\n.office-app .pad.flap {grid-template-columns: 1fr; grid-template-rows: 52px; }\n.office-app .pad.flap button {width: 100%; }\n.office-app #of-ag-panel {display: grid; gap: 10px; }\n.office-app .duel-score {display: flex; justify-content: center; gap: 18px; font-family: var(--font-display); font-size: 26px; font-variant-numeric: tabular-nums; }\n.office-app .duel-score span {color: var(--muted); font-size: 15px; font-family: var(--font-body); display: block; text-align: center; }\n.office-app .duel-picks {display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }\n.office-app .duel-picks button {font: inherit; font-size: 18px; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 4px; cursor: pointer; display: grid; justify-items: center; gap: 4px; }\n.office-app .duel-picks button img {width: 48px; height: 48px; image-rendering: pixelated; }\n.office-app .duel-picks button[aria-pressed=\"true\"] {border-color: var(--accent); background: var(--accent-soft); }\n.office-app .duel-picks button:disabled {cursor: default; }\n.office-app .duel-picks button:disabled:not([aria-pressed=\"true\"]) {opacity: .45; }\n.office-app .reveal {text-align: center; font-size: 20px; min-height: 1.3em; }\n.office-app .opps {display: grid; gap: 4px; }\n.office-app .opps .person {grid-template-columns: 22px minmax(0, 1fr) auto; }\n.office-app .toasts {position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 60; display: grid; gap: 8px; width: min(420px, calc(100% - 32px)); }\n.office-app .toast {background: var(--panel); border: 2px solid var(--accent); border-radius: 8px; padding: 10px 12px; display: grid; gap: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.5); }\n\n/* Hub page integration */\n.office-app .clockrow { display: flex; flex-wrap: wrap; gap: 6px; }\n.office-app .shiftline { font-size: 16px; color: var(--muted); }\n.office-app .shiftline b { color: var(--ink); font-weight: 400; }\n.office-app .pick small { color: var(--muted); }\n\n/* the Hub has no global [hidden] reset; the Office relies on it */\n.office-app [hidden] { display: none !important; }\n/* the Hub colours headings navy; on the Office's navy panels they need the light ink */\n.office-app h1, .office-app h2, .office-app h3 { color: var(--ink); letter-spacing: normal; }\n.office-app .group h3 { color: var(--muted); }\n\n/* Deadline Race */\n.office-app .race h2 .race-day { color: var(--muted); font-weight: 500; text-transform: none; letter-spacing: 0; }\n.office-app .race-note { color: var(--muted); font-size: 16px; }\n.office-app .race-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }\n.office-app .race-list li.row-r { display: grid; grid-template-columns: 30px minmax(110px, 170px) minmax(0, 1fr) minmax(86px, auto); gap: 4px 10px; align-items: center; padding: 6px 8px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; }\n.office-app .race-list li.row-r.me { border-color: var(--accent); }\n.office-app .medal { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-family: var(--font-display); font-weight: 800; font-size: 13px; color: #081f42; background: #b8c7de; box-shadow: inset 0 -2px 0 rgba(0,0,0,.25); }\n.office-app .medal.g1 { background: #f2c94c; } .office-app .medal.g2 { background: #d5dbe3; } .office-app .medal.g3 { background: #d08a4a; }\n.office-app .rname { min-width: 0; }\n.office-app .rname b { display: block; font-weight: 400; font-size: 19px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.office-app .rname span { display: block; color: var(--muted); font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.office-app .race-list canvas { width: 100%; height: auto; image-rendering: pixelated; border-radius: 4px; display: block; }\n.office-app .rstat { text-align: right; font-variant-numeric: tabular-nums; line-height: 1.1; }\n.office-app .rstat b { display: block; font-weight: 400; font-size: 18px; }\n.office-app .rstat span { font-size: 15px; color: var(--muted); }\n.office-app .rstat .ahead { color: var(--live); } .office-app .rstat .behind { color: var(--danger); }\n@container office (max-width: 560px) { .office-app .race-list li.row-r { grid-template-columns: 30px minmax(0, 1fr) auto; } .office-app .race-list li.row-r canvas { grid-column: 1 / -1; grid-row: 2; } }\n\n/* Type Race */\n.office-app .tr-count { text-align: center; font-family: var(--font-display); font-weight: 800; font-size: 40px; color: var(--accent-ink); min-height: 1.1em; }\n.office-app .tr-phrase { font-size: 22px; line-height: 1.35; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; overflow-wrap: anywhere; }\n.office-app .tr-phrase .ok { color: #4ade80; }\n.office-app .tr-phrase .cur { background: var(--accent); color: #fff; }\n.office-app .tr-phrase .rest { color: var(--muted); }\n.office-app .tr-input { font: inherit; font-size: 22px; width: 100%; color: var(--ink); background: var(--bg); border: 2px solid var(--line); border-radius: 6px; padding: 8px 10px; }\n.office-app .tr-input.bad { border-color: var(--danger); background: rgba(203, 37, 43, .18); }\n.office-app .tr-rows { display: grid; gap: 4px; }\n.office-app .tr-row { display: grid; grid-template-columns: minmax(60px, 90px) minmax(0, 1fr) minmax(90px, auto); gap: 8px; align-items: center; }\n.office-app .tr-row b { font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.office-app .tr-row.me b { color: var(--accent-ink); }\n.office-app .tr-row canvas { width: 100%; height: auto; image-rendering: pixelated; border-radius: 4px; }\n.office-app .tr-stat { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }\n\n/* moves, car, things to do */\n.office-app .emotes, .office-app .things, .office-app .carbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }\n.office-app .emotes .spacer { flex: 1; }\n.office-app .lbl-in { color: var(--muted); font-size: 16px; margin-right: 2px; }\n.office-app .pillbtn { font: inherit; font-size: 16px; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 2px 11px; cursor: pointer; }\n.office-app .pillbtn:hover { border-color: var(--accent); background: var(--accent-soft); }\n.office-app .pillbtn[aria-pressed=\"false\"] { color: var(--muted); }\n.office-app .things .pillbtn { background: var(--panel-2); }\n.office-app .carbar { background: var(--panel-2); border: 1px solid var(--accent); border-radius: 6px; padding: 6px 10px; }\n.office-app .bubble.shout { background: #CB252B; color: #fff; border-color: #8f1a1f; font-weight: 700; font-size: clamp(14px, 1.6vw, 20px); }\n.office-app .bubble.shout::after { background: #CB252B; border-color: #8f1a1f; }\n.office-app canvas#of-office.can-use { cursor: pointer; }\n";
+const OFFICE_HTML = "<div class=\"wrap\">\n  <header class=\"hud\">\n        <div class=\"stat\"><b id=\"of-s-in\">0</b><span>in office</span></div>\n    <div class=\"stat\"><b id=\"of-s-meet\">0</b><span>in meetings</span></div>\n    <div class=\"stat\"><b id=\"of-s-break\">0</b><span>on break</span></div>\n    <div class=\"stat\"><b id=\"of-s-out\">0</b><span>out of office</span></div>\n    <div class=\"stat live\"><b id=\"of-s-live\">0</b><span>here now</span></div>\n    \n  </header>\n\n  <div class=\"main\">\n    <section class=\"mapcol\" aria-label=\"Office\">\n      <div class=\"screen\">\n        <canvas id=\"of-office\" width=\"848\" height=\"304\" tabindex=\"0\" role=\"img\" aria-label=\"Pixel office map. Click the floor to walk your character there; arrow keys also move.\"></canvas>\n        <div class=\"overlay\" id=\"of-overlay\"></div>\n      </div>\n      <div class=\"banner\" id=\"of-banner\" hidden></div>\n      <form class=\"chatbar\" id=\"of-chatform\" autocomplete=\"off\">\n        <input id=\"of-say\" type=\"text\" maxlength=\"120\" placeholder=\"Say something\u2026 (press Enter)\" aria-label=\"Say something\">\n        <button class=\"btn primary\" type=\"submit\" id=\"of-saybtn\">Say</button>\n      </form>\n      <div class=\"carbar\" id=\"of-carbar\" hidden><b>You\u2019re driving.</b> Use the arrow keys or click the lot. <button type=\"button\" class=\"pillbtn\" data-car=\"honk\">Honk (H)</button><button type=\"button\" class=\"pillbtn\" data-car=\"park\">Park (E)</button></div>\n      <div class=\"emotes\" id=\"of-emotes\" role=\"group\" aria-label=\"Moves\">\n        <span class=\"lbl-in\">Moves</span>\n        <button type=\"button\" class=\"pillbtn\" data-emote=\"dance\">Dance</button>\n        <button type=\"button\" class=\"pillbtn\" data-emote=\"wave\">Wave</button>\n        <button type=\"button\" class=\"pillbtn\" data-emote=\"shout\" title=\"Shouts what's in the chat box (or HEY!)\">Shout</button>\n        <button type=\"button\" class=\"pillbtn\" data-emote=\"fart\">Fart</button>\n        <button type=\"button\" class=\"pillbtn\" data-emote=\"poop\">Poop</button>\n        <button type=\"button\" class=\"pillbtn\" data-emote=\"pee\">Pee</button>\n        <span class=\"spacer\"></span>\n        <button type=\"button\" class=\"pillbtn\" id=\"of-sound\" aria-pressed=\"true\">Sound on</button>\n        <button type=\"button\" class=\"pillbtn\" id=\"of-notify\">Notify me</button>\n      </div>\n      <div class=\"things\" id=\"of-things\" aria-live=\"polite\"></div>\n      <div class=\"hint\">Click the floor to walk, or click things to use them. Arrow keys or WASD work when the map is focused. Office chat also goes to your team's General chat.</div>\n      <section class=\"card\" aria-labelledby=\"of-h-feed\">\n        <h2 id=\"of-h-feed\">Activity</h2>\n        <div class=\"feed\" id=\"of-feed\"><div class=\"empty\">Nothing yet. Status changes, chat and room moves show up here.</div></div>\n      </section>\n      <section class=\"card race\" aria-labelledby=\"of-h-race\">\n        <h2 id=\"of-h-race\">Deadline Race <span class=\"race-day\" id=\"of-race-day\">\u00b7 today</span></h2>\n        <div class=\"race-note\">Everyone with time blocks today. The runner shows how much of their blocked time is done; the white flag is where their schedule says they should be. Finishing ahead of your deadlines puts you in front.</div>\n        <ol class=\"race-list\" id=\"of-race\"><li class=\"empty\">Loading the race\u2026</li></ol>\n      </section>\n    </section>\n\n    <aside class=\"side\">\n      <section class=\"card\" aria-labelledby=\"of-h-me\">\n        <h2 id=\"of-h-me\">You</h2>\n        <div class=\"me-row\" id=\"of-merow\"><img id=\"of-meimg\" alt=\"\"><div><strong id=\"of-mename\">Connecting\u2026</strong><span id=\"of-mesub\"></span></div></div>\n        <div class=\"picks\" id=\"of-picks\" role=\"group\" aria-label=\"Status\"></div>\n        <div class=\"shiftline\" id=\"of-shiftline\"></div>\n        <div class=\"clockrow\" id=\"of-clockrow\"></div>\n        <label class=\"lbl\" for=\"of-note\">Note (optional, shows instead of your Hub task)\n          <input id=\"of-note\" type=\"text\" maxlength=\"80\" placeholder=\"e.g. Calling sellers, showing 88 Elm St\">\n        </label>\n        <div class=\"chips\" id=\"of-chips\" aria-label=\"Quick tasks\"></div>\n        <div class=\"detect\" id=\"of-detect\"></div>\n        <div class=\"row\">\n          <button class=\"btn primary\" id=\"of-save\" type=\"button\">Save</button>\n        </div>\n        <div class=\"msg\" id=\"of-msg\" role=\"status\"></div>\n        <details class=\"editor\" id=\"of-editor\">\n          <summary>Customize character</summary>\n          <div class=\"edit-body\">\n            <canvas id=\"of-preview\" width=\"48\" height=\"16\" aria-label=\"Character preview from four sides\"></canvas>\n            <div id=\"of-optrows\"></div>\n            <div class=\"row\">\n              <button class=\"btn primary\" id=\"of-savelook\" type=\"button\">Save character</button>\n              <button class=\"btn ghost\" id=\"of-randlook\" type=\"button\">Shuffle</button>\n            </div>\n          </div>\n        </details>\n      </section>\n\n      <section class=\"card\" aria-labelledby=\"of-h-arcade\">\n        <h2 id=\"of-h-arcade\">Arcade <span style=\"color:var(--muted);font-weight:500\">\u00b7 Break room</span></h2>\n        <div class=\"games\" id=\"of-games\"></div>\n        <div class=\"tabs\" id=\"of-lbtabs\" role=\"tablist\" aria-label=\"Leaderboard\"></div>\n        <ol class=\"lb\" id=\"of-lb\"></ol>\n      </section>\n\n      <section class=\"card\" aria-labelledby=\"of-h-roster\">\n        <h2 id=\"of-h-roster\">Who's where</h2>\n        <div id=\"of-roster\"></div>\n      </section>\n    </aside>\n  </div>\n</div>\n\n<div class=\"arcade\" id=\"of-arcade\" hidden role=\"dialog\" aria-modal=\"true\" aria-labelledby=\"of-ag-title\">\n  <div class=\"cab\">\n    <header><h2 id=\"of-ag-title\">Arcade</h2><span id=\"of-ag-score\"></span><button class=\"btn ghost\" id=\"of-ag-close\" type=\"button\">Close</button></header>\n    <canvas id=\"of-agc\" width=\"240\" height=\"240\" tabindex=\"0\" aria-label=\"Game screen\"></canvas>\n    <div id=\"of-ag-panel\" hidden></div>\n    <p id=\"of-ag-msg\" role=\"status\"></p>\n    <div class=\"pad\" id=\"of-ag-pad\"></div>\n  </div>\n</div>\n<div class=\"toasts\" id=\"of-toasts\" aria-live=\"polite\"></div>";
 
 // eslint-disable-next-line no-unused-vars
 async function pageOffice(page) {
@@ -19,8 +19,8 @@ async function pageOffice(page) {
   // same shape backed by the Hub: /api/office/state is polled every second for people, positions, chat and duels.
   const HUB = (() => {
     let last = null, seq = 0, timer = null, stopped = false, first = true;
-    const subs = { desks: [], scores: [], config: [], peers: [], say: [], duel: [], type: [] };
-    const pres = { x: null, y: null, g: null }; let presTimer = null;
+    const subs = { desks: [], scores: [], config: [], peers: [], say: [], duel: [], type: [], emote: [], messes: [] };
+    const pres = { x: null, y: null, g: null, car: false, carry: null, act: null, dir: null }; let presTimer = null;
     const statusOf = (p) => p.shift === 'off' ? 'out' : p.shift === 'lunch' ? 'lunch' : p.shift === 'break' ? 'break'
       : p.mode === 'meeting' ? 'meeting' : p.mode === 'social' ? 'social' : (p.note || p.task) ? 'focus' : 'available';
     function deliver(kind) {
@@ -29,6 +29,7 @@ async function pageOffice(page) {
       if (kind === 'desks' || !kind) { const docs = s.people.map((p) => ({ id: p.id, exists: true, data: () => ({ status: statusOf(p), note: p.note || (p.task ? p.task.title : ''), updatedAt: Date.now(), joinedAt: p.id, look: p.look, hub: p }) })); subs.desks.forEach((f) => f({ docs })); }
       if (kind === 'scores' || !kind) { const docs = Object.entries(s.scores).map(([id, v]) => ({ id: Number(id), exists: true, data: () => v })); subs.scores.forEach((f) => f({ docs })); }
       if (kind === 'config' || !kind) subs.config.forEach((f) => f({ exists: true, data: () => ({ ownerId: s.owner_id, execIds: s.exec_ids || [] }) }));
+      if (kind === 'messes' || !kind) subs.messes.forEach((f) => f(s.messes || []));
       if (kind === 'peers' || !kind) { const peers = s.people.filter((p) => p.pos).map((p) => ({ kind: 'viewer', isMe: p.id === s.me, sameTab: p.id === s.me, by: p.id, peer: 'u' + p.id, guest: false, presence: p.pos })); subs.peers.forEach((f) => f({ peers, joined: [], left: [], updated: [] })); }
     }
     async function poll() {
@@ -41,7 +42,8 @@ async function pageOffice(page) {
         if (!first) {
           for (const e of s.events) {
             if (e.kind === 'type') subs.type.forEach((f) => f(e, s.me));
-            else if (e.uid !== s.me) subs.say.forEach((f) => f({ by: e.uid, isMe: false, data: { text: e.text } }));
+            else if (e.kind === 'emote') subs.emote.forEach((f) => f(e, s.me));
+            else if (e.uid !== s.me) subs.say.forEach((f) => f({ by: e.uid, isMe: false, data: { text: e.text, shout: !!e.shout } }));
           }
           for (const m of s.inbox) subs.duel.forEach((f) => f({ by: m.from, isMe: false, data: { ...m.data, to: s.me } }));
         }
@@ -62,10 +64,10 @@ async function pageOffice(page) {
       presence: (patch) => {
         Object.assign(pres, patch);
         if (pres.x == null || stopped) return Promise.resolve();
-        if (!presTimer) presTimer = setTimeout(() => { presTimer = null; if (!stopped) api('POST', '/api/office/move', { x: pres.x, y: pres.y, g: pres.g }).catch(() => {}); }, 150);
+        if (!presTimer) presTimer = setTimeout(() => { presTimer = null; if (!stopped) api('POST', '/api/office/move', { ...pres }).catch(() => {}); }, 150);
         return Promise.resolve();
       },
-      emit: (topic, data) => topic === 'say' ? api('POST', '/api/office/say', { text: data.text }) : api('POST', '/api/office/duel', data),
+      emit: (topic, data) => topic === 'say' ? api('POST', '/api/office/say', { text: data.text, shout: !!data.shout }) : api('POST', '/api/office/duel', data),
       on: (topic, f) => { (subs[topic] || (subs[topic] = [])).push(f); return () => {}; },
       onPeers: (f) => sub('peers', f),
     };
@@ -78,7 +80,7 @@ async function pageOffice(page) {
   })();
 
   // ================= constants =================
-  const TS = 8, MW = 86, MH = 38, W = MW * TS, H = MH * TS;
+  const TS = 8, MW = 106, MH = 38, W = MW * TS, H = MH * TS;
   const RM = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const $ = (id) => document.getElementById('of-' + id);
   const cv = $('office'), ctx = cv.getContext('2d');
@@ -86,6 +88,46 @@ async function pageOffice(page) {
   ctx.imageSmoothingEnabled = false;
   const R = (x, y, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(x, y, w, h); };
   let NOW = performance.now();
+
+  // ---- sounds, made on the fly with Web Audio (nothing to download)
+  const SND = { ctx: null, on: true };
+  try { SND.on = localStorage.getItem('hh_office_sound') !== '0'; } catch (_) { /* storage blocked */ }
+  function sfx(kind) {
+    if (!SND.on) return;
+    try {
+      const A = SND.ctx || (SND.ctx = new (window.AudioContext || window.webkitAudioContext)());
+      if (A.state === 'suspended') A.resume();
+      const t0 = A.currentTime;
+      const tone = (type, f0, f1, start, dur, vol) => {
+        const o = A.createOscillator(), g = A.createGain(); o.type = type;
+        o.frequency.setValueAtTime(f0, t0 + start); if (f1) o.frequency.exponentialRampToValueAtTime(f1, t0 + start + dur);
+        g.gain.setValueAtTime(vol, t0 + start); g.gain.exponentialRampToValueAtTime(0.0001, t0 + start + dur);
+        o.connect(g); g.connect(A.destination); o.start(t0 + start); o.stop(t0 + start + dur + 0.03);
+      };
+      const noise = (start, dur, vol, f0, f1) => {
+        const b = A.createBuffer(1, Math.max(1, Math.floor(A.sampleRate * dur)), A.sampleRate), d = b.getChannelData(0);
+        for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+        const src = A.createBufferSource(); src.buffer = b;
+        const fl = A.createBiquadFilter(); fl.type = 'bandpass'; fl.frequency.setValueAtTime(f0, t0 + start); if (f1) fl.frequency.exponentialRampToValueAtTime(f1, t0 + start + dur);
+        const g = A.createGain(); g.gain.setValueAtTime(vol, t0 + start); g.gain.exponentialRampToValueAtTime(0.0001, t0 + start + dur);
+        src.connect(fl); fl.connect(g); g.connect(A.destination); src.start(t0 + start);
+      };
+      ({
+        chat: () => { tone('sine', 880, 0, 0, 0.09, 0.12); tone('sine', 1320, 0, 0.09, 0.12, 0.1); },
+        shout: () => { tone('square', 523, 0, 0, 0.12, 0.07); tone('square', 784, 0, 0.12, 0.2, 0.07); },
+        fart: () => { tone('sawtooth', 110, 50, 0, 0.6, 0.16); noise(0, 0.55, 0.3, 160, 70); },
+        plop: () => tone('sine', 420, 80, 0, 0.2, 0.25),
+        pee: () => noise(0, 1.1, 0.12, 3000, 2200),
+        flush: () => noise(0, 1.4, 0.3, 500, 2400),
+        honk: () => { tone('square', 415, 0, 0, 0.18, 0.07); tone('square', 415, 0, 0.26, 0.24, 0.07); },
+        music: () => [523, 659, 784, 1047, 784, 659, 523].forEach((f, i) => tone('triangle', f, 0, i * 0.13, 0.12, 0.08)),
+        swish: () => noise(0, 0.25, 0.12, 1500, 4000),
+        sizzle: () => noise(0, 0.9, 0.06, 5000, 7000),
+        crash: () => { noise(0, 0.4, 0.3, 900, 200); tone('square', 120, 60, 0, 0.3, 0.08); },
+        pop: () => tone('sine', 660, 990, 0, 0.08, 0.1),
+      }[kind] || (() => {}))();
+    } catch (_) { /* audio not available */ }
+  }
 
   const STATUSES = {
     focus:     { label: 'Heads down',     room: 'Data Room',         color: '#7fe0ff' },
@@ -174,6 +216,7 @@ async function pageOffice(page) {
       if (p.shape === 'heart') { R(x, y, 1, 1, p.col); R(x + 2, y, 1, 1, p.col); R(x, y + 1, 3, 1, p.col); R(x + 1, y + 2, 1, 1, p.col); }
       else if (p.shape === 'note') { R(x + 1, y, 1, 3, p.col); R(x + 2, y, 1, 1, p.col); R(x, y + 2, 2, 1, p.col); }
       else if (p.shape === 'big') R(x, y, 2, 2, p.col);
+      else if (p.shape === 'cloud') { R(x, y, 4, 3, p.col); R(x + 1, y - 1, 2, 1, p.col); }
       else if (p.shape === 'mail') { R(x, y, 6, 4, '#ffffff'); R(x, y, 6, 1, '#0C2E60'); R(x + 1, y + 1, 1, 1, '#0C2E60'); R(x + 4, y + 1, 1, 1, '#0C2E60'); R(x + 2, y + 2, 2, 1, '#0C2E60'); }
       else if (p.shape === 'house') { R(x + 2, y, 3, 1, '#0C2E60'); R(x + 1, y + 1, 5, 1, '#0C2E60'); R(x, y + 2, 7, 1, '#0C2E60'); R(x + 1, y + 3, 5, 3, '#EDF2F8'); R(x + 3, y + 4, 1, 2, '#CB252B'); }
       else if (p.shape === 'glyph') ptext(p.col.t, x, y, p.col.c);
@@ -198,26 +241,29 @@ async function pageOffice(page) {
     { id: 'social',  name: 'Social Media room', x0: 5,  y0: 4,  x1: 20, y1: 13, floor: 'studio' },
     { id: 'lunch',   name: 'Lunch room',        x0: 22, y0: 4,  x1: 37, y1: 13, floor: 'checker' },
     { id: 'meeting', name: 'Meeting room',      x0: 39, y0: 4,  x1: 54, y1: 13, floor: 'carpet' },
-    { id: 'hall',    name: 'Hallway',           x0: 5,  y0: 15, x1: 82, y1: 17, floor: 'hall' },
+    { id: 'hall',    name: 'Hallway',           x0: 5,  y0: 15, x1: 100, y1: 17, floor: 'hall' },
+    { id: 'wc',      name: 'Restrooms',         x0: 84, y0: 4,  x1: 92, y1: 13, floor: 'wc' },
+    { id: 'nurse',   name: 'Nursing room',      x0: 94, y0: 4,  x1: 100, y1: 13, floor: 'nurse' },
+    { id: 'patio',   name: 'Patio',             x0: 84, y0: 19, x1: 100, y1: 29, floor: 'deck' },
     { id: 'exec',    name: 'Executive Office',  x0: 56, y0: 4,  x1: 68, y1: 13, floor: 'exec' },
     { id: 'exec2',   name: 'Executive Office 2', x0: 70, y0: 4, x1: 82, y1: 13, floor: 'exec' },
     { id: 'ops',     name: 'Ops Assistant Office', x0: 56, y0: 19, x1: 82, y1: 28, floor: 'ops' },
     { id: 'data',    name: 'Data Room',         x0: 5,  y0: 19, x1: 29, y1: 28, floor: 'data' },
     { id: 'break',   name: 'Break room',        x0: 31, y0: 19, x1: 54, y1: 28, floor: 'break' },
-    { id: 'parking', name: 'Parking lot',       x0: 0,  y0: 31, x1: 85, y1: 36, floor: 'asphalt' },
+    { id: 'parking', name: 'Parking lot',       x0: 0,  y0: 31, x1: 105, y1: 36, floor: 'asphalt' },
   ];
   const zoneAt = (x, y) => ZONES.find((z) => x >= z.x0 && x <= z.x1 && y >= z.y0 && y <= z.y1) || { id: 'outside', name: 'Outside' };
 
   floor(1, 15, 3, 30, 'path');
   ZONES.forEach((z) => floor(z.x0, z.y0, z.x1, z.y1, z.floor));
-  wall(4, 3, 83, 3); wall(4, 29, 83, 29); wall(4, 3, 4, 29); wall(83, 3, 83, 29);
-  wall(55, 4, 55, 13); wall(55, 19, 55, 29); wall(69, 4, 69, 13);
-  wall(5, 14, 82, 14); wall(5, 18, 82, 18);
+  wall(4, 3, 101, 3); wall(4, 29, 83, 29); wall(4, 3, 4, 29); wall(101, 3, 101, 18);
+  wall(55, 4, 55, 13); wall(55, 19, 55, 29); wall(69, 4, 69, 13); wall(83, 4, 83, 13); wall(83, 19, 83, 29); wall(93, 4, 93, 13);
+  wall(5, 14, 100, 14); wall(5, 18, 100, 18);
   wall(21, 4, 21, 13); wall(38, 4, 38, 13); wall(30, 19, 30, 28);
   gap(4, 15, 4, 17);
-  gap(12, 14, 13, 14); gap(29, 14, 30, 14); gap(46, 14, 47, 14); gap(61, 14, 62, 14); gap(75, 14, 76, 14);
-  gap(16, 18, 17, 18); gap(36, 18, 37, 18); gap(49, 18, 50, 18); gap(68, 18, 69, 18);
-  const STALLS = []; for (let x = 6; x <= 78; x += 2) STALLS.push(x);
+  gap(12, 14, 13, 14); gap(29, 14, 30, 14); gap(46, 14, 47, 14); gap(61, 14, 62, 14); gap(75, 14, 76, 14); gap(88, 14, 89, 14); gap(96, 14, 97, 14);
+  gap(16, 18, 17, 18); gap(36, 18, 37, 18); gap(49, 18, 50, 18); gap(68, 18, 69, 18); gap(91, 18, 92, 18);
+  const STALLS = []; for (let x = 6; x <= 94; x += 2) STALLS.push(x);
   const DOOR_Y = 34;
 
   // ================= furniture (depth-sorted objects) =================
@@ -409,7 +455,61 @@ async function pageOffice(page) {
   add(56, 23, 1, 2, true, () => { R(448, 178, 8, 14, '#d6d0c4'); R(449, 176, 6, 3, '#2b2b33'); R(450, 184, 4, 1, '#7fe0ff'); R(449, 188, 6, 1, '#f6f3ee'); });
   plant(56, 19); plant(56, 28); plant(82, 28); plant(82, 23);
 
+  // --- Restrooms: three private stalls (the door closes while someone's inside), sinks, a hand dryer
+  const STALL_SEATS = [];
+  for (const bx of [84, 87, 90]) {
+    solid(bx, 4, bx, 6); solid(bx + 2, 4, bx + 2, 6);
+    add(bx, 4, 3, 1, true, () => {
+      const X = bx * TS;
+      R(X, 18, 24, 22, '#c9d6e8'); R(X + 2, 20, 20, 18, '#e3eaf4');
+      R(X + 8, 26, 8, 8, '#ffffff'); R(X + 9, 22, 6, 5, '#f4f7fb'); R(X + 9, 28, 6, 5, '#dfe7f1'); R(X + 10, 29, 4, 3, '#9ad0e6');
+    });
+    seat(bx + 1, 5, 'down'); STALL_SEATS.push([bx + 1, 5]);
+    add(bx, 6, 3, 1, false, () => {          // stall front: door shut and a red light while in use
+      const X = bx * TS, busy = [...chars.values()].some((c) => c.tx === bx + 1 && c.ty === 5 && !c.path.length);
+      R(X, 34, 3, 22, '#9aa3ad'); R(X + 21, 34, 3, 22, '#9aa3ad');
+      if (busy) { R(X + 3, 34, 18, 22, '#1B4BA8'); R(X + 3, 34, 18, 2, '#3b6fc0'); R(X + 17, 44, 2, 2, '#d4af37'); R(X + 10, 30, 4, 3, '#CB252B'); }
+      else { R(X + 3, 34, 3, 22, '#1B4BA8'); R(X + 10, 30, 4, 3, '#4ade80'); }
+    }, 7 * TS + 1);
+  }
+  add(84, 11, 3, 1, true, () => { R(672, 86, 24, 10, '#dfe7f1'); R(672, 86, 24, 2, '#ffffff'); for (const k of [0, 1, 2]) { R(674 + k * 8, 88, 5, 3, '#9ad0e6'); R(676 + k * 8, 84, 1, 3, '#9aa3ad'); } R(672, 72, 24, 8, '#bfe8ff'); R(672, 72, 24, 1, '#ffffff'); });
+  add(92, 11, 1, 1, true, () => { R(737, 84, 6, 6, '#e5e5e5'); R(738, 89, 4, 1, '#9aa3ad'); });
+  add(84, 13, 1, 1, true, () => { R(673, 106, 6, 7, '#5a5a66'); R(673, 106, 6, 1, '#9aa3ad'); });
+  plant(92, 13);
+  const SINKS = [[84, 10], [85, 10], [86, 10]];
+
+  // --- Nursing room: a private, quiet room with a glider and a curtain that closes while it's in use
+  const NURSE_SEAT = [97, 6];
+  add(97, 6, 1, 1, false, () => { const X = 776, Y = 48; R(X - 2, Y - 8, 12, 9, '#b48cf2'); R(X - 1, Y - 7, 10, 2, '#c9a7f2'); R(X - 1, Y + 1, 10, 4, '#9a72d8'); R(X - 3, Y - 2, 2, 7, '#7a5ab8'); R(X + 9, Y - 2, 2, 7, '#7a5ab8'); }, 6 * TS + 1);
+  seat(97, 6, 'down');
+  add(99, 6, 1, 1, true, () => { R(792, 50, 7, 6, '#c49a6c'); R(794, 46, 3, 4, '#bfe8ff'); });
+  add(100, 4, 1, 2, true, () => { R(800, 22, 8, 22, '#f4f7fb'); R(800, 32, 8, 1, '#c9d6e8'); R(806, 26, 1, 4, '#9aa3ad'); });
+  add(95, 4, 1, 1, true, () => { R(762, 20, 3, 18, '#c49a6c'); R(758, 16, 11, 6, '#f2c94c'); if (night()) { ctx.fillStyle = 'rgba(242,201,76,.18)'; ctx.fillRect(748, 14, 32, 30); } });
+  add(94, 9, 2, 1, true, () => { R(752, 70, 16, 8, '#e5e5e5'); R(752, 70, 16, 2, '#ffffff'); R(756, 68, 8, 2, '#9ad0e6'); });
+  add(96, 7, 3, 1, false, () => {          // privacy curtain
+    const busy = [...chars.values()].some((c) => c.tx === NURSE_SEAT[0] && c.ty === NURSE_SEAT[1] && !c.path.length);
+    R(764, 33, 26, 1, '#9aa3ad');
+    if (busy) { for (let k = 0; k < 6; k++) R(765 + k * 4, 34, 4, 24, k % 2 ? '#c9a7f2' : '#b48cf2'); }
+    else { R(764, 34, 4, 24, '#c9a7f2'); R(786, 34, 4, 24, '#b48cf2'); }
+  }, 8 * TS + 1);
+  plant(94, 13); plant(100, 13);
+
+  // --- Patio (outdoors): grill, picnic table, umbrella table, benches and a basketball hoop
+  add(86, 20, 1, 1, true, () => { R(686, 158, 12, 8, '#2b2b33'); R(687, 157, 10, 2, '#5a5a66'); R(689, 166, 2, 6, '#2b2b33'); R(693, 166, 2, 6, '#2b2b33'); if (Math.floor(NOW / 400) % 2) R(690, 153, 1, 3, 'rgba(255,255,255,.5)'); });
+  add(89, 23, 5, 2, true, () => { R(712, 182, 40, 12, '#a8642c'); R(712, 182, 40, 2, '#c98a3c'); R(716, 194, 2, 4, '#6b3a22'); R(746, 194, 2, 4, '#6b3a22'); R(722, 185, 6, 4, '#CB252B'); R(734, 186, 5, 3, '#f2c94c'); });
+  for (let x = 89; x <= 93; x++) { seat(x, 22, 'down'); seat(x, 25, 'up'); }
+  add(97, 22, 1, 1, true, () => { R(775, 178, 10, 6, '#f4f7fb'); R(779, 170, 2, 10, '#9aa3ad'); R(771, 162, 18, 4, '#CB252B'); R(773, 160, 14, 2, '#e03a40'); });
+  seat(97, 21, 'down'); seat(97, 23, 'up');
+  add(85, 28, 3, 1, false, () => { R(680, 226, 24, 4, '#a8642c'); R(680, 230, 2, 3, '#6b3a22'); R(702, 230, 2, 3, '#6b3a22'); }, 28 * TS + 2);
+  for (let x = 85; x <= 87; x++) seat(x, 28, 'up');
+  add(100, 20, 1, 1, true, () => { R(803, 150, 2, 18, '#5a5a66'); R(798, 146, 10, 7, '#f4f7fb'); R(800, 152, 6, 1, '#CB252B'); R(801, 153, 4, 2, 'rgba(255,255,255,.6)'); });
+  FURN.push({ z: 19 * TS + 0.6, draw: () => { for (let x = 84; x <= 100; x += 2) { R(x * 8 + 3, 151, 2, 2, night() ? ['#f2c94c', '#ff9eb5', '#9ad0e6'][x % 3] : '#c9c2b8'); } R(672, 150, 136, 1, '#5a5a66'); } });
+  plant(84, 19); plant(100, 28);
+  const HOOP_SPOT = [99, 24], GRILL_SPOT = [86, 21];
+
   // --- outside
+  add(83, 30, 9, 1, true, () => { for (let x = 83; x < 92; x++) { R(x * 8, 240, 8, 7, '#3f7a3a'); R(x * 8 + 1, 238, 6, 4, '#4f8f45'); } });
+  add(94, 30, 7, 1, true, () => { for (let x = 94; x < 101; x++) { R(x * 8, 240, 8, 7, '#3f7a3a'); R(x * 8 + 1, 238, 6, 4, '#4f8f45'); } });
   add(5, 30, 78, 1, true, () => { for (let x = 5; x < 83; x++) { R(x * 8, 240, 8, 7, '#3f7a3a'); R(x * 8 + 1, 238, 6, 4, '#4f8f45'); R(x * 8 + 2, 239, 2, 1, '#67a85a'); } });
   FURN.push({ z: 31 * TS + 1, draw: () => {
     const X = 216, Y = 226;
@@ -420,14 +520,14 @@ async function pageOffice(page) {
     R(X - 1, Y + 8, 50, 11, '#0C2E60'); R(X, Y + 9, 48, 9, '#f4f7fb');
     ptext('HER', X + 3, Y + 11, '#CB252B'); ptext('HAUS', X + 17, Y + 11, '#0C2E60'); ptext('HQ', X + 36, Y + 11, '#CB252B');
   } });
-  const TREES = [[1, 1], [7, 1], [14, 2], [26, 1], [33, 2], [41, 1], [49, 2], [57, 1], [64, 2], [71, 1], [78, 2], [85, 1], [85, 8], [84, 13], [85, 19], [84, 24], [85, 29], [0, 5], [2, 10], [0, 19], [0, 27], [5, 37], [16, 37], [29, 37], [44, 37], [55, 37], [68, 37], [80, 37]];
+  const TREES = [[1, 1], [7, 1], [14, 2], [26, 1], [33, 2], [41, 1], [49, 2], [57, 1], [64, 2], [71, 1], [78, 2], [88, 1], [95, 1], [103, 1], [104, 7], [103, 13], [104, 20], [103, 26], [105, 29], [0, 5], [2, 10], [0, 19], [0, 27], [5, 37], [16, 37], [29, 37], [44, 37], [55, 37], [68, 37], [80, 37], [92, 37], [104, 37]];
   TREES.forEach(([x, y]) => { const pine = hash(x + ':' + y) % 2;
     add(x, y, 1, 1, true, () => { const X = x * 8, Y = y * 8;
       R(X - 1, Y + 6, 10, 2, 'rgba(0,0,0,.2)'); R(X + 3, Y + 1, 2, 7, '#6b4a2e');
       if (pine) { R(X - 2, Y - 2, 12, 4, '#2f6e3c'); R(X - 1, Y - 6, 10, 4, '#357a42'); R(X, Y - 10, 8, 4, '#3f8f4f'); R(X + 2, Y - 13, 4, 3, '#4a9a58'); }
       else { R(X - 3, Y - 12, 14, 12, '#2f6e3c'); R(X - 2, Y - 13, 12, 9, '#3f8f4f'); R(X, Y - 12, 5, 4, '#57a862'); }
     }); });
-  const LAMPS = [3, 12, 21, 30, 39, 48, 57, 65, 74, 83];
+  const LAMPS = [3, 12, 21, 30, 39, 48, 57, 65, 74, 83, 92, 101];
   LAMPS.forEach((x) => add(x, 37, 1, 1, true, () => { const X = x * 8, Y = 37 * 8; R(X + 3, Y - 12, 2, 18, '#0C2E60'); R(X + 1, Y - 14, 6, 3, '#2b2b33'); R(X + 2, Y - 12, 4, 1, night() ? '#ffe9a8' : '#c9c2b8'); }));
 
   // --- cars
@@ -452,6 +552,7 @@ async function pageOffice(page) {
       const si = state.stalls.get(p.id); if (si === undefined) continue;
       if (moving.some((m) => m.id === p.id)) continue;
       if (isGone(p) && !exiting.has(p.id)) continue;
+      if (p.id === state.myId ? ME.car : (state.peerExtra.get(p.id) || {}).car) continue;
       carV(STALLS[si] * 8 + 2, 31 * 8 + 3, carColor(p.id));
     }
   } });
@@ -491,6 +592,9 @@ async function pageOffice(page) {
         case 'hall': P(X, Y, 8, 8, '#EDF2F8'); if (y === 16) P(X, Y + 2, 8, 4, '#c9d6e8'); break;
         case 'data': P(X, Y, 8, 8, '#0f2c58'); P(X, Y + 7, 8, 1, '#0b2550'); P(X + 7, Y, 1, 8, '#0b2550'); break;
         case 'break': P(X, Y, 8, 8, (x + y) % 2 ? '#d3deec' : '#c4d2e6'); break;
+        case 'wc': P(X, Y, 8, 8, (x + y) % 2 ? '#f4f7fb' : '#dfe9f5'); break;
+        case 'nurse': P(X, Y, 8, 8, '#efe6f5'); if ((x + y) % 3 === 0) P(X + 3, Y + 3, 2, 2, '#e4d8ef'); break;
+        case 'deck': P(X, Y, 8, 8, '#b8865a'); P(X, Y + 7, 8, 1, '#a07048'); if ((x + y * 2) % 5 === 0) P(X + 7, Y, 1, 7, '#a07048'); break;
         case 'ops': P(X, Y, 8, 8, '#e3eaf4'); P(X + 7, Y, 1, 8, '#d3deec'); P(X, Y + 7, 8, 1, '#d3deec'); break;
         case 'exec': P(X, Y, 8, 8, '#6b4a2e'); P(X, Y + 7, 8, 1, '#5b3d24'); if ((x * 3 + y) % 4 === 0) P(X + 7, Y, 1, 7, '#5b3d24'); break;
       }
@@ -502,7 +606,9 @@ async function pageOffice(page) {
     // executive rug
     P(58 * 8, 5 * 8, 9 * 8, 7 * 8, '#d4af37'); P(58 * 8 + 2, 5 * 8 + 2, 9 * 8 - 4, 7 * 8 - 4, '#a01e23'); P(58 * 8 + 5, 5 * 8 + 5, 9 * 8 - 10, 7 * 8 - 10, '#CB252B');
     P(72 * 8, 5 * 8, 9 * 8, 7 * 8, '#d4af37'); P(72 * 8 + 2, 5 * 8 + 2, 9 * 8 - 4, 7 * 8 - 4, '#a01e23'); P(72 * 8 + 5, 5 * 8 + 5, 9 * 8 - 10, 7 * 8 - 10, '#CB252B');
-    P(61 * 8, 14 * 8 + 1, 16, 6, '#CB252B'); P(75 * 8, 14 * 8 + 1, 16, 6, '#CB252B'); P(68 * 8, 18 * 8 + 1, 16, 6, '#0C2E60');
+    P(61 * 8, 14 * 8 + 1, 16, 6, '#CB252B'); P(75 * 8, 14 * 8 + 1, 16, 6, '#CB252B'); P(68 * 8, 18 * 8 + 1, 16, 6, '#0C2E60'); P(88 * 8, 14 * 8 + 1, 16, 6, '#1B4BA8'); P(96 * 8, 14 * 8 + 1, 16, 6, '#b48cf2'); P(91 * 8, 18 * 8 + 1, 16, 6, '#a07048');
+    P(95 * 8, 5 * 8, 5 * 8, 4 * 8, '#d9c7ea'); P(95 * 8 + 2, 5 * 8 + 2, 5 * 8 - 4, 4 * 8 - 4, '#e4d8ef');
+    for (let x = 92; x <= 93; x++) { P(x * 8, 30 * 8, 8, 8, '#c9a27a'); P(x * 8, 30 * 8 + 3, 8, 1, '#b38a63'); }
     // breakdance cardboard
     P(37 * 8, 23 * 8, 4 * 8, 3 * 8, '#c49a6c'); P(37 * 8 + 2, 23 * 8 + 2, 4 * 8 - 4, 3 * 8 - 4, '#b88d5f'); P(37 * 8, 24 * 8 + 4, 4 * 8, 1, '#a07a50');
     // break room mess
@@ -546,7 +652,7 @@ async function pageOffice(page) {
     visit: [[7, 16], [9, 16], [11, 16], [19, 16], [23, 16], [26, 16], [33, 16], [40, 16]],
     over: [],
   };
-  for (let x = 8; x < 81; x += 3) if (!SOLID[idx(x, 15)]) SPOTS.over.push([x, 15]);
+  for (let x = 8; x < 99; x += 3) if (!SOLID[idx(x, 15)]) SPOTS.over.push([x, 15]);
   SPOTS.ops = OPS_DESKS.slice();
 
   // ================= state =================
@@ -554,7 +660,7 @@ async function pageOffice(page) {
 
   const state = {
     real: [], profiles: {}, myId: null,
-    peerPos: new Map(), peerGame: new Map(), online: new Set(), watching: 0, scores: new Map(),
+    peerPos: new Map(), peerGame: new Map(), peerExtra: new Map(), messes: [], online: new Set(), watching: 0, scores: new Map(),
     selected: null, deskOwners: [], spots: new Map(), stalls: new Map(), staff: [], sample: false, ownerId: null, execIds: [],
   };
   const chars = new Map();
@@ -667,8 +773,8 @@ async function pageOffice(page) {
     for (let r = 0; r < 5; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (walkable(x + dx, y + dy)) return [x + dx, y + dy];
     return null;
   }
-  function findPath(sx, sy, tx, ty) {
-    if (!walkable(tx, ty)) { const n = nearestWalkable(tx, ty); if (!n) return null; [tx, ty] = n; }
+  function findPath(sx, sy, tx, ty, ok = walkable) {
+    if (!ok(tx, ty)) { if (ok !== walkable) return null; const n = nearestWalkable(tx, ty); if (!n) return null; [tx, ty] = n; }
     const start = idx(sx, sy), goal = idx(tx, ty);
     if (start === goal) return [];
     const prev = new Int32Array(MW * MH).fill(-1); prev[start] = start;
@@ -676,7 +782,7 @@ async function pageOffice(page) {
     for (let h = 0; h < q.length; h++) {
       const c = q[h]; if (c === goal) break;
       const cx = c % MW, cy = (c / MW) | 0;
-      for (const [dx, dy] of DIRS) { const nx = cx + dx, ny = cy + dy; if (!walkable(nx, ny)) continue; const n = idx(nx, ny); if (prev[n] !== -1) continue; prev[n] = c; q.push(n); }
+      for (const [dx, dy] of DIRS) { const nx = cx + dx, ny = cy + dy; if (!ok(nx, ny)) continue; const n = idx(nx, ny); if (prev[n] !== -1) continue; prev[n] = c; q.push(n); }
     }
     if (prev[goal] === -1) return null;
     const path = []; for (let c = goal; c !== start; c = prev[c]) path.push([c % MW, (c / MW) | 0]);
@@ -692,7 +798,7 @@ async function pageOffice(page) {
     if (c.goal === key) return;
     c.goal = key;
     const from = c.path.length ? c.path[0] : [c.tx, c.ty];
-    const rest = findPath(from[0], from[1], at[0], at[1]);
+    const rest = findPath(from[0], from[1], at[0], at[1], c.id === state.myId && ME.car ? onLot : walkable);
     if (!rest) { snap(c, at); return; }
     c.path = c.path.length ? [c.path[0], ...rest] : rest;
   }
@@ -703,7 +809,8 @@ async function pageOffice(page) {
     const [nx, ny] = c.path[0];
     const tx = nx * TS, ty = ny * TS, dx = tx - c.px, dy = ty - c.py;
     if (Math.abs(dx) > Math.abs(dy)) c.dir = dx > 0 ? 'right' : 'left'; else if (dy) c.dir = dy > 0 ? 'down' : 'up';
-    const d = Math.hypot(dx, dy), mv = SPEED * dt * (c.exit ? 1.15 : 1);
+    const inCar = c.id === state.myId ? ME.car : (state.peerExtra.get(c.id) || {}).car;
+    const d = Math.hypot(dx, dy), mv = SPEED * dt * (c.exit ? 1.15 : 1) * (inCar ? 2.3 : 1);
     c.walkT += dt;
     if (d <= mv) { c.px = tx; c.py = ty; c.tx = nx; c.ty = ny; c.path.shift(); arrived(c); }
     else { c.px += dx / d * mv; c.py += dy / d * mv; }
@@ -716,6 +823,7 @@ async function pageOffice(page) {
     }
     if (c.id === state.myId && room) room.presence({ x: c.tx, y: c.ty }).catch(() => {});
     if (c.exit && !c.path.length && c.tx === c.exit[0] && c.ty === c.exit[1]) getInCar(c);
+    if (c.id === state.myId && !c.path.length) arrivedMe(c);
     if (c.id === state.myId && pendingGame && !c.path.length) {
       if (arcadeAt(c.tx, c.ty) === pendingGame) openGame(pendingGame);
       pendingGame = null;
@@ -837,6 +945,51 @@ async function pageOffice(page) {
     const sk = () => LOOKS.skin[lookOf(p).skin];
     const typing = (ms) => { const k = Math.floor(t / ms); R(X + 1 + (k % 2), FY + 2, 2, 1, sk()); R(X + 5 - (k % 2), FY + 2, 2, 1, sk()); };
     switch (role) {
+      case 'toilet': case 'nurse': break;          // private: the stall door / curtain covers them
+      case 'wave': {
+        const k = Math.floor(t / 220) % 2; o.fx = { armsUp: k === 0, mouth: true };
+        o.post = () => { if (k === 0) R(X - 2, FY - 15, 1, 3, sk()); if ((t / 1000 + h) % 3 < 1) wordBubble(X + 4, FY - 13, 'HI!', '#0C2E60'); };
+        break;
+      }
+      case 'present': {
+        const k = Math.floor(t / 320 + h) % 3; o.dir = 'right'; o.fx = { armsUp: k === 0, mouth: k !== 2 };
+        o.post = () => { if ((t / 1000 + h) % 3.5 < 1.2) wordBubble(X + 4, FY - 13, ['Q4 UP 20%', 'NEXT SLIDE', 'LOOK AT THIS', '$$$'][Math.floor(t / 3500 + h) % 4], '#0C2E60'); };
+        break;
+      }
+      case 'write': {
+        o.dir = 'up';
+        o.post = () => { const k = Math.floor(t / 160) % 5; R(X + 5 + k, FY - 15, 1, 3, sk()); if (chance(3, dt)) spawn(X + 6 + k, FY - 20, 0, 0, 1.5, '#CB252B', 0); };
+        break;
+      }
+      case 'kick': {
+        o.dx = Math.floor(t / 90) % 2 ? 1 : -1; o.dir = 'up'; o.fx = { red: true };
+        o.post = () => { wordBubble(X + 4, FY - 13, 'CRASH', '#CB252B'); if (chance(10, dt)) spawn(X + 4, FY - 14, (Math.random() - 0.5) * 60, -40, 0.8, ['#f2c14e', '#9ad0e6', '#ffffff'][Math.floor(Math.random() * 3)], 140); };
+        break;
+      }
+      case 'wash': {
+        o.post = () => { if (chance(10, dt)) spawn(X + 2 + Math.random() * 5, FY + 1, (Math.random() - 0.5) * 8, 10, 0.5, '#9ad0e6', 60); if (chance(4, dt)) spawn(X + 3 + Math.random() * 3, FY - 2, (Math.random() - 0.5) * 6, -10, 1, 'rgba(255,255,255,.8)', -2); };
+        break;
+      }
+      case 'grill': {
+        o.dir = 'up';
+        o.post = () => {
+          const k = Math.floor(t / 400) % 2; R(X + 5, FY - 13 - k * 2, 1, 4, '#9aa3ad'); R(X + 4, FY - 14 - k * 2, 3, 1, '#9aa3ad');
+          if (chance(5, dt)) spawn(GRILL_SPOT[0] * TS + 3 + Math.random() * 6, 20 * TS - 6, (Math.random() - 0.5) * 6, -14, 1.6, 'rgba(220,220,220,.6)', -3, 'big');
+          if ((t / 1000 + h) % 4 < 0.9) wordBubble(X + 4, FY - 13, 'SIZZLE', '#a8642c');
+        };
+        break;
+      }
+      case 'hoop': {
+        o.dir = 'up';
+        const ph = ((t / 1000 + h) % 1.4) / 1.4; o.fx = { armsUp: ph < 0.15 };
+        o.post = () => {
+          const hx = 801, hy = 150, sx = X + 4, sy = FY - 14;
+          const bx = sx + (hx - sx) * ph, by = sy + (hy - sy) * ph - Math.sin(Math.PI * ph) * 26;
+          R(Math.round(bx) - 1, Math.round(by) - 1, 3, 3, '#f08a4b');
+          if (ph > 0.94) wordBubble(X + 4, FY - 13, 'SWISH', '#0C2E60');
+        };
+        break;
+      }
       case 'call': {
         const talking = (t / 1000 + h) % 2.4 < 1.6;
         o.fx = { mouth: talking && Math.floor(t / 140) % 2 === 0 };
@@ -1007,11 +1160,224 @@ async function pageOffice(page) {
 
   // ================= rendering =================
   let lastT = performance.now();
+  // ================= using things =================
+  const ME = { act: null, carry: null, carryUntil: 0, car: false, pendingUse: null, pendingPark: false };
+  const onLot = (x, y) => walkable(x, y) && zoneAt(x, y).id === 'parking';
+  function pushPresence() {
+    const c = chars.get(state.myId);
+    if (c && room) room.presence({ x: c.tx, y: c.ty, act: ME.act ? ME.act.kind : null, carry: ME.carry, car: ME.car, dir: c.dir }).catch(() => {});
+  }
+  function startAct(kind, secs, then) {
+    const c = chars.get(state.myId); if (!c) return;
+    ME.act = { kind, until: secs ? NOW + secs * 1000 : Infinity, then, at: [c.tx, c.ty] }; pushPresence(); renderThings(true);
+  }
+  function carry(what, secs = 120) { ME.carry = what; ME.carryUntil = NOW + secs * 1000; pushPresence(); }
+  function tickMe() {
+    const c = chars.get(state.myId);
+    if (!c) { if (ME.car) { ME.car = false; $('carbar').hidden = true; } return; }
+    if (ME.act) {
+      const moved = c.path.length || c.tx !== ME.act.at[0] || c.ty !== ME.act.at[1];
+      if (moved) { ME.act = null; pushPresence(); renderThings(true); }
+      else if (NOW > ME.act.until) { const then = ME.act.then; ME.act = null; pushPresence(); renderThings(true); if (then) then(); }
+    }
+    if (ME.carry && NOW > ME.carryUntil) { ME.carry = null; pushPresence(); }
+  }
+  function drawCarry(kind, x, y, t) {
+    if (kind === 'coffee') { R(x, y, 3, 3, '#f4f7fb'); R(x, y, 3, 1, '#6b3a22'); if (!RM && Math.floor(t / 300) % 2) R(x + 1, y - 2, 1, 1, 'rgba(255,255,255,.7)'); }
+    else if (kind === 'water') { R(x, y, 3, 3, '#bfe8ff'); R(x, y + 2, 3, 1, '#7fd3ff'); }
+    else if (kind === 'drink') { R(x, y - 1, 2, 4, '#CB252B'); R(x, y - 1, 2, 1, '#9aa3ad'); }
+    else if (kind === 'snack') { R(x, y - 1, 3, 4, '#f2c14e'); R(x, y - 1, 3, 1, '#CB252B'); }
+    else if (kind === 'burger') { R(x, y, 4, 1, '#c98a3c'); R(x, y + 1, 4, 1, '#7bd389'); R(x, y + 2, 4, 1, '#6b3a22'); R(x, y + 3, 4, 1, '#c98a3c'); }
+    else if (kind === 'paper') { R(x, y - 1, 3, 4, '#ffffff'); R(x + 1, y, 1, 1, '#9aa3ad'); R(x + 1, y + 2, 1, 1, '#9aa3ad'); }
+    else if (kind === 'ball') R(x, y, 3, 3, '#f08a4b');
+  }
+  // Clickable things. rect = the tiles you click (x0, y0, x1, y1); use = the tile you stand on; face = which way you look.
+  const ITEMS = [];
+  const item = (id, label, rect, use, face, run) => ITEMS.push({ id, label, rect, use, face, run, zone: zoneAt(use[0], use[1]).id });
+  // a spot is taken if someone else is on it or walking to it
+  const takenBy = (c, x, y) => { const end = c.path.length ? c.path[c.path.length - 1] : [c.tx, c.ty]; return end[0] === x && end[1] === y; };
+  const firstFree = (spots) => spots.find(([x, y]) => ![...chars.values()].some((c) => c.id !== state.myId && takenBy(c, x, y))) || null;
+  item('coffee', 'Get coffee', [27, 4, 28, 5], [28, 6], 'up', () => { carry('coffee'); bubble(state.myId, 'Coffee time'); sfx('pop'); });
+  item('food', 'Grab some food', [23, 4, 26, 5], [24, 6], 'up', () => { carry('burger'); sfx('pop'); });
+  item('fridge', 'Grab a drink', [35, 4, 36, 5], [35, 6], 'up', () => { carry('drink'); sfx('pop'); });
+  item('vend1', 'Buy a snack', [36, 11, 36, 12], [35, 11], 'right', () => { carry('snack'); sfx('pop'); });
+  item('wb', 'Write on the whiteboard', [41, 4, 45, 4], [43, 5], 'up', () => startAct('write', 7));
+  item('tv', 'Present on the TV', [54, 7, 54, 9], [53, 8], 'right', () => startAct('present', 10));
+  item('cooler', 'Drink water', [54, 15, 54, 15], [53, 15], 'right', () => carry('water'));
+  item('cam', 'Film a video', [11, 10, 11, 10], [11, 11], 'up', () => startAct('film', 12));
+  item('phone', 'Film on the phone', [8, 11, 8, 11], [8, 12], 'up', () => startAct('film', 12));
+  item('easel', 'Paint', [17, 8, 17, 8], [17, 9], 'up', () => startAct('paint', 12));
+  item('dance', 'Dance on the dance floor', null, [11, 7], 'down', () => startAct('dance', 10));
+  item('print1', 'Print something', [28, 28, 28, 28], [28, 27], 'down', () => { carry('paper'); spawn(228, 222, 8, -16, 1, '#ffffff', 30, 'big'); });
+  item('cooler2', 'Drink water', [44, 19, 44, 19], [44, 20], 'up', () => carry('water'));
+  item('boombox', 'Play music', [41, 22, 41, 22], [41, 23], 'up', () => { sfx('music'); for (let i = 0; i < 6; i++) spawn(330 + i, 168, (Math.random() - 0.5) * 12, -14, 2, ['#f2c14e', '#ff6fb5', '#7fe0ff'][i % 3], -1, 'note'); startAct('dance', 8); });
+  item('kick', 'Kick the vending machine', [51, 19, 51, 20], [51, 21], 'up', () => { sfx('crash'); startAct('kick', 2, () => { if (Math.random() < 0.5) { carry('snack'); bubble(state.myId, 'Free snack!'); } }); });
+  item('chips', 'Buy chips', [54, 26, 54, 27], [53, 26], 'right', () => { carry('snack'); sfx('pop'); });
+  item('print2', 'Print something', [56, 23, 56, 24], [57, 23], 'left', () => carry('paper'));
+  STALL_SEATS.forEach(([sx], k) => item('toilet' + k, 'Use the toilet', [sx - 1, 4, sx + 1, 6], [sx, 5], 'down', useToilet));
+  item('sink', 'Wash your hands', [84, 11, 86, 11], [85, 10], 'down', () => startAct('wash', 4));
+  item('dryer', 'Dry your hands', [92, 11, 92, 11], [91, 11], 'right', () => startAct('wash', 3));
+  item('nurse', 'Use the nursing room', [96, 5, 98, 7], NURSE_SEAT, 'down', () => { startAct('nurse', 0); msg('The curtain is closed. Walk away whenever you’re done.'); });
+  item('nfridge', 'Grab water', [100, 4, 100, 5], [99, 5], 'right', () => carry('water'));
+  item('grill', 'Grill burgers', [86, 20, 86, 20], GRILL_SPOT, 'up', () => { sfx('sizzle'); startAct('grill', 8, () => { carry('burger'); bubble(state.myId, 'Burgers are up!'); }); });
+  item('hoop', 'Shoot hoops', [100, 19, 100, 20], HOOP_SPOT, 'up', () => { carry('ball', 12); startAct('hoop', 7, () => sfx('swish')); });
+  const ARCADE_NAMES = { type: 'Type Race', snake: 'Data Snake', dash: 'Deadline Dash', duel: 'Office Duel' };
+  ARCADES.forEach(([x, key]) => ITEMS.push({ id: 'arcade-' + key, label: 'Play ' + ARCADE_NAMES[key], rect: null, use: [x, 20], face: 'up', zone: 'break', run: () => openGame(key) }));
+  function useToilet() {
+    const c = chars.get(state.myId);
+    startAct('toilet', 9, () => {
+      sfx('flush'); bubble(state.myId, '*flush*');
+      const sink = firstFree(SINKS);
+      if (sink) useItem({ id: 'sink', label: 'Wash your hands', use: sink, face: 'down', run: () => startAct('wash', 4) });
+    });
+    if (c) c.dir = 'down';
+  }
+  function myCarItem() {
+    const si = state.stalls.get(state.myId); if (si === undefined || !chars.has(state.myId)) return null;
+    const x = STALLS[si];
+    return { id: 'car', label: ME.car ? 'Park your car' : 'Drive your car', rect: [x, 31, x + 1, 33], use: [x, DOOR_Y], face: 'up', zone: 'parking', run: () => (ME.car ? null : enterCar()) };
+  }
+  function itemsNow() {
+    const list = ITEMS.slice();
+    const car = myCarItem(); if (car) list.push(car);
+    for (const m of state.messes) list.push({ id: 'mess' + m.id, label: 'Clean up the ' + (m.kind === 'poop' ? 'poop' : 'puddle'), rect: [m.x, m.y, m.x, m.y], use: [m.x, m.y], face: 'down', zone: zoneAt(m.x, m.y).id, run: () => cleanMess(m.id) });
+    return list;
+  }
+  function itemAt(tx, ty) { return itemsNow().find((it) => it.rect && tx >= it.rect[0] && tx <= it.rect[2] && ty >= it.rect[1] && ty <= it.rect[3]) || null; }
+  function useItem(it) {
+    const me = chars.get(state.myId);
+    if (!me) { msg(state.myId ? 'Clock in first. Your character is at home while you’re off shift.' : 'Sign in to use things.', true); return; }
+    if (ME.car && it.id !== 'car') { msg('Park your car first (press E).', true); return; }
+    if (it.id.startsWith('toilet')) {
+      const free = firstFree(STALL_SEATS.filter(([x, y]) => x === it.use[0] && y === it.use[1])) || firstFree(STALL_SEATS);
+      if (!free) { msg('All the stalls are busy. Try again in a moment.', true); return; }
+      it = { ...it, use: free };
+    }
+    if ((it.id === 'nurse') && !firstFree([NURSE_SEAT])) { msg('The nursing room is in use right now.', true); return; }
+    ME.pendingUse = it; pendingGame = null;
+    if (me.tx === it.use[0] && me.ty === it.use[1] && !me.path.length) { arrivedMe(me); return; }
+    me.goal = null; setGoal(me, it.use);
+    msg('Walking over to ' + it.label.charAt(0).toLowerCase() + it.label.slice(1) + '…');
+  }
+  function arrivedMe(c) {
+    if (ME.pendingPark && c.tx === ME.pendingPark[0] && c.ty === ME.pendingPark[1]) { ME.pendingPark = false; leaveCar(); }
+    const it = ME.pendingUse; if (!it) return;
+    if (c.tx !== it.use[0] || c.ty !== it.use[1]) return;
+    ME.pendingUse = null; c.dir = it.face || c.dir; msg('');
+    it.run();
+    pushPresence();
+  }
+  let thingsZone = '';
+  function renderThings(force) {
+    const box = $('things'); if (!box) return;
+    const c = chars.get(state.myId);
+    const z = c ? zoneAt(c.tx, c.ty) : null;
+    const key = (z ? z.id : '') + ':' + (ME.act ? ME.act.kind : '') + ':' + state.messes.length + ':' + ME.car;
+    if (key === thingsZone && !force) return; thingsZone = key;
+    box.textContent = '';
+    if (!c) { box.append(Object.assign(document.createElement('span'), { className: 'lbl-in', textContent: 'Clock in to walk around and use things.' })); return; }
+    const here = itemsNow().filter((it) => it.zone === z.id && !(it.id === 'car' && ME.car));
+    box.append(Object.assign(document.createElement('span'), { className: 'lbl-in', textContent: here.length ? 'In the ' + z.name + ':' : 'Nothing to use right here. Try the Lunch room, Break room or Patio.' }));
+    const seen = new Set();
+    for (const it of here) {
+      if (seen.has(it.label)) continue; seen.add(it.label);
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'pillbtn'; b.textContent = it.label;
+      b.addEventListener('click', () => useItem(it)); box.appendChild(b);
+    }
+    if (ME.act && ME.act.until === Infinity) {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'pillbtn'; b.textContent = 'Stop';
+      b.addEventListener('click', () => { ME.act = null; pushPresence(); renderThings(true); }); box.appendChild(b);
+    }
+  }
+  // ---- cars
+  function enterCar() {
+    ME.car = true; ME.act = null; $('carbar').hidden = false; sfx('honk');
+    msg('You’re in your car. Arrow keys or click the parking lot to drive; E to park.'); pushPresence(); renderThings(true); cv.focus();
+  }
+  function leaveCar() { ME.car = false; $('carbar').hidden = true; msg('Parked.'); pushPresence(); renderThings(true); }
+  function parkCar() {
+    const me = chars.get(state.myId), si = state.stalls.get(state.myId); if (!me || !ME.car) return;
+    if (si === undefined) { leaveCar(); return; }
+    const spot = [STALLS[si], DOOR_Y];
+    if (me.tx === spot[0] && me.ty === spot[1] && !me.path.length) { leaveCar(); return; }
+    ME.pendingPark = spot; me.goal = null; setGoal(me, spot);
+  }
+  function honk() { const me = chars.get(state.myId); sfx('honk'); if (me) bubble(state.myId, 'BEEP BEEP'); api('POST', '/api/office/emote', { emote: 'honk' }).catch(() => {}); }
+  $('carbar').addEventListener('click', (e) => { const b = e.target.closest('[data-car]'); if (!b) return; if (b.dataset.car === 'honk') honk(); else parkCar(); });
+  // ---- moves (emotes) and floor messes
+  async function doEmote(kind) {
+    const c = chars.get(state.myId);
+    if (!c) { msg('Clock in first. Your character is at home while you’re off shift.', true); return; }
+    if (kind === 'shout') { const text = $('say').value.trim().slice(0, 120) || 'HEY EVERYONE!'; $('say').value = ''; sendSay(text, true); return; }
+    if (ME.car) { msg('Park your car first (press E).', true); return; }
+    if (kind === 'dance') { startAct('dance', 8); return; }      // everyone sees it through your live position
+    if (kind === 'wave') { startAct('wave', 4); return; }
+    if (!c.path.length) pushPresence();
+    try { await api('POST', '/api/office/emote', { emote: kind }); }
+    catch (e) { msg(e.message || 'Try again in a moment', true); return; }
+    playEmote({ uid: state.myId, what: kind, x: c.tx, y: c.ty });
+    HUB.refresh();
+  }
+  function playEmote(e) {
+    const p = personById(e.uid), X = e.x * TS + 4, Y = e.y * TS, room = zoneAt(e.x, e.y).name;
+    if (e.what === 'fart') {
+      sfx('fart'); if (chars.has(e.uid)) bubble(e.uid, '*PFFFT*');
+      for (let i = 0; i < 14; i++) spawn(X - 4 + Math.random() * 6, Y + 3, (Math.random() - 0.5) * 18, -5 - Math.random() * 8, 1.8, 'rgba(150,205,90,.75)', -2, 'cloud');
+      if (p) log(p, 'let one rip in the ' + room);
+    } else if (e.what === 'poop') { sfx('plop'); if (p) log(p, 'pooped on the floor in the ' + room + '. Gross.'); }
+    else if (e.what === 'pee') { sfx('pee'); if (p) log(p, 'peed on the floor in the ' + room); }
+    else if (e.what === 'clean') { sfx('swish'); const by = personById(e.by); if (p) log(p, 'cleaned up ' + (e.by === e.uid ? 'their own' : (by ? firstName(by) + '’s' : 'a')) + ' mess in the ' + room); }
+    else if (e.what === 'honk') { sfx('honk'); if (chars.has(e.uid)) bubble(e.uid, 'BEEP BEEP'); }
+  }
+  async function cleanMess(id) {
+    startAct('wash', 2);
+    try { await api('POST', '/api/office/mess/clean', { id }); } catch (_) { return; }
+    const c = chars.get(state.myId), m = state.messes.find((x) => x.id === id);
+    if (c && m) playEmote({ uid: state.myId, what: 'clean', x: m.x, y: m.y, by: m.uid });
+    state.messes = state.messes.filter((x) => x.id !== id); renderThings(true); HUB.refresh();
+  }
+  function drawMesses(t) {
+    for (const m of state.messes) {
+      const X = m.x * TS, Y = m.y * TS;
+      if (m.kind === 'pee') { ctx.fillStyle = 'rgba(236,214,72,.6)'; ctx.fillRect(X - 2, Y + 5, 12, 3); ctx.fillRect(X, Y + 4, 8, 1); ctx.fillRect(X + 1, Y + 8, 6, 1); }
+      else {
+        R(X + 1, Y + 5, 6, 2, '#6b3a22'); R(X + 2, Y + 3, 4, 2, '#7a4528'); R(X + 3, Y + 2, 2, 1, '#8a5530');
+        if (!RM) { const a = t / 260; R(X + 4 + Math.round(Math.cos(a) * 5), Y + Math.round(Math.sin(a) * 2), 1, 1, '#111'); R(X + 4 + Math.round(Math.cos(a + 2.5) * 4), Y - 1 + Math.round(Math.sin(a * 1.3) * 2), 1, 1, '#111'); }
+      }
+    }
+  }
+  $('emotes').addEventListener('click', (e) => { const b = e.target.closest('[data-emote]'); if (b) doEmote(b.dataset.emote); });
+  // ---- sound + desktop notifications
+  const soundBtn = $('sound');
+  const paintSound = () => { soundBtn.textContent = SND.on ? 'Sound on' : 'Sound off'; soundBtn.setAttribute('aria-pressed', String(SND.on)); };
+  paintSound();
+  soundBtn.addEventListener('click', () => { SND.on = !SND.on; try { localStorage.setItem('hh_office_sound', SND.on ? '1' : '0'); } catch (_) { /* storage blocked */ } paintSound(); if (SND.on) sfx('chat'); });
+  const notifyBtn = $('notify');
+  const paintNotify = () => { const perm = window.Notification ? Notification.permission : 'unsupported'; notifyBtn.hidden = perm === 'unsupported'; notifyBtn.textContent = perm === 'granted' ? 'Notifications on' : perm === 'denied' ? 'Notifications blocked' : 'Notify me'; notifyBtn.disabled = perm !== 'default'; };
+  paintNotify();
+  notifyBtn.addEventListener('click', async () => { try { await Notification.requestPermission(); } catch (_) { /* not supported */ } paintNotify(); });
+  function notifyChat(p, text, shout) {
+    sfx(shout ? 'shout' : 'chat');
+    if (document.hidden && window.Notification && Notification.permission === 'granted') {
+      try { new Notification((p ? nameOf(p) : 'Someone') + (shout ? ' shouted in the Office' : ' in the Office'), { body: text, tag: 'hh-office-chat', icon: '/static/icon.png' }); } catch (_) { /* some browsers only allow this from a service worker */ }
+    }
+  }
+  // hovering a usable thing shows a highlight and what clicking does
+  let hoverItem = null;
+  cv.addEventListener('mousemove', (e) => {
+    const r = cv.getBoundingClientRect();
+    const tx = Math.floor((e.clientX - r.left) / r.width * W / TS), ty = Math.floor((e.clientY - r.top) / r.height * H / TS);
+    const it = itemAt(tx, ty);
+    if (it !== hoverItem) { hoverItem = it; cv.title = it ? it.label + ' (click)' : ''; cv.classList.toggle('can-use', !!it); }
+  });
+  cv.addEventListener('mouseleave', () => { hoverItem = null; cv.title = ''; });
+
   function loop(t) {
     if (!root.isConnected) { cleanup(); return; }
     NOW = t;
     const dt = Math.min(0.1, (t - lastT) / 1000); lastT = t;
     chars.forEach((c) => stepChar(c, dt));
+    tickMe();
     stepParts(dt);
     sim(dt);
     if (arcade.game) { arcade.game.update(dt); arcade.game.draw(); }
@@ -1023,6 +1389,7 @@ async function pageOffice(page) {
   }
   function draw(t, dt) {
     ctx.drawImage(bg, 0, 0);
+    drawMesses(t);
     const items = FURN.map((f) => ({ z: f.z, k: 0, f }));
     chars.forEach((c) => items.push({ z: c.py + TS, k: 1, c }));
     items.sort((a, b) => a.z - b.z || a.k - b.k);
@@ -1035,7 +1402,14 @@ async function pageOffice(page) {
       const seatDir = !moving && SEATS.get(idx(c.tx, c.ty));
       const pose = moving ? 'walk' : seatDir ? 'sit' : 'stand';
       const gameHere = !moving && arcadeAt(c.tx, c.ty) && (c.id === state.myId ? arcade.open : state.peerGame.get(c.id));
-      const a = gameHere ? activity(c, p, 'arcade', t, dt) : atSpot && c.role ? activity(c, p, c.role, t, dt) : { dx: 0, dy: 0, dir: null, flip: false, fx: {}, post: null };
+      const ex = c.id === state.myId ? { act: ME.act && ME.act.kind, carry: ME.carry, car: ME.car } : (state.peerExtra.get(c.id) || {});
+      if (ex.car) {   // driving: draw their car instead of them
+        const X0 = Math.round(c.px), Y0 = Math.round(c.py), col = carColor(c.id);
+        if (c.dir === 'left' || c.dir === 'right') carH(X0 - 5, Y0 - 3, col, c.dir === 'right'); else carV(X0 - 2, Y0 - 9, col);
+        if (moving && chance(12, dt)) spawn(X0 + (c.dir === 'right' ? -6 : c.dir === 'left' ? 14 : 4), Y0 + 6, 0, -4, 0.6, 'rgba(200,200,200,.55)', 0, 'big');
+        continue;
+      }
+      const a = gameHere ? activity(c, p, 'arcade', t, dt) : (!moving && ex.act) ? activity(c, p, ex.act, t, dt) : atSpot && c.role ? activity(c, p, c.role, t, dt) : { dx: 0, dy: 0, dir: null, flip: false, fx: {}, post: null };
       const dir = a.dir || seatDir || (atSpot && c.face) || c.dir;
       const X = Math.round(c.px) + a.dx, FY = Math.round(c.py) + TS + a.dy;
       if (a.flip) {
@@ -1043,6 +1417,7 @@ async function pageOffice(page) {
         drawChar(ctx, X, FY, lookOf(p), dir, 'stand', 0, a.fx); ctx.restore();
       } else drawChar(ctx, X, FY, lookOf(p), dir, pose, Math.floor(c.walkT / 0.13), a.fx);
       if (a.post) posts.push(a.post);
+      if (ex.carry && ex.act !== 'toilet' && ex.act !== 'nurse') drawCarry(ex.carry, X + 7, FY - (pose === 'sit' ? 4 : 6), t);
       if (state.selected === c.id) {
         const b = RM ? 0 : (Math.floor(t / 180) % 4 < 2 ? 0 : 1), ax = X + 4, ay = FY - 15 - b;
         R(ax - 3, ay - 4, 7, 1, '#CB252B'); R(ax - 2, ay - 3, 5, 1, '#CB252B'); R(ax - 1, ay - 2, 3, 1, '#CB252B'); R(ax, ay - 1, 1, 1, '#CB252B');
@@ -1050,6 +1425,7 @@ async function pageOffice(page) {
     }
     drawParts();
     posts.forEach((f) => f());
+    if (hoverItem) { const [x0, y0, x1, y1] = hoverItem.rect; ctx.strokeStyle = '#f2c94c'; ctx.lineWidth = 1; ctx.strokeRect(x0 * TS - 0.5, y0 * TS - 6.5, (x1 - x0 + 1) * TS + 1, (y1 - y0 + 1) * TS + 7); }
     if (night()) {
       ctx.fillStyle = 'rgba(16,20,56,.32)'; ctx.fillRect(0, 0, W, H);
       for (const x of LAMPS) { const gr = ctx.createRadialGradient(x * 8 + 4, 288, 0, x * 8 + 4, 292, 24); gr.addColorStop(0, 'rgba(255,233,168,.35)'); gr.addColorStop(1, 'rgba(255,233,168,0)'); ctx.fillStyle = gr; ctx.fillRect(x * 8 - 22, 266, 52, 38); }
@@ -1059,10 +1435,11 @@ async function pageOffice(page) {
   // ---- overlay
   const overlay = $('overlay');
   const tags = new Map(), bubbles = new Map();
-  ZONES.filter((z) => z.id !== 'hall').forEach((z) => {
+  ZONES.filter((z) => !['hall', 'exec', 'exec2'].includes(z.id)).forEach((z) => {   // executive offices get name signs on their doors instead
     const s = document.createElement('div'); s.className = 'sign'; s.textContent = z.name;
     s.style.left = (((z.x0 + z.x1 + 1) / 2) * TS / W * 100) + '%';
     s.style.top = ((z.y0 * TS - (z.id === 'parking' ? 4 : 6)) / H * 100) + '%';
+    if (z.id === 'nurse') { s.style.left = (96.5 * TS / W * 100) + '%'; s.style.top = ((14 * TS + 4) / H * 100) + '%'; s.style.background = '#7a5ab8'; }   // narrow room: label on its door
     overlay.appendChild(s);
   });
   { const s = document.createElement('div'); s.className = 'sign'; s.textContent = 'Arcade'; s.style.left = (34 * TS / W * 100) + '%'; s.style.top = ((19 * TS - 16) / H * 100) + '%'; overlay.appendChild(s); }
@@ -1103,9 +1480,9 @@ async function pageOffice(page) {
       if (b) { b.el.style.left = x + '%'; b.el.style.top = ((top - 9) / H * 100) + '%'; }
     });
   }
-  function bubble(id, text) {
+  function bubble(id, text, cls) {
     const old = bubbles.get(id); if (old) { old.el.remove(); clearTimeout(old.t); }
-    const el = document.createElement('div'); el.className = 'bubble'; el.textContent = text;
+    const el = document.createElement('div'); el.className = 'bubble' + (cls ? ' ' + cls : ''); el.textContent = text;
     overlay.appendChild(el);
     bubbles.set(id, { el, t: setTimeout(() => { el.remove(); bubbles.delete(id); }, 6500) });
     positionOverlay();
@@ -1124,7 +1501,7 @@ async function pageOffice(page) {
     const sig = list.map((p) => p.id + ':' + where(p) + ':' + labelOf(p) + ':' + p.note + ':' + (state.ownerId || '') + ':' + (state.online.has(p.id) ? 1 : 0) + ':' + (state.selected === p.id ? 1 : 0) + ':' + nameOf(p) + ':' + ago(p.updatedAt)).join('|');
     if (sig === rosterSig && !force) return; rosterSig = sig;
     const box = $('roster'); box.textContent = '';
-    const order = ['exec', 'exec2', 'ops', 'data', 'meeting', 'social', 'lunch', 'break', 'hall', 'parking', 'field', 'outside', 'out'];
+    const order = ['exec', 'exec2', 'ops', 'data', 'meeting', 'social', 'lunch', 'break', 'wc', 'nurse', 'patio', 'hall', 'parking', 'field', 'outside', 'out'];
     const names = { out: 'Drove home', field: 'In the field', ...Object.fromEntries(ZONES.map((z) => [z.id, z.name])), outside: 'Outside' };
     for (const zid of order) {
       const ps = list.filter((p) => where(p) === zid).sort((a, b) => firstName(a).localeCompare(firstName(b)));
@@ -1231,6 +1608,7 @@ async function pageOffice(page) {
   }
   function renderMe() {
     renderClock();
+    renderThings();
     const meP = state.myId ? personById(state.myId) : null;
     const L = meP ? lookOf(meP) : (draftLook || defaultLook('guest'));
     $('meimg').src = avatarURL(L);
@@ -1316,12 +1694,18 @@ async function pageOffice(page) {
     if (!state.myId) return;
     if (!chars.has(state.myId)) { msg('Clock in first. Your character is at home while you’re off shift.', true); return; }
     $('say').value = '';
-    const meP = personById(state.myId);
-    if (chars.has(state.myId)) bubble(state.myId, text);
-    if (meP) log(meP, text, 'say');
-    if (room) room.emit('say', { text }).catch((err) => msg(err.message || 'Message not sent', true));
+    sendSay(text, false);
     cv.focus();
   });
+  function sendSay(text, shout) {
+    if (!chars.has(state.myId)) { msg('Clock in first. Your character is at home while you’re off shift.', true); return; }
+    const meP = personById(state.myId);
+    bubble(state.myId, text, shout ? 'shout' : '');
+    if (meP) log(meP, (shout ? 'shouted: ' : '') + text, 'say');
+    if (shout) sfx('shout');
+    if (room) room.emit('say', { text, shout }).then((r) => { if (r && r.chat) msg('Also posted to ' + r.chat + ' in Chat.'); })
+      .catch((err) => msg(err.message || 'Message not sent', true));
+  }
 
   // ---- map input
   cv.addEventListener('click', (e) => {
@@ -1331,10 +1715,14 @@ async function pageOffice(page) {
     chars.forEach((c) => { if (lx >= c.px - 1 && lx <= c.px + 9 && ly >= c.py - 5 && ly <= c.py + 8) hit = c; });
     if (hit && hit.id !== state.myId) return select(hit.id);
     const cab = ARCADES.find(([x]) => lx >= x * TS && lx < x * TS + TS && ly >= 19 * TS - 13 && ly < 20 * TS + 2);
-    if (cab) { goPlay(cab[1]); return; }
+    if (cab && !ME.car) { goPlay(cab[1]); return; }
+    const tx = Math.floor(lx / TS), ty = Math.floor(ly / TS);
+    const it = itemAt(tx, ty);
+    if (it && !(ME.car && it.id !== 'car')) { if (it.id === 'car' && ME.car) parkCar(); else useItem(it); return; }
     const me = chars.get(state.myId);
     if (!me || me.exit) { if (state.selected) select(state.selected); return; }
-    me.goal = null; setGoal(me, [Math.floor(lx / TS), Math.floor(ly / TS)]);
+    if (ME.car && !onLot(tx, ty)) { msg('Cars stay on the parking lot. Press E to park and walk.', true); return; }
+    ME.pendingUse = null; me.goal = null; setGoal(me, [tx, ty]);
   });
   const onKey = (e) => {
     if (arcade.open) { arcadeKey(e); return; }
@@ -1342,13 +1730,15 @@ async function pageOffice(page) {
     if (tag === 'INPUT' || tag === 'TEXTAREA') return;
     if (e.key === 'Escape' && state.selected) { select(state.selected); return; }
     if (e.key === 'Enter' && document.activeElement === cv) { $('say').focus(); e.preventDefault(); return; }
+    if (ME.car && (e.key === 'h' || e.key === 'H')) { honk(); return; }
+    if (ME.car && (e.key === 'e' || e.key === 'E')) { parkCar(); return; }
     const k = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0], w: [0, -1], s: [0, 1], a: [-1, 0], d: [1, 0] }[e.key];
     if (!k || document.activeElement !== cv) return;
     e.preventDefault();
     const me = chars.get(state.myId); if (!me || me.exit || me.path.length > 1) return;
     const from = me.path.length ? me.path[me.path.length - 1] : [me.tx, me.ty];
     const nx = from[0] + k[0], ny = from[1] + k[1];
-    if (walkable(nx, ny)) { me.path.push([nx, ny]); me.goal = nx + ',' + ny; }
+    if (ME.car ? onLot(nx, ny) : walkable(nx, ny)) { ME.pendingUse = null; me.path.push([nx, ny]); me.goal = nx + ',' + ny; }
     else me.dir = k[0] > 0 ? 'right' : k[0] < 0 ? 'left' : k[1] > 0 ? 'down' : 'up';
   };
   window.addEventListener('keydown', onKey);
@@ -1985,13 +2375,14 @@ async function pageOffice(page) {
     if (room) {
       room.onPeers((ch) => {
         const viewers = ch.peers.filter((p) => p.kind === 'viewer' && !p.isMe && p.by);
-        const pos = new Map(), games = new Map();
+        const pos = new Map(), games = new Map(), extra = new Map();
         for (const p of viewers) {
           const x = Number(p.presence?.x), y = Number(p.presence?.y);
           if (Number.isInteger(x) && Number.isInteger(y) && walkable(x, y)) pos.set(p.by, [x, y]);
           if (GAMES[p.presence?.g]) games.set(p.by, p.presence.g);
+          extra.set(p.by, { car: !!p.presence?.car, carry: p.presence?.carry || null, act: p.presence?.act || null });
         }
-        state.peerGame = games;
+        state.peerGame = games; state.peerExtra = extra;
         const online = new Set(viewers.map((p) => p.by));
         const changed = online.size !== state.online.size || [...online].some((id) => !state.online.has(id));
         state.online = online; state.peerPos = pos;
@@ -2002,14 +2393,18 @@ async function pageOffice(page) {
         if (arcade.open === 'duel' && duel.view === 'lobby') renderDuel();
       }, () => {});
       room.on('duel', onDuelMsg, () => {});
+      room.on('emote', (e, me) => { if (e.uid !== me) playEmote(e); }, () => {});
+      room.on('messes', (list) => { const before = state.messes.map((m) => m.id).join(); state.messes = Array.isArray(list) ? list : []; if (before !== state.messes.map((m) => m.id).join()) renderThings(true); }, () => {});
       room.on('type', (e, me) => { const p = personById(e.uid); if (!p) return; log(p, e.text); if (e.what === 'open' && e.uid !== me) typeToast(e.uid); if (e.what === 'win') HUB.refresh(); }, () => {});
       room.on('say', (m) => {
         if (m.isMe || !m.by) return;
         const text = String(m.data?.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
         if (!text) return;
         const p = personById(m.by); if (!p) return;
-        if (chars.has(m.by)) bubble(m.by, text);
-        log(p, text, 'say');
+        const shout = !!(m.data && m.data.shout);
+        if (chars.has(m.by)) bubble(m.by, text, shout ? 'shout' : '');
+        log(p, (shout ? 'shouted: ' : '') + text, 'say');
+        notifyChat(p, text, shout);
       }, () => {});
       const meC = chars.get(state.myId); if (meC) room.presence({ x: meC.tx, y: meC.ty }).catch(() => {});
     }
