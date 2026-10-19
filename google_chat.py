@@ -504,11 +504,17 @@ def _notify_message(sid, mid):
             _notify(uid, "chat_mention", sender_uid, sender_name, sid, snippet)
         elif sp["space_type"] in ("DIRECT_MESSAGE", "GROUP_CHAT"):   # DMs and group chats ping everyone in them
             _notify(uid, "chat_dm", sender_uid, sender_name, sid, snippet)
+        else:   # other space messages: open the chat box, but don't add to the notification bell
+            _notify(uid, "chat_space", sender_uid, sender_name, sid, snippet, read=True)
 
 
-def _notify(uid, kind, actor_id, actor_label, sid, snippet):
-    H.ex("INSERT INTO notifications(user_id,actor_id,actor_label,kind,task_id,chat_space_id,snippet,created_at) VALUES(?,?,?,?,?,?,?,?)",
-         (uid, actor_id, actor_label, kind, None, sid, snippet[:240], H.iso(H.now_utc())))
+def _notify(uid, kind, actor_id, actor_label, sid, snippet, read=False):
+    now = H.iso(H.now_utc())
+    H.ex("INSERT INTO notifications(user_id,actor_id,actor_label,kind,task_id,chat_space_id,snippet,created_at,read_at) VALUES(?,?,?,?,?,?,?,?,?)",
+         (uid, actor_id, actor_label, kind, None, sid, snippet[:240], now, now if read else None))
+    if kind == "chat_space":   # only needed for the next check-in; keep the table small
+        H.ex("DELETE FROM notifications WHERE user_id=? AND kind='chat_space' AND created_at<?",
+             (uid, H.iso(H.now_utc() - timedelta(days=1))))
 
 
 def sync_space_messages(sid, uid):
@@ -1466,6 +1472,8 @@ def register(module):
     def chat_people_search():
         """Teammates to add to a space or start a chat with (company directory + hub users)."""
         qtext = (request.args.get("q") or "").strip().lower()
+        if len(qtext) >= 2:
+            _search_directory(H.current_user()["id"], qtext)
         like = f"%{qtext}%"
         rows = H.q("SELECT gid, name, email, photo FROM chat_people WHERE name!='' AND email!='' AND (lower(name) LIKE ? OR lower(email) LIKE ?) "
                    "ORDER BY name LIMIT 20", (like, like))
@@ -1478,6 +1486,30 @@ def register(module):
         out += [{"name": h["name"], "email": h["email"], "photo": "", "avatar_file_id": h["avatar_file_id"], "gid": ""} for h in hub if h["email"].lower() not in seen_emails]
         me = H.current_user()["email"].lower()
         return jsonify([o for o in out if o["email"].lower() != me][:20])
+
+    _dir_searches = {}   # (uid, query) -> when it was last asked of Google
+
+    def _search_directory(uid, qtext):
+        """Ask the company directory directly, so someone added today is found without waiting for the next full sync."""
+        key = (uid, qtext)
+        if _dir_searches.get(key, 0) > time.time() - 120:
+            return
+        if len(_dir_searches) > 500:
+            _dir_searches.clear()
+        _dir_searches[key] = time.time()
+        try:
+            r = gapi(uid, "GET", "/v1/people:searchDirectoryPeople", base=PEOPLE_API, timeout=6,
+                     params={"query": qtext, "readMask": "names,emailAddresses,photos", "pageSize": 10,
+                             "sources": "DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE"})
+        except (GoogleError, NotConnected):
+            return
+        except Exception as e:   # a slow directory never blocks the picker
+            print(f"[gchat] directory search failed: {e!r}", flush=True)
+            return
+        for p in r.get("people", []):
+            name, email, photo = _person_fields(p)
+            if name and email and p.get("resourceName"):
+                _save_person("users/" + _gid_num(p["resourceName"]), name, email, photo)
 
     @app.post("/api/chat/spaces/new")
     @lr
@@ -1501,6 +1533,10 @@ def register(module):
         except (GoogleError, NotConnected) as e:
             if isinstance(e, GoogleError) and e.status == 403:
                 return H.bad("Reconnect Google Chat once to allow creating spaces (the blue notice on the Chat page).", 409)
+            if isinstance(e, GoogleError) and e.status in (400, 404):
+                who = emails[0] if len(emails) == 1 else "one of these people"
+                return H.bad(f"Google Chat couldn't find {who}. Check the email address — a brand-new account also "
+                             "needs to sign in to Google Chat once before others can message it.", 400)
             return _manage_error(e)
         sid = _upsert_space(r)
         H.ex("INSERT OR IGNORE INTO chat_members(space_id,user_id) VALUES(?,?)", (sid, u["id"]))

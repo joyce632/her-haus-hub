@@ -1810,7 +1810,7 @@ def toggle_reaction(cid):
 @login_required
 def list_notifications():
     uid = current_user()["id"]
-    where, args = ["n.user_id=?"], [uid]
+    where, args = ["n.user_id=?", "n.kind!='chat_space'"], [uid]   # space pop-up signals aren't listed
     if request.args.get("kind") == "mention":
         where.append("n.kind IN ('mention','chat_mention')")
     if request.args.get("unread") == "1":
@@ -1840,7 +1840,7 @@ def notification_count():
                   "t.title task_title, t.client_id, c.name client_name, cs.display_name chat_title FROM notifications n "
                   "LEFT JOIN users a ON a.id=n.actor_id LEFT JOIN tasks t ON t.id=n.task_id LEFT JOIN clients c ON c.id=t.client_id "
                   "LEFT JOIN chat_spaces cs ON cs.id=n.chat_space_id "
-                  "WHERE n.user_id=? AND n.id>? AND n.read_at IS NULL ORDER BY n.id LIMIT 10", (uid, int(since)))
+                  "WHERE n.user_id=? AND n.id>? AND (n.read_at IS NULL OR n.kind='chat_space') ORDER BY n.id LIMIT 20", (uid, int(since)))
     return jsonify(unread=r["unread"] or 0, unread_mentions=r["mentions"] or 0, latest_id=latest, new=fresh,
                    chat_unread=gchat.unread_total(uid), huddles=huddles.visible_huddles(uid))
 

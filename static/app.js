@@ -248,6 +248,7 @@ const I = {
   play: svg('<path d="M7 4l13 8-13 8z"/>'),
   pause: svg('<path d="M8 4v16M16 4v16"/>'),
   bell: svg('<path d="M6 8a6 6 0 1112 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 003.4 0"/>'),
+  bellOff: svg('<path d="M6 8a6 6 0 0110.3-4.2M18 8c0 7 3 9 3 9H7"/><path d="M10.3 21a1.9 1.9 0 003.4 0M3 3l18 18"/>'),
   chat: svg('<path d="M21 12a8 8 0 01-11.6 7.1L3 21l1.9-6.4A8 8 0 1121 12z"/>'),
   at: svg('<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 006 0v-1a10 10 0 10-3.9 7.9"/>'),
   archive: svg('<rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a1 1 0 001 1h12a1 1 0 001-1V9M10 13h4"/>'),
@@ -2020,6 +2021,7 @@ function alertPlain(n) {
     assigned: [n.actor_name ? `${who} assigned you a task` : 'New recurring task', task],
     follow: [`${who} added you as a follower`, task],
     chat_dm: [`${who} · Google Chat`, n.snippet || 'New message'],
+    chat_space: [`${who}${n.chat_title ? ` in ${n.chat_title}` : ''}`, n.snippet || 'New message'],
     huddle_invite: [`${who} invited you to a huddle`, n.chat_title || 'Tap to join'],
     resource_shared: [`${who} shared a resource with you`, n.snippet || 'Open Resources'],
     chat_mention: [`${who} mentioned you${n.chat_title ? ` in ${n.chat_title}` : ''}`, n.snippet || ''] }[n.kind] || ['Her Haus Hub', task];
@@ -2035,6 +2037,13 @@ function desktopAlert(n) {
   } catch (_) { /* some browsers only allow this from a service worker */ }
 }
 
+// Spaces whose every-message pop-ups this person turned off (DMs, group chats and @mentions still pop up).
+const spaceMutes = () => { try { return JSON.parse(localStorage.getItem('hh_muted_spaces') || '[]'); } catch (_) { return []; } };
+const spaceMuted = (sid) => spaceMutes().includes(Number(sid));
+function setSpaceMuted(sid, on) {
+  const list = spaceMutes().filter((x) => x !== Number(sid)); if (on) list.push(Number(sid));
+  try { localStorage.setItem('hh_muted_spaces', JSON.stringify(list)); } catch (_) { /* storage blocked */ }
+}
 let notifState = { unread: 0, mentions: 0, filter: 'all' };
 let lastNotifId = null;
 async function pollNotifications() {
@@ -2047,7 +2056,8 @@ async function pollNotifications() {
     const cc = $('#nav-chat-count'); if (cc) { cc.textContent = r.chat_unread > 99 ? '99+' : r.chat_unread; cc.hidden = !r.chat_unread; }
     $('#bell')?.classList.toggle('has-mention', !!r.unread_mentions);
     if (lastNotifId !== null && (r.new || []).length) {   // something new since the last check
-      const kinds = r.new.map((x) => ({ chat_mention: 'mention', chat_dm: 'comment' }[x.kind] || x.kind));
+      r.new = r.new.filter((x) => x.kind !== 'chat_space' || !spaceMuted(x.chat_space_id));   // spaces muted from their chat box
+      const kinds = r.new.map((x) => ({ chat_mention: 'mention', chat_dm: 'comment', chat_space: 'comment' }[x.kind] || x.kind));
       const loudest = SOUND_PRIORITY.find((k) => kinds.includes(k));
       if (loudest) playTone(loudest);
       r.new.forEach(desktopAlert);
@@ -3762,7 +3772,7 @@ function peoplePicker(root, { placeholder = 'Add people by name or email', exclu
     chips.innerHTML = picked.map((p, i) => `<span class="pp-chip">${personAv(p, 'xs')}<span>${esc(p.name)}</span><button type="button" data-pp-rm="${i}" aria-label="Remove">${I.x.replace('width="18" height="18"', 'width="11" height="11"')}</button></span>`).join('');
   };
   const show = () => {
-    pop.innerHTML = matches.map((p, i) => `<button type="button" class="${i === idx ? 'on' : ''}" data-pp="${i}">${personAv(p, 'sm')}<span><b>${esc(p.name)}</b><small>${esc(p.email)}</small></span></button>`).join('');
+    pop.innerHTML = matches.map((p, i) => `<button type="button" class="${i === idx ? 'on' : ''}" data-pp="${i}">${personAv(p, 'sm')}<span>${p.typed ? `<b>Message ${esc(p.email)}</b><small>Use this email address</small>` : `<b>${esc(p.name)}</b><small>${esc(p.email)}</small>`}</span></button>`).join('');
     pop.classList.toggle('hidden', !matches.length);
   };
   const search = async () => {
@@ -3771,7 +3781,11 @@ function peoplePicker(root, { placeholder = 'Add people by name or email', exclu
     let r = await api('GET', `/api/chat/people?q=${encodeURIComponent(qv)}`).catch(() => []);
     if (my !== seq) return;
     r = r.filter((p) => !skip.has(p.email.toLowerCase()) && !picked.some((x) => x.email === p.email));
-    if (!r.length && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(qv)) r = [{ name: qv, email: qv, photo: '' }];   // anyone by email
+    const typedEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(qv) ? qv.toLowerCase() : '';
+    if (typedEmail && !r.some((p) => p.email.toLowerCase() === typedEmail) && !picked.some((x) => x.email.toLowerCase() === typedEmail)) {
+      r = [...r, { name: qv, email: qv, photo: '', typed: true }];   // anyone by email, even someone added today
+    }
+    if (!r.length) { matches = []; pop.innerHTML = `<div class="pp-none">No one found for “${esc(qv)}”. Type their full email address to message them.</div>`; pop.classList.remove('hidden'); return; }
     matches = r.slice(0, 8); idx = 0; show();
   };
   const pick = (p) => { picked.push(p); input.value = ''; matches = []; show(); draw(); input.focus(); root.dispatchEvent(new Event('change')); };
@@ -4302,6 +4316,7 @@ async function chatPopup(sid, n, opts = {}) {
   el.innerHTML = `<header class="cp-head">
       <span class="cp-av">${opts.avatar || av(n && n.actor_name || title, n && n.actor_avatar)}</span>
       <span class="cp-title"><b>${esc(title)}</b><small>${esc(opts.sub || (n && n.chat_title ? `${n.actor_name || ''} · Google Chat` : 'Google Chat'))}</small></span>
+      <button type="button" class="cp-btn" data-cp-mute hidden></button>
       <button type="button" class="cp-btn" data-cp-huddle title="Huddle — a live voice call">${I.headset}</button>
       <button type="button" class="cp-btn" data-cp-open title="Open in Chat">${I.ext}</button>
       <button type="button" class="cp-btn" data-cp-min title="Minimize">–</button>
@@ -4318,6 +4333,10 @@ async function chatPopup(sid, n, opts = {}) {
       $('.cp-av', el).innerHTML = `${space.type === 'DIRECT_MESSAGE' && partner ? personAv(partner, 'sm') : spaceAv(space, 'sm')}${uid ? onlineDot(uid) : ''}`;
       $('.cp-title b', el).textContent = space.title;
       if (!opts.sub) baseSub = space.type === 'DIRECT_MESSAGE' ? 'Direct message' : space.type === 'GROUP_CHAT' ? 'Group chat' : 'Space';
+      const mb = $('[data-cp-mute]', el), muted = spaceMuted(sid);
+      mb.hidden = space.type !== 'SPACE';
+      mb.innerHTML = muted ? I.bellOff : I.bell; mb.classList.toggle('on', muted);
+      mb.title = muted ? 'Pop-ups off for this space (you still get @mentions) — click to turn on' : 'Turn off pop-ups for this space';
     }
     const typing = typingText(sid), small = $('.cp-title small', el);
     small.classList.toggle('typing', !!typing);
@@ -4402,6 +4421,10 @@ async function chatPopup(sid, n, opts = {}) {
     if (e.target.closest('[data-cp-min]') || (e.target.closest('.cp-head') && el.classList.contains('min') && !e.target.closest('.cp-btn'))) { el.classList.toggle('min'); if (!el.classList.contains('min')) { refresh(); markRead(); } return; }
     if (e.target.closest('[data-cp-open]')) { closeChatPopup(sid); location.hash = `#/chat/${sid}`; return; }
     if (e.target.closest('[data-cp-huddle]')) { startHuddle(sid); return; }
+    if (e.target.closest('[data-cp-mute]')) {
+      const on = !spaceMuted(sid); setSpaceMuted(sid, on); updateHead();
+      toast(on ? 'Pop-ups off for this space — you’ll still see @mentions' : 'Pop-ups on for this space', 'ok'); return;
+    }
     if (e.target.closest('[data-cp-older]')) { loadOlder(); return; }
     const img = e.target.closest('[data-chat-img]'); if (img) { lightbox(img.dataset.chatImg, img.alt, `${img.dataset.chatImg}?download=1`); return; }
     const rxb = e.target.closest('[data-react]'), add = e.target.closest('[data-react-add]');
