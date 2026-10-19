@@ -22,20 +22,21 @@ EVENTS = []       # [{"seq", "uid", "text", "t"}]  chat bubbles, everyone sees t
 INBOX = {}        # uid -> [{"seq", "from", "data", "t"}]   duel moves addressed to one person
 _seq = [0]
 
-MAP_W, MAP_H = 106, 38
+MAP_W, MAP_H = 122, 38
 POS_TTL = 25          # seconds without a poll before someone's live position is dropped
 EVENT_TTL = 90
 GAMES = ("snake", "dash", "duel", "type")
-SCORE_COLS = {"snake": "snake", "dash": "dash", "duel": "duel", "type": "typerace"}   # game -> office_scores column
+SCORE_COLS = {"snake": "snake", "dash": "dash", "duel": "duel", "type": "typerace", "blocks": "blocks", "vs": "vswins"}   # game -> office_scores column
 LOOK = {"skin": 6, "hairStyle": 5, "hair": 8, "shirt": 10, "pants": 5, "acc": 4}
 MODES = ("", "meeting", "social")
-CARRY = ("coffee", "drink", "snack", "water", "burger", "paper", "ball")   # what someone can be holding
+CARRY = ("coffee", "drink", "snack", "water", "burger", "paper", "ball", "fishball", "isaw", "taho", "turon", "mais", "halo", "treat")   # what someone can be holding
 ACTS = ("toilet", "wash", "nurse", "grill", "hoop", "dance", "wave", "drive", "film", "paint", "present", "write", "kick")   # what someone is doing right now
 EMOTES = ("dance", "wave", "shout", "fart", "poop", "pee", "honk")
 MESSES = []           # [{"id", "kind": "poop"|"pee", "x", "y", "uid", "t"}] floor messes anyone can clean up
 MESS_TTL, MESS_MAX = 900, 40
 _last_emote = {}      # uid -> time of their last emote (a little rate limit)
 DUEL_TYPES = ("inv", "acc", "dec", "bye", "lock", "rev")
+VS_TYPES = ("inv", "acc", "dec", "bye", "st", "gb", "ko")   # Haus Blocks Versus messages
 
 SCHEMA_SQLITE = """
 CREATE TABLE IF NOT EXISTS office_profiles(
@@ -46,7 +47,8 @@ CREATE TABLE IF NOT EXISTS office_scores(
 SCHEMA_PG = SCHEMA_SQLITE
 NO_ID_TABLES = {"office_profiles", "office_scores"}
 # columns added after the first Office release (best Type Race words per minute)
-SQLITE_COLUMNS = [("office_scores", "typerace", "INTEGER DEFAULT 0")]
+SQLITE_COLUMNS = [("office_scores", "typerace", "INTEGER DEFAULT 0"), ("office_scores", "blocks", "INTEGER DEFAULT 0"),
+                  ("office_scores", "vswins", "INTEGER DEFAULT 0")]
 PG_MIGRATIONS = [f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {c} {d}" for t, c, d in SQLITE_COLUMNS]
 
 # Type Race: one shared race at a time. Everyone in the Office can join while it's open; the first to type the
@@ -148,10 +150,10 @@ def _save_type_score(uid, wpm):
 
 
 def _write_scores(uid, vals):
-    H.ex("INSERT INTO office_scores(user_id,snake,dash,duel,typerace,updated_at) VALUES(?,?,?,?,?,?) "
-         "ON CONFLICT(user_id) DO UPDATE SET snake=excluded.snake, dash=excluded.dash, duel=excluded.duel, "
-         "typerace=excluded.typerace, updated_at=excluded.updated_at",
-         (uid, vals["snake"], vals["dash"], vals["duel"], vals["type"], H.iso(H.now_utc())))
+    cols = list(SCORE_COLS.values())
+    H.ex(f"INSERT INTO office_scores(user_id,{','.join(cols)},updated_at) VALUES({','.join('?' * (len(cols) + 2))}) "
+         f"ON CONFLICT(user_id) DO UPDATE SET {', '.join(f'{c}=excluded.{c}' for c in cols)}, updated_at=excluded.updated_at",
+         (uid, *[vals[g] for g in SCORE_COLS], H.iso(H.now_utc())))
 
 
 def _team():
@@ -418,17 +420,46 @@ def register(module):
             INBOX.setdefault(to, []).append({"seq": _next(), "from": uid, "data": data, "t": time.time()})
         return jsonify(ok=True)
 
+    @app.post("/api/office/vs")
+    @lr
+    def office_vs():
+        """Haus Blocks Versus: passes invites, board snapshots, garbage lines and knock-outs between two players."""
+        uid, d = H.current_user()["id"], H.body()
+        to, kind, gid = _int(d.get("to"), 1, 10 ** 9), d.get("t"), str(d.get("g") or "")[:12]
+        if kind not in VS_TYPES or not to or to == uid or not gid:
+            return H.bad("Bad versus message")
+        if not H.q("SELECT 1 FROM users WHERE id=? AND active=1", (to,), one=True):
+            return H.bad("That person isn't on the team")
+        data = {"ch": "vs", "t": kind, "g": gid}
+        b = str(d.get("b") or "")
+        if kind == "st" and len(b) <= 200 and all(c in "012345678" for c in b):
+            data["b"] = b
+            for k in ("s", "l", "lv"):
+                v = _int(d.get(k), 0, 10 ** 7)
+                if v is not None:
+                    data[k] = v
+        elif kind == "st":
+            return jsonify(ok=True)          # a board snapshot that didn't validate is dropped, not passed on
+        if kind == "gb":
+            data["n"] = min(4, max(1, _int(d.get("n"), -10 ** 6, 10 ** 6) or 1))
+        with _lock:
+            box = INBOX.setdefault(to, [])
+            if kind == "st":   # only the latest board snapshot matters
+                box[:] = [m for m in box if not (m["from"] == uid and m["data"].get("ch") == "vs" and m["data"].get("t") == "st")]
+            box.append({"seq": _next(), "from": uid, "data": data, "t": time.time()})
+        return jsonify(ok=True)
+
     @app.post("/api/office/score")
     @lr
     def office_score():
         uid, d = H.current_user()["id"], H.body()
         game = d.get("game")
-        if game not in ("snake", "dash", "duel"):      # Type Race results are recorded by the server, not posted
+        if game not in ("snake", "dash", "duel", "blocks", "vs"):   # Type Race results are recorded by the server, not posted
             return H.bad("Unknown game")
         cur = H.q("SELECT * FROM office_scores WHERE user_id=?", (uid,), one=True) or {}
         vals = {g: int(cur.get(col) or 0) for g, col in SCORE_COLS.items()}
-        if game == "duel":
-            vals["duel"] += 1                     # one more duel won against a teammate
+        if game in ("duel", "vs"):
+            vals[game] += 1                       # one more win against a teammate
         else:
             v = _int(d.get("value"), 0, 100000)
             if v is None:
