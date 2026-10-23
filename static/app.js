@@ -2075,11 +2075,12 @@ async function pollNotifications() {
 // A tiny background worker keeps time even when the tab is in the background (browsers slow down page timers there).
 let tickCount = 0;
 const bgTicker = (() => {
-  try { return new Worker(URL.createObjectURL(new Blob(['setInterval(() => postMessage(1), 15000)'], { type: 'text/javascript' }))); }
+  try { return new Worker(URL.createObjectURL(new Blob(['setInterval(() => postMessage(1), 4000)'], { type: 'text/javascript' }))); }
   catch (_) { return null; }
 })();
-const onTick = () => { tickCount++; pollNotifications(); if (floater && tickCount % 4 === 0) refreshFloaterData(); };
-if (bgTicker) bgTicker.onmessage = onTick; else setInterval(onTick, 15000);
+// every 4s: new chat messages pop up quickly; the time-tracking floater still refreshes once a minute
+const onTick = () => { tickCount++; pollNotifications(); if (floater && tickCount % 15 === 0) refreshFloaterData(); };
+if (bgTicker) bgTicker.onmessage = onTick; else setInterval(onTick, 4000);
 
 function notifText(n) {
   const who = `<b>${esc(n.actor_name || 'Automation')}</b>`, task = `<b>${esc(n.task_title || 'a deleted task')}</b>`;
@@ -3822,7 +3823,8 @@ async function spaceSettings(sid, onChange) {
           <label class="field full"><span class="field-label">Description<span class="hint">· what this space is for (150 characters)</span></span><input class="input" name="description" maxlength="150" value="${esc(d.description)}" ${can ? '' : 'disabled'}></label>
           <label class="field full"><span class="field-label">Guidelines<span class="hint">· rules shown to members</span></span><textarea class="input" name="guidelines" rows="5" ${can ? '' : 'disabled'}>${esc(d.guidelines)}</textarea></label>
           </form>
-          <p class="small muted">${can ? 'Changes save to Google Chat for everyone in the space.' : 'Only space managers can change these.'}${d.created ? ` · Created ${esc(new Date(d.created).toLocaleDateString([], { dateStyle: 'medium' }))}` : ''}</p>`
+          <p class="small muted">${can ? 'Changes save to Google Chat for everyone in the space.' : 'Only space managers can change these.'}${d.created ? ` · Created ${esc(new Date(d.created).toLocaleDateString([], { dateStyle: 'medium' }))}` : ''}</p>
+          ${isExec() ? `<label class="check ss-popup"><input type="checkbox" data-ss-popup ${d.popup ? 'checked' : ''}> <span><b>Pop up every message</b> — new messages here open a chat window for everyone in the space (otherwise only @mentions do)</span></label>` : ''}`
           : `<p class="muted">${d.type === 'DIRECT_MESSAGE' ? 'A direct message between you and one teammate.' : 'A group chat. To give it a name, settings and managers, start a space instead.'}</p>`}
         <div class="ss-actions">
           <a class="btn ghost sm" href="${esc(d.web_link)}" target="_blank" rel="noopener">${I.ext} Open in Google Chat</a>
@@ -3857,6 +3859,12 @@ async function spaceSettings(sid, onChange) {
   };
   el.addEventListener('click', async (e) => {
     const t = e.target.closest('[data-ss-tab]'); if (t) { render(t.dataset.ssTab); return; }
+    const pu = e.target.closest('[data-ss-popup]');
+    if (pu) {
+      try { d.popup = (await api('PUT', `/api/chat/spaces/${sid}/popup`, { on: pu.checked })).popup; toast(d.popup ? 'Every message in this space will pop up' : 'Pop-ups off for this space — @mentions still pop up', 'ok'); }
+      catch (err) { pu.checked = !pu.checked; toast(err.message, 'err'); }
+      return;
+    }
     const rl = e.target.closest('[data-ss-role]');
     if (rl) {
       try { await api('PUT', `/api/chat/spaces/${sid}/members/role`, { membership: rl.dataset.ssRole, role: rl.dataset.role }); toast('Role updated', 'ok'); if (await load()) render('members'); }
@@ -4414,7 +4422,7 @@ async function chatPopup(sid, n, opts = {}) {
   };
   box.addEventListener('scroll', () => { follow = box.scrollHeight - box.scrollTop - box.clientHeight < 40; if (box.scrollTop < 60) loadOlder(); });
   const markRead = () => api('POST', `/api/chat/spaces/${sid}/read`, {}).then(pollNotifications).catch(() => {});
-  p = { el, refresh, comp: null, timer: setInterval(() => { if (!document.hidden && !el.classList.contains('min')) refresh(); }, 5000) };
+  p = { el, refresh, comp: null, timer: setInterval(() => { if (!document.hidden && !el.classList.contains('min')) refresh(); }, 2500) };
   chatPops.set(sid, p);
   el.addEventListener('click', (e) => {
     if (e.target.closest('[data-cp-close]')) { closeChatPopup(sid); return; }
@@ -4923,11 +4931,15 @@ async function pageChat(page, [sidParam], alive) {
   threadEl.addEventListener('click', (e) => onMsgClick(e, true));
   main.addEventListener('scroll', (e) => { if (e.target.id === 'cm-msgs' && e.target.scrollTop < 80) loadOlder(); }, true);
 
-  // live updates: the open conversation every 4s (the server re-reads it from Google), the chat list every 10s
-  let ticks = 0;
+  // live updates: the open conversation every 2s (the server re-reads it from Google first), the chat list every 10s
+  let ticks = 0, ticking = false;
   const tick = async () => {
     if (!alive()) { clearInterval(timer); window.removeEventListener('resize', fit); return; }
-    if (document.hidden) return;
+    if (document.hidden || ticking) return;
+    ticking = true;
+    try { await tickOnce(); } finally { ticking = false; }
+  };
+  const tickOnce = async () => {
     ticks++;
     if (current) {
       const s = current;
@@ -4942,12 +4954,12 @@ async function pageChat(page, [sidParam], alive) {
       }
       if (thread && !$('.cm-edit', threadEl)) loadThread(false);
     }
-    if (ticks % 3 === 0) loadSpaces();
-    if (ticks % 15 === 0) { await loadTeam(); drawList(); }
+    if (ticks % 5 === 0) loadSpaces();
+    if (ticks % 30 === 0) { await loadTeam(); drawList(); }
   };
-  const timer = setInterval(tick, 4000);
+  const timer = setInterval(tick, 2000);
   // coming back to the tab: catch up right away instead of waiting for the next check
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && alive()) { ticks = 2; tick(); markRead(); } });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && alive()) { ticks = 4; tick(); markRead(); } });
 
   // live huddles: header button, "join" banner, headset badges in the list
   function drawPresence() {

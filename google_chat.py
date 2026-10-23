@@ -55,8 +55,9 @@ SCOPES = [
     "https://www.googleapis.com/auth/chat.spaces.create",        # new spaces, group chats and DMs
     "https://www.googleapis.com/auth/directory.readonly",       # teammates' names and photos
 ]
-SYNC_SECONDS = int(os.environ.get("GCHAT_SYNC_SECONDS", "15"))
-REFRESH_SECONDS = 6          # how often an open conversation is re-read from Google
+SYNC_SECONDS = int(os.environ.get("GCHAT_SYNC_SECONDS", "3"))    # new-message check for everyone (one cheap call per person)
+SLOW_SECONDS = 60            # housekeeping: directory, members, "seen" state, older history
+REFRESH_SECONDS = 2          # how often an open conversation is re-read from Google
 PAGE = 50                    # messages per page in the hub
 UPLOAD_LIMIT = 25 * 1024 * 1024
 
@@ -373,12 +374,19 @@ def sync_spaces(uid):
         if not token:
             break
     seen = []
+    known = {r["gname"]: r for r in H.q("SELECT id, gname, display_name, space_type, threading, last_active FROM chat_spaces")}
+    mine = {r["space_id"] for r in H.q("SELECT space_id FROM chat_members WHERE user_id=?", (uid,))}
     for s in spaces:
         if s.get("singleUserBotDm"):
             continue
-        sid = _upsert_space(s)
+        k = known.get(s["name"])
+        if k and k["display_name"] == (s.get("displayName") or "") and k["threading"] == (s.get("spaceThreadingState") or "") \
+                and (not s.get("lastActiveTime") or k["last_active"] == norm_time(s.get("lastActiveTime"))):
+            sid = k["id"]   # nothing changed
+        else:
+            sid = _upsert_space(s)
         seen.append(sid)
-        if not H.q("SELECT 1 FROM chat_members WHERE space_id=? AND user_id=?", (sid, uid), one=True):
+        if sid not in mine:
             H.ex("INSERT OR IGNORE INTO chat_members(space_id,user_id) VALUES(?,?)", (sid, uid))
             # Joining (or connecting) starts with everything already read, so history doesn't flood the unread counts.
             H.ex("INSERT OR IGNORE INTO chat_reads(space_id,user_id,last_read) VALUES(?,?,?)", (sid, uid, now_norm()))
@@ -496,6 +504,7 @@ def _notify_message(sid, mid):
     snippet = (m["text"] or m["card_text"] or ("📎 " + ", ".join(files) if files else ""))[:200]
     members = [r["user_id"] for r in H.q("SELECT user_id FROM chat_members WHERE space_id=?", (sid,))]
     mentioned = {a["user"] for a in json.loads(m["annotations"] or "[]")}
+    popup_spaces = popup_space_ids() if sp["space_type"] == "SPACE" else set()
     for uid in members:
         if uid == sender_uid:
             continue
@@ -504,8 +513,31 @@ def _notify_message(sid, mid):
             _notify(uid, "chat_mention", sender_uid, sender_name, sid, snippet)
         elif sp["space_type"] in ("DIRECT_MESSAGE", "GROUP_CHAT"):   # DMs and group chats ping everyone in them
             _notify(uid, "chat_dm", sender_uid, sender_name, sid, snippet)
-        else:   # other space messages: open the chat box, but don't add to the notification bell
+        elif sid in popup_spaces:   # chosen spaces: open the chat box, but don't add to the notification bell
             _notify(uid, "chat_space", sender_uid, sender_name, sid, snippet, read=True)
+
+
+def _norm_name(name):
+    return re.sub(r"[^a-z0-9]", "", (name or "").lower())
+
+
+def popup_space_ids():
+    """Spaces whose every message pops up for their members (DMs, group chats and @mentions always do).
+    Executives choose them in Space settings; until then it's the Team General space."""
+    row = H.q("SELECT value FROM settings WHERE key='chat_popup_spaces'", one=True)
+    if row and row["value"]:
+        try:
+            return {int(x) for x in json.loads(row["value"])}
+        except (ValueError, TypeError):
+            pass
+    return {r["id"] for r in H.q("SELECT id, display_name FROM chat_spaces WHERE space_type='SPACE'")
+            if "teamgeneral" in _norm_name(r["display_name"])}
+
+
+def set_popup_space(sid, on):
+    ids = popup_space_ids()
+    ids = (ids | {sid}) if on else (ids - {sid})
+    H.ex("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", ("chat_popup_spaces", json.dumps(sorted(ids))))
 
 
 def _notify(uid, kind, actor_id, actor_label, sid, snippet, read=False):
@@ -558,7 +590,7 @@ def backfill_step(sid, uid):
             H.ex("UPDATE chat_spaces SET backfill_done=1 WHERE id=?", (sid,))
 
 
-def refresh_recent(sid, uid):
+def refresh_recent(sid, uid, timeout=25):
     """Re-read the newest messages of an open conversation: new messages, edits, deletions and reactions."""
     sp = H.q("SELECT * FROM chat_spaces WHERE id=?", (sid,), one=True)
     if (sp["refreshed_at"] or 0) > time.time() - REFRESH_SECONDS:
@@ -567,11 +599,31 @@ def refresh_recent(sid, uid):
     if not sp["synced_through"]:
         return sync_space_messages(sid, uid)
     with _lock(f"space:{sid}"):
-        r = gapi(uid, "GET", f"/v1/{sp['gname']}/messages", params={"pageSize": PAGE, "orderBy": "createTime desc", "showDeleted": "true"})
+        r = gapi(uid, "GET", f"/v1/{sp['gname']}/messages", timeout=timeout,
+                 params={"pageSize": PAGE, "orderBy": "createTime desc", "showDeleted": "true"})
         msgs = r.get("messages", [])
         oldest = min((norm_time(m.get("createTime")) for m in msgs), default=None)
         complete = not r.get("nextPageToken") or (oldest and oldest <= sp["synced_through"])
         _ingest(sid, uid, msgs, notify=True, complete_from=sp["synced_through"] if complete else None)
+
+
+_refreshing = set()
+
+
+def refresh_live(sid, uid):
+    """Re-read an open conversation right now, so this request's answer already has new messages.
+    If another request is already doing it, don't wait — that one will bring them in."""
+    if sid in _refreshing:
+        return
+    _refreshing.add(sid)
+    try:
+        refresh_recent(sid, uid, timeout=8)
+    except (GoogleError, NotConnected) as e:
+        print(f"[gchat] refresh space {sid}: {e}", flush=True)
+    except Exception as e:
+        print(f"[gchat] refresh space {sid} failed: {e!r}", flush=True)
+    finally:
+        _refreshing.discard(sid)
 
 
 def refresh_in_background(sid, uid):
@@ -646,15 +698,15 @@ def seen_by(sid, me):
 _status = {}   # uid -> "syncing" while a first import runs
 
 
-def sync_user(uid):
+def sync_user_fast(uid):
+    """New messages: one call lists this person's spaces, then only spaces with new activity are read."""
     sids = sync_spaces(uid)
     if not sids:
-        return
-    sync_directory(uid)   # teammates' names and photos (at most every few hours)
+        return []
     marks = ",".join("?" * len(sids))
     rows = H.q(f"SELECT * FROM chat_spaces WHERE id IN ({marks})", sids)
-    for sp in rows:   # names for DMs / group chats first, so the chat list reads right straight away
-        if sp["space_type"] != "SPACE" and (not sp["members_json"] or (sp["members_at"] or 0) < time.time() - 86400):
+    for sp in rows:   # a new DM / group chat: its name comes from its members
+        if sp["space_type"] != "SPACE" and not sp["members_json"]:
             try:
                 refresh_members(sp["id"], uid)
             except GoogleError:
@@ -662,6 +714,20 @@ def sync_user(uid):
     for sp in rows:
         if not sp["synced_through"] or (sp["last_active"] and sp["last_active"] > sp["synced_through"]):
             sync_space_messages(sp["id"], uid)
+    return rows
+
+
+def sync_user(uid):
+    rows = sync_user_fast(uid)
+    if not rows:
+        return
+    sync_directory(uid)   # teammates' names and photos (at most every few hours)
+    for sp in rows:   # keep DM / group chat names fresh
+        if sp["space_type"] != "SPACE" and (sp["members_at"] or 0) < time.time() - 86400:
+            try:
+                refresh_members(sp["id"], uid)
+            except GoogleError:
+                pass
     unread = [sid for sid, n in unread_counts(uid).items() if n]
     if unread:
         sync_read_state(uid, unread)
@@ -671,30 +737,52 @@ def sync_user(uid):
         backfill_step(sp["id"], uid)
 
 
-def sync_all():
+def _sync_one(uid, full):
+    with H.app.app_context():
+        lock = _lock(f"user:{uid}")
+        if not lock.acquire(blocking=False):   # a slower round for this person is still running
+            return
+        try:
+            sync_user(uid) if full else sync_user_fast(uid)
+            H.ex("UPDATE google_accounts SET last_sync=?, sync_error='' WHERE user_id=?", (H.iso(H.now_utc()), uid))
+        except NotConnected:
+            pass
+        except GoogleError as e:
+            H.ex("UPDATE google_accounts SET sync_error=? WHERE user_id=?", (str(e)[:300], uid))
+            print(f"[gchat] sync user {uid}: {e}", flush=True)
+        except Exception as e:
+            print(f"[gchat] sync user {uid} failed: {e!r}", flush=True)
+        finally:
+            _status.pop(uid, None)
+            lock.release()
+
+
+_pool = None
+
+
+def sync_all(full=True):
+    """Everyone at once (a few at a time), so one slow account never holds up the others."""
+    global _pool
     if not configured():
         return
-    for a in H.q("SELECT user_id FROM google_accounts WHERE refresh_token IS NOT NULL AND refresh_token!=''"):
-        uid = a["user_id"]
-        with _lock(f"user:{uid}"):
-            try:
-                sync_user(uid)
-                H.ex("UPDATE google_accounts SET last_sync=?, sync_error='' WHERE user_id=?", (H.iso(H.now_utc()), uid))
-            except NotConnected:
-                pass
-            except GoogleError as e:
-                H.ex("UPDATE google_accounts SET sync_error=? WHERE user_id=?", (str(e)[:300], uid))
-                print(f"[gchat] sync user {uid}: {e}", flush=True)
-            finally:
-                _status.pop(uid, None)
+    if _pool is None:
+        from concurrent.futures import ThreadPoolExecutor
+        _pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="gchat-sync")
+    uids = [a["user_id"] for a in H.q("SELECT user_id FROM google_accounts WHERE refresh_token IS NOT NULL AND refresh_token!=''")]
+    for f in [_pool.submit(_sync_one, uid, full) for uid in uids]:
+        f.result()
 
 
 def _loop():
     time.sleep(8)
+    last_full = 0
     while True:
+        full = time.time() - last_full >= SLOW_SECONDS
         try:
             with H.app.app_context():
-                sync_all()
+                sync_all(full=full)
+            if full:
+                last_full = time.time()
         except Exception as e:   # keep syncing no matter what
             print(f"[gchat] sync error: {e!r}", flush=True)
         time.sleep(SYNC_SECONDS)
@@ -945,7 +1033,7 @@ def register(module):
         u = H.current_user()
         sp = _member_or_404(sid)
         if request.args.get("live") == "1" and _account(u["id"]):
-            refresh_in_background(sid, u["id"])
+            refresh_live(sid, u["id"])
         thread = request.args.get("thread")
         before = request.args.get("before")   # create_time of the oldest message shown
         around = request.args.get("around")   # a message id to jump to (from search)
@@ -1383,7 +1471,7 @@ def register(module):
         return jsonify(title=info.get("displayName") or "", type=info.get("spaceType") or sp["space_type"],
                        description=details.get("description", ""), guidelines=details.get("guidelines", ""),
                        created=norm_time(info.get("createTime")), web_link=_web_link(sp), members=out,
-                       i_manage=bool(me_row and me_row["role"] == "manager"))
+                       i_manage=bool(me_row and me_row["role"] == "manager"), popup=sid in popup_space_ids())
 
     @app.put("/api/chat/spaces/<int:sid>/details")
     @lr
@@ -1466,6 +1554,16 @@ def register(module):
         except (GoogleError, NotConnected) as e:
             return _manage_error(e)
         return jsonify(ok=True)
+
+    @app.put("/api/chat/spaces/<int:sid>/popup")
+    @H.exec_required
+    def chat_space_popup(sid):
+        """Executives: whether every message in this space pops up for its members."""
+        sp = _space_or_404(sid)
+        if sp["space_type"] != "SPACE":
+            return H.bad("Direct messages and group chats always pop up")
+        set_popup_space(sid, bool(H.body().get("on")))
+        return jsonify(ok=True, popup=sid in popup_space_ids())
 
     @app.get("/api/chat/people")
     @lr
