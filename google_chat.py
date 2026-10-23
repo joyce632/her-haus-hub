@@ -521,9 +521,12 @@ def _norm_name(name):
     return re.sub(r"[^a-z0-9]", "", (name or "").lower())
 
 
+POPUP_DEFAULTS = ("teamgeneral", "management")   # space names that pop up until executives choose otherwise
+
+
 def popup_space_ids():
     """Spaces whose every message pops up for their members (DMs, group chats and @mentions always do).
-    Executives choose them in Space settings; until then it's the Team General space."""
+    Executives choose them in Space settings; until then it's the Team General and Management spaces."""
     row = H.q("SELECT value FROM settings WHERE key='chat_popup_spaces'", one=True)
     if row and row["value"]:
         try:
@@ -531,7 +534,7 @@ def popup_space_ids():
         except (ValueError, TypeError):
             pass
     return {r["id"] for r in H.q("SELECT id, display_name FROM chat_spaces WHERE space_type='SPACE'")
-            if "teamgeneral" in _norm_name(r["display_name"])}
+            if any(k in _norm_name(r["display_name"]) for k in POPUP_DEFAULTS)}
 
 
 def set_popup_space(sid, on):
