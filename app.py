@@ -306,20 +306,28 @@ def _sqlite_open(**kw):
         return sqlite3.connect(DB_PATH, **kw)
     return sqlite3.connect(f"file:{quote(DB_PATH)}?vfs=unix-none", uri=True, **kw)
 
-# The app keeps ONE SQLite connection and lets request threads take turns on it (no per-request connections,
-# so the app never competes with itself for the file lock). The lock is taken only for the instant each
-# statement runs, so anything else that briefly opens the database simply waits its turn (busy_timeout)
-# instead of failing with "database is locked". Each statement commits on its own (autocommit).
+# SQLite: the app keeps ONE connection and request threads take turns on it (no per-request connections, so the
+# app never competes with itself for the file lock). The lock is taken only for the instant each statement runs.
+# Postgres: a small pool of connections, so several people's requests (and the background chat sync) are served
+# at the same time instead of queueing behind each other. Every statement commits on its own (autocommit) either way.
+PG_POOL_SIZE = int(os.environ.get("PG_POOL_SIZE") or 8)
+
+
 class _SharedDB:
     def __init__(self):
         self._lock = threading.RLock()
         self._conn = None
+        self._pg_free = []                       # idle Postgres connections
+        self._pg_guard = threading.Lock()
+        self._pg_slots = threading.BoundedSemaphore(PG_POOL_SIZE)
+        self._busy = {}                          # thread id -> when its database call started (for _db_watchdog)
 
-    def _connection(self):
-        if USE_PG:
-            if self._conn is None or self._conn.closed:
-                self._conn = psycopg.connect(DATABASE_URL, autocommit=True, row_factory=dict_row, connect_timeout=10)
-            return self._conn
+    @property
+    def busy_since(self):
+        """When the longest-running database call right now started (None when idle)."""
+        return min(self._busy.values(), default=None)
+
+    def _sqlite(self):
         if self._conn is None:
             conn = _sqlite_open(timeout=30, check_same_thread=False, isolation_level=None)
             conn.row_factory = sqlite3.Row
@@ -329,56 +337,74 @@ class _SharedDB:
             self._conn = conn
         return self._conn
 
-    busy_since = None   # when the database call currently running started (watched by _db_watchdog)
+    def _pg_get(self):
+        with self._pg_guard:
+            conn = self._pg_free.pop() if self._pg_free else None
+        if conn is None or conn.closed:
+            conn = psycopg.connect(DATABASE_URL, autocommit=True, row_factory=dict_row, connect_timeout=10)
+        return conn
 
-    def _run(self, sql, args, pg_suffix=""):
-        if not USE_PG:
-            return self._connection().execute(sql, args)
-        pg_sql = _to_pg(sql) + pg_suffix   # suffix goes after any ON CONFLICT clause
+    def _pg_put(self, conn):
+        if conn.closed:
+            return
+        with self._pg_guard:
+            self._pg_free.append(conn)
+
+    def _call(self, fn):
+        """Run fn(run) with a connection; run(sql, args, suffix) executes one statement on it."""
+        me = threading.get_ident()
+        self._busy[me] = _clock.monotonic()
         try:
-            return self._connection().execute(pg_sql, args)
-        except (psycopg.OperationalError, psycopg.InterfaceError):
-            # The connection to Postgres dropped (network blip, database restart): reconnect.
-            try:
-                self._conn.close()
-            except Exception:
-                pass
-            self._conn = None
-            if sql.lstrip()[:6].upper() != "SELECT":
-                raise   # never risk running a write twice
-            return self._connection().execute(pg_sql, args)
+            if not USE_PG:
+                with self._lock:
+                    conn = self._sqlite()
+                    return fn(lambda sql, args, suffix="": conn.execute(sql, args))
+            with self._pg_slots:
+                conn = self._pg_get()
+                try:
+                    def run(sql, args, suffix=""):
+                        nonlocal conn
+                        pg_sql = _to_pg(sql) + suffix   # suffix goes after any ON CONFLICT clause
+                        try:
+                            return conn.execute(pg_sql, args)
+                        except (psycopg.OperationalError, psycopg.InterfaceError):
+                            # The connection dropped (network blip, database restart): reconnect.
+                            try:
+                                conn.close()
+                            except Exception:
+                                pass
+                            conn = psycopg.connect(DATABASE_URL, autocommit=True, row_factory=dict_row, connect_timeout=10)
+                            if sql.lstrip()[:6].upper() != "SELECT":
+                                raise   # never risk running a write twice
+                            return conn.execute(pg_sql, args)
+                    return fn(run)
+                finally:
+                    self._pg_put(conn)
+        finally:
+            self._busy.pop(me, None)
 
     def execute(self, sql, args=()):
-        with self._lock:
-            self.busy_since = _clock.monotonic()
-            try:
-                cur = self._run(sql, args)
-                if cur.description is not None:   # a SELECT: read it fully now so it never holds a lock afterwards
-                    cur.fetchall()
-                return cur
-            finally:
-                self.busy_since = None
+        def go(run):
+            cur = run(sql, args)
+            if cur.description is not None:   # a SELECT: read it fully now so it never holds anything afterwards
+                cur.fetchall()
+            return cur
+        return self._call(go)
 
     def insert(self, sql, args=()):
         """Runs an INSERT and returns the new row's id."""
         table = (_INSERT_RE.match(sql) or [None, ""])[1]
-        with self._lock:
-            self.busy_since = _clock.monotonic()
-            try:
-                if USE_PG and table not in _NO_ID_TABLES:
-                    row = self._run(sql, args, " RETURNING id").fetchone()
-                    return row["id"] if row else None
-                return self._run(sql, args).lastrowid if not USE_PG else (self._run(sql, args) and None)
-            finally:
-                self.busy_since = None
+
+        def go(run):
+            if USE_PG and table not in _NO_ID_TABLES:
+                row = run(sql, args, " RETURNING id").fetchone()
+                return row["id"] if row else None
+            cur = run(sql, args)
+            return None if USE_PG else cur.lastrowid
+        return self._call(go)
 
     def query(self, sql, args=()):
-        with self._lock:
-            self.busy_since = _clock.monotonic()
-            try:
-                return [dict(r) for r in self._run(sql, args).fetchall()]
-            finally:
-                self.busy_since = None
+        return self._call(lambda run: [dict(r) for r in run(sql, args).fetchall()])
 
     def commit(self):
         pass  # autocommit: every statement is already saved

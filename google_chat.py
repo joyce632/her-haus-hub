@@ -387,6 +387,7 @@ def sync_spaces(uid):
             sid = _upsert_space(s)
         seen.append(sid)
         if sid not in mine:
+            _changed()
             H.ex("INSERT OR IGNORE INTO chat_members(space_id,user_id) VALUES(?,?)", (sid, uid))
             # Joining (or connecting) starts with everything already read, so history doesn't flood the unread counts.
             H.ex("INSERT OR IGNORE INTO chat_reads(space_id,user_id,last_read) VALUES(?,?,?)", (sid, uid, now_norm()))
@@ -394,6 +395,7 @@ def sync_spaces(uid):
     for r in H.q("SELECT space_id FROM chat_members WHERE user_id=?", (uid,)):
         if r["space_id"] not in keep:
             H.ex("DELETE FROM chat_members WHERE space_id=? AND user_id=?", (r["space_id"], uid))
+            _changed()
     return seen
 
 
@@ -451,18 +453,29 @@ def _message_fields(m):
     }
 
 
+_chat_ver = [0]   # bumped whenever messages or read marks change, so cached unread counts know to recount
+
+
+def _changed():
+    _chat_ver[0] += 1
+
+
 def _store(sid, m):
     """Insert or update one message. Returns the new row id when it was inserted, else None."""
     f = _message_fields(m)
-    row = H.q("SELECT id FROM chat_messages WHERE gname=?", (m["name"],), one=True)
+    row = H.q("SELECT * FROM chat_messages WHERE gname=?", (m["name"],), one=True)
     if row:
         if f["deleted"]:   # Google may drop the content (and sender) of deleted messages: keep where and by whom it was sent
             keep = ["create_time", "thread_name", "thread_reply"] + ([] if m.get("sender") else ["sender_gid", "sender_type", "sender_name"])
             for k in keep:
                 f.pop(k, None)
             f["attachments"] = "[]"
+        if all(row.get(k) == v for k, v in f.items()):   # an open chat re-reads its newest messages every few seconds
+            return None
         H.ex("UPDATE chat_messages SET " + ",".join(f"{k}=?" for k in f) + " WHERE id=?", (*f.values(), row["id"]))
+        _changed()
         return None
+    _changed()
     H.ex("INSERT OR IGNORE INTO chat_messages(gname,space_id," + ",".join(f) + ") VALUES(" + ",".join("?" * (len(f) + 2)) + ")",
          (m["name"], sid, *f.values()))
     r = H.q("SELECT id FROM chat_messages WHERE gname=?", (m["name"],), one=True)
@@ -611,22 +624,32 @@ def refresh_recent(sid, uid, timeout=25):
 
 
 _refreshing = set()
+_refresh_pool = None
 
 
 def refresh_live(sid, uid):
-    """Re-read an open conversation right now, so this request's answer already has new messages.
-    If another request is already doing it, don't wait — that one will bring them in."""
+    """Re-read an open conversation from Google in the background (a few helpers, one job per space at a time).
+    The request answers from the database straight away, so nobody's page waits on Google; the new messages
+    are there on the next check a couple of seconds later."""
+    global _refresh_pool
     if sid in _refreshing:
         return
+    if _refresh_pool is None:
+        from concurrent.futures import ThreadPoolExecutor
+        _refresh_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="gchat-refresh")
     _refreshing.add(sid)
-    try:
-        refresh_recent(sid, uid, timeout=8)
-    except (GoogleError, NotConnected) as e:
-        print(f"[gchat] refresh space {sid}: {e}", flush=True)
-    except Exception as e:
-        print(f"[gchat] refresh space {sid} failed: {e!r}", flush=True)
-    finally:
-        _refreshing.discard(sid)
+
+    def run():
+        try:
+            with H.app.app_context():
+                refresh_recent(sid, uid, timeout=10)
+        except (GoogleError, NotConnected) as e:
+            print(f"[gchat] refresh space {sid}: {e}", flush=True)
+        except Exception as e:
+            print(f"[gchat] refresh space {sid} failed: {e!r}", flush=True)
+        finally:
+            _refreshing.discard(sid)
+    _refresh_pool.submit(run)
 
 
 def refresh_in_background(sid, uid):
@@ -649,6 +672,7 @@ def _has_readstate(uid):
 
 def _set_read(sid, uid, stamp, real=True):
     """Move someone's read mark forward (never back)."""
+    _changed()
     cur = H.q("SELECT last_read FROM chat_reads WHERE space_id=? AND user_id=?", (sid, uid), one=True)
     if not cur:
         H.ex("INSERT OR IGNORE INTO chat_reads(space_id,user_id,last_read,read_real) VALUES(?,?,?,?)", (sid, uid, stamp, 1 if real else 0))
@@ -844,7 +868,22 @@ def _web_link(sp):
     return f"https://chat.google.com/{'dm' if sp['space_type'] == 'DIRECT_MESSAGE' else 'room'}/{sid}"
 
 
+_unread_cache = {}   # uid -> (version, counts)
+
+
 def unread_counts(uid):
+    """Unread messages per space. Asked for constantly (every open tab, every few seconds), so it's only
+    recounted after a message arrives or something is read."""
+    hit = _unread_cache.get(uid)
+    if hit and hit[0] == _chat_ver[0]:
+        return dict(hit[1])
+    ver = _chat_ver[0]
+    counts = _count_unread(uid)
+    _unread_cache[uid] = (ver, counts)
+    return dict(counts)
+
+
+def _count_unread(uid):
     gid = _my_gid(uid)
     rows = H.q("SELECT m.space_id, COUNT(*) n FROM chat_messages m JOIN chat_members cm ON cm.space_id=m.space_id AND cm.user_id=? "
                "LEFT JOIN chat_reads r ON r.space_id=m.space_id AND r.user_id=? "
@@ -989,7 +1028,9 @@ def register(module):
                 pass
         H.ex("DELETE FROM google_accounts WHERE user_id=?", (u["id"],))
         H.ex("DELETE FROM chat_members WHERE user_id=?", (u["id"],))
+        _changed()
         H.ex("DELETE FROM chat_reads WHERE user_id=?", (u["id"],))
+        _changed()
         return jsonify(ok=True)
 
     @app.get("/api/chat/spaces")
@@ -1539,6 +1580,7 @@ def register(module):
             return _manage_error(e)
         if name.endswith("/" + _gid_num(_my_gid(u["id"]))):   # left the space
             H.ex("DELETE FROM chat_members WHERE space_id=? AND user_id=?", (sid, u["id"]))
+            _changed()
         H.ex("UPDATE chat_spaces SET members_at=0 WHERE id=?", (sid,))
         return jsonify(ok=True)
 

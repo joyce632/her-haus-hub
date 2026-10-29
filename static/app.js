@@ -2079,7 +2079,11 @@ const bgTicker = (() => {
   catch (_) { return null; }
 })();
 // every 4s: new chat messages pop up quickly; the time-tracking floater still refreshes once a minute
-const onTick = () => { tickCount++; pollNotifications(); if (floater && tickCount % 15 === 0) refreshFloaterData(); };
+const onTick = () => {
+  tickCount++;
+  if (!document.hidden || tickCount % 3 === 0) pollNotifications();   // background tabs: every 12s
+  if (floater && tickCount % 15 === 0) refreshFloaterData();
+};
 if (bgTicker) bgTicker.onmessage = onTick; else setInterval(onTick, 4000);
 
 function notifText(n) {
@@ -4422,7 +4426,7 @@ async function chatPopup(sid, n, opts = {}) {
   };
   box.addEventListener('scroll', () => { follow = box.scrollHeight - box.scrollTop - box.clientHeight < 40; if (box.scrollTop < 60) loadOlder(); });
   const markRead = () => api('POST', `/api/chat/spaces/${sid}/read`, {}).then(pollNotifications).catch(() => {});
-  p = { el, refresh, comp: null, timer: setInterval(() => { if (!document.hidden && !el.classList.contains('min')) refresh(); }, 2500) };
+  p = { el, refresh, comp: null, timer: setInterval(() => { if (!document.hidden && !el.classList.contains('min')) refresh(); }, 3000) };
   chatPops.set(sid, p);
   el.addEventListener('click', (e) => {
     if (e.target.closest('[data-cp-close]')) { closeChatPopup(sid); return; }
